@@ -206,6 +206,22 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# ClipFactory local media and job data
+data/
+output/
+downloads/
+temp/
+models/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.safetensors
+*.pt
+*.pth
+*.onnx
+
 # PyPI configuration file
 .pypirc
 

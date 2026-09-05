@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#e7f0db" />
+    <title>ClipFactory</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+    <div class="app-shell">
+        <header class="topbar">
+            <a class="brand" href="/" aria-label="ClipFactory home">
+                <span class="brand-mark" aria-hidden="true"><i data-lucide="scissors"></i></span>
+                <span>ClipFactory</span>
+            </a>
+            <div class="topbar-actions">
+                <button id="theme-toggle" class="icon-button theme-toggle" type="button"
+                    aria-label="Switch to dark theme" aria-pressed="false" title="Switch to dark theme">
+                    <i data-lucide="moon"></i>
+                </button>
+                <div class="runtime-status" id="runtime-status" aria-live="polite">
+                    <span class="status-dot"></span>
+                    <span>Checking local tools</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <section class="workbench" aria-label="Create a clip or reel job">
+                <section class="source-panel">
+                    <div class="section-label">NEW RUN</div>
+                    <h1 id="workflow-title">Sources</h1>
+                    <form id="job-form" data-mode="reel" novalidate>
+                        <div class="source-input reel-source" id="reel-source">
+                            <div class="reel-source-heading">
+                                <span>Sources</span>
+                                <span id="reel-source-count" class="reel-source-count">No sources yet</span>
+                            </div>
+                            <div id="reel-source-bar" class="source-bar" data-mode="url" role="button" tabindex="0"
+                                aria-label="Add a source from a URL or local file">
+                                <div class="url-control source-url-control">
+                                    <i data-lucide="link"></i>
+                                    <input id="reel-url" type="url" inputmode="url" placeholder="URL" />
+                                </div>
+                                <input id="reel-video-files" type="file"
+                                    accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg" multiple hidden />
+                                <button id="reel-source-picker" class="icon-button source-folder-button" type="button"
+                                    aria-label="Choose local files" title="Choose local files">
+                                    <i data-lucide="folder"></i>
+                                </button>
+                                <button id="add-url-source" class="source-add-button" type="button" title="Add source">
+                                    <i data-lucide="plus"></i><span>Add</span>
+                                </button>
+                            </div>
+                            <ul id="reel-source-list" class="reel-source-list" aria-live="polite">
+                                <li class="reel-source-empty">Add a URL or local video.</li>
+                            </ul>
+                        </div>
+
+                        <div id="clip-run-options" class="run-options">
+                            <label for="clip-count">Clips</label>
+                            <div class="stepper">
+                                <button class="icon-button" type="button" id="decrease-clips"
+                                    aria-label="Decrease clip count" title="Decrease clip count">
+                                    <i data-lucide="minus"></i>
+                                </button>
+                                <input id="clip-count" type="number" min="1" max="10" value="5" />
+                                <button class="icon-button" type="button" id="increase-clips"
+                                    aria-label="Increase clip count" title="Increase clip count">
+                                    <i data-lucide="plus"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <p id="form-error" class="form-error" role="alert" hidden></p>
+                        <button id="process-button" class="process-button" type="submit">
+                            <i data-lucide="sparkles"></i>
+                            <span id="process-button-label">Process video</span>
+                        </button>
+                    </form>
+                </section>
+
+                <section class="process-panel" aria-label="Processing status">
+                    <div class="process-heading">
+                        <div>
+                            <div class="section-label process-label">
+                                <span>PROCESSING</span>
+                                <i class="processing-spinner" data-lucide="loader-circle" aria-hidden="true"></i>
+                            </div>
+                            <h2 id="job-state">Ready when you are</h2>
+                        </div>
+                        <span id="progress-number" class="progress-number">0%</span>
+                    </div>
+                    <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                        aria-valuenow="0">
+                        <div id="progress-bar" class="progress-bar"></div>
+                    </div>
+                    <p id="progress-message" class="progress-message">Pick a source to begin a run.</p>
+                    <ol class="pipeline-steps" aria-label="Processing stages">
+                        <li data-stage="ACQUIRING"><i data-lucide="inbox"></i><span>Acquire</span></li>
+                        <li data-stage="TRANSCRIBING"><i data-lucide="audio-lines"></i><span>Transcribe</span></li>
+                        <li data-stage="ANALYZING"><i data-lucide="scan-text"></i><span>Analyze</span></li>
+                        <li data-stage="RENDERING"><i data-lucide="clapperboard"></i><span>Render</span></li>
+                    </ol>
+                </section>
+            </section>
+
+            <section class="results-section" aria-labelledby="results-title">
+                <div class="results-header">
+                    <div>
+                        <div class="section-label">OUTPUT</div>
+                        <h2 id="results-title">Generated output</h2>
+                    </div>
+                    <button id="refresh-jobs" class="icon-button refresh-button" type="button" aria-label="Refresh jobs"
+                        title="Refresh jobs">
+                        <i data-lucide="refresh-cw"></i>
+                    </button>
+                </div>
+                <div id="results" class="results-grid" aria-live="polite">
+                    <div class="empty-results">
+                        <i data-lucide="video"></i>
+                        <p>Completed videos will appear here.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
