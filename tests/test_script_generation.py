@@ -9,7 +9,7 @@ from app.models.transcript import TranscriptSegment
 from app.services.script_generation import (
     OpenRouterScriptGenerator,
     build_script_message,
-    parse_reel_script,
+    parse_clip_script,
 )
 
 _SCRIPT_JSON = """```json
@@ -35,12 +35,12 @@ _SCRIPT_JSON = """```json
 
 
 def test_script_parser_validates_structured_sentences() -> None:
-    script = parse_reel_script(_SCRIPT_JSON)
+    script = parse_clip_script(_SCRIPT_JSON)
 
     assert script.title == "Market update"
     assert script.planned_duration == 12
     with pytest.raises(LLMError):
-        parse_reel_script('{"title": "Broken", "sentences": "not a list"}')
+        parse_clip_script('{"title": "Broken", "sentences": "not a list"}')
 
 
 def test_script_message_contains_bounded_article_and_timestamped_transcript() -> None:

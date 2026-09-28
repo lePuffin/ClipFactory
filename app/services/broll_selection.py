@@ -6,7 +6,7 @@ import re
 from collections.abc import Sequence
 
 from app.models.broll import BRollClip, BRollKind, VideoSourceContext
-from app.models.script import NarrationTiming, ReelScript, ScriptSentence
+from app.models.script import ClipScript, NarrationTiming, ScriptSentence
 
 _WORD = re.compile(r"[a-z0-9']+")
 _STOP_WORDS = frozenset(
@@ -43,7 +43,7 @@ class BRollSelector:
 
     def allocate(
         self,
-        script: ReelScript,
+        script: ClipScript,
         timings: Sequence[NarrationTiming],
         video_sources: Sequence[VideoSourceContext],
     ) -> tuple[BRollClip, ...]:

@@ -15,8 +15,8 @@ from app.services.tts import NarrationAudio
 logger = logging.getLogger(__name__)
 
 
-class ReelCompositionService:
-    """Renders each selected visual, then composes a narration-driven vertical reel."""
+class ClipCompositionService:
+    """Renders each selected visual, then composes a narration-driven vertical clip."""
 
     def __init__(
         self,
@@ -37,8 +37,8 @@ class ReelCompositionService:
         destination: Path,
     ) -> None:
         if not timeline:
-            raise FFmpegError("A reel requires a b-roll timeline")
-        visual_directory = workspace / "reel-visuals"
+            raise FFmpegError("A clip requires a b-roll timeline")
+        visual_directory = workspace / "clip-visuals"
         visual_directory.mkdir(parents=True, exist_ok=True)
         sources_by_id = {source.source_id: source for source in video_sources}
         visual_paths: list[Path] = []
@@ -53,7 +53,7 @@ class ReelCompositionService:
                 continue
             self.ffmpeg.render_placeholder(destination_path, broll.duration, self.placeholder_color)
             visual_paths.append(destination_path)
-        self.ffmpeg.compose_reel(visual_paths, narration.path, destination)
+        self.ffmpeg.compose_clip(visual_paths, narration.path, destination)
 
     def _render_video_visual(
         self,

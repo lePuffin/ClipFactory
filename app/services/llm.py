@@ -11,6 +11,7 @@ from app.core.exceptions import LLMError
 from app.models.clip import ClipAnalysis
 from app.pipelines.candidates import CandidateWindow
 from app.prompts.clip_selection import SYSTEM_PROMPT
+from app.services.openrouter import request_with_rate_limit_retries
 
 logger = logging.getLogger(__name__)
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -48,18 +49,20 @@ class OpenRouterClipSelector:
         user_message = build_selection_message(candidates, clip_count, source_duration)
         failures: list[str] = []
         for attempt in range(2):
-            try:
-                completion = client.chat.completions.create(
+            content = request_with_rate_limit_retries(
+                self.settings,
+                lambda request_message=user_message: client.chat.completions.create(
                     model=self.settings.llm_model,
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
+                        {"role": "user", "content": request_message},
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.2,
                     max_tokens=2500,
-                )
-                content = completion.choices[0].message.content
+                ).choices[0].message.content,
+            )
+            try:
                 if not content:
                     raise LLMError("The LLM returned an empty response")
                 return parse_clip_analysis(content)

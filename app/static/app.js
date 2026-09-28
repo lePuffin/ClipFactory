@@ -1,52 +1,58 @@
 const state = {
-  file: null,
-  mode: "reel",
   jobId: null,
   pollTimer: null,
-  reelSources: [],
-  reelSourceSequence: 0,
+  sources: [],
+  sourceSequence: 0,
 };
+
 const processingStatuses = new Set([
   "INGESTING",
   "ACQUIRING",
+  "EXTRACTING",
   "TRANSCRIBING",
   "ANALYZING",
+  "STORY_SELECTING",
   "SCRIPTING",
+  "PLANNING",
   "SYNTHESIZING",
-  "ASSEMBLING",
-  "COMPOSING",
   "RENDERING",
 ]);
 const themeStorageKey = "clipfactory-theme";
+const imageExtensions = new Set(["jpg", "jpeg", "png", "webp"]);
+const videoExtensions = new Set(["mp4", "mov", "mkv", "webm", "avi", "m4v", "mpeg", "mpg"]);
 
 const elements = {
-  clipCount: document.querySelector("#clip-count"),
-  decreaseClips: document.querySelector("#decrease-clips"),
+  addArticleSource: document.querySelector("#add-article-source"),
+  addUrlSource: document.querySelector("#add-url-source"),
   form: document.querySelector("#job-form"),
   formError: document.querySelector("#form-error"),
+  jobState: document.querySelector("#job-state"),
+  localFiles: document.querySelector("#clip-local-files"),
+  narrationControls: document.querySelector("#narration-controls"),
   processButton: document.querySelector("#process-button"),
+  processButtonLabel: document.querySelector("#process-button-label"),
+  processPanel: document.querySelector(".process-panel"),
   progressBar: document.querySelector("#progress-bar"),
   progressMessage: document.querySelector("#progress-message"),
   progressNumber: document.querySelector("#progress-number"),
   progressTrack: document.querySelector(".progress-track"),
-  processPanel: document.querySelector(".process-panel"),
-  processButtonLabel: document.querySelector("#process-button-label"),
-  workflowTitle: document.querySelector("#workflow-title"),
-  jobState: document.querySelector("#job-state"),
+  clipArticleText: document.querySelector("#clip-article-text"),
+  clipSourceBar: document.querySelector("#clip-source-bar"),
+  clipSourceCount: document.querySelector("#clip-source-count"),
+  clipSourceList: document.querySelector("#clip-source-list"),
+  clipSourcePicker: document.querySelector("#clip-source-picker"),
+  clipUrl: document.querySelector("#clip-url"),
   refreshJobs: document.querySelector("#refresh-jobs"),
   results: document.querySelector("#results"),
   resultsTitle: document.querySelector("#results-title"),
   runtimeStatus: document.querySelector("#runtime-status"),
-  clipRunOptions: document.querySelector("#clip-run-options"),
-  reelSource: document.querySelector("#reel-source"),
-  reelSourceBar: document.querySelector("#reel-source-bar"),
-  reelFileInput: document.querySelector("#reel-video-files"),
-  reelSourcePicker: document.querySelector("#reel-source-picker"),
-  reelUrl: document.querySelector("#reel-url"),
-  addUrlSource: document.querySelector("#add-url-source"),
-  reelSourceList: document.querySelector("#reel-source-list"),
-  reelSourceCount: document.querySelector("#reel-source-count"),
   themeToggle: document.querySelector("#theme-toggle"),
+  ttsEnabled: document.querySelector("#tts-enabled"),
+  ttsLanguage: document.querySelector("#tts-language"),
+  ttsProvider: document.querySelector("#tts-provider"),
+  ttsSpeed: document.querySelector("#tts-speed"),
+  ttsVoice: document.querySelector("#tts-voice"),
+  workflowTitle: document.querySelector("#workflow-title"),
 };
 
 function initializeIcons() {
@@ -61,9 +67,11 @@ function escapeHtml(value) {
   return element.innerHTML;
 }
 
-function clampClipCount(value) {
-  const parsed = Number.parseInt(value, 10);
-  return Math.min(10, Math.max(1, Number.isNaN(parsed) ? 5 : parsed));
+function formatClipTerminology(value) {
+  return value.replace(/\breels?\b/gi, (term) => {
+    const replacement = term.length === 5 ? "clips" : "clip";
+    return term === term.toUpperCase() ? replacement.toUpperCase() : replacement;
+  });
 }
 
 function setError(message = "") {
@@ -71,92 +79,35 @@ function setError(message = "") {
   elements.formError.hidden = !message;
 }
 
-function setMode(mode) {
-  state.mode = mode;
-  elements.clipRunOptions.hidden = true;
-  elements.workflowTitle.textContent = "Sources";
-  elements.processButtonLabel.textContent = "Generate reel";
-  setError();
-}
-
-function setSelectedFile(file) {
-  state.file = file;
-  elements.fileName.textContent = file ? file.name : "Choose a video";
-}
-
-function addReelSource(source) {
-  state.reelSourceSequence += 1;
-  state.reelSources.push({ id: `source-${state.reelSourceSequence}`, ...source });
-  renderReelSources();
-  setError();
-  return true;
-}
-
-function addReelFiles(files) {
-  for (const file of Array.from(files || [])) {
-    const alreadyAdded = state.reelSources.some(
-      (source) =>
-        source.kind === "video_file" &&
-        source.file.name === file.name &&
-        source.file.size === file.size &&
-        source.file.lastModified === file.lastModified,
-    );
-    if (!alreadyAdded && !addReelSource({ kind: "video_file", file, label: file.name })) {
-      break;
-    }
+function updateNarrationControls() {
+  const enabled = elements.ttsEnabled.checked;
+  const supportsNamedVoice = elements.ttsProvider.value === "pyttsx3";
+  elements.narrationControls.classList.toggle("is-disabled", !enabled);
+  [elements.ttsProvider, elements.ttsLanguage, elements.ttsSpeed].forEach((control) => {
+    control.disabled = !enabled;
+  });
+  elements.ttsVoice.disabled = !enabled || !supportsNamedVoice;
+  elements.ttsVoice.placeholder = supportsNamedVoice
+    ? "Installed system voice ID (optional)"
+    : "Not available for Chatterbox Turbo";
+  elements.ttsVoice.title = supportsNamedVoice
+    ? "Optional exact ID of an installed local system voice"
+    : "Chatterbox Turbo does not provide named voice selection";
+  if (!supportsNamedVoice) {
+    elements.ttsVoice.value = "";
   }
-  elements.reelFileInput.value = "";
 }
 
-function addUrlSource(input, kind, label) {
-  const value = input.value.trim();
-  if (!value) {
-    setError("Enter a URL before adding it to the reel.");
+function applyNarrationDefaults(narration) {
+  if (!narration) {
     return;
   }
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new Error();
-    }
-  } catch {
-    setError("Enter a valid http or https URL.");
-    return;
-  }
-  if (addReelSource({ kind, value, label: `${label}: ${value}` })) {
-    input.value = "";
-  }
-}
-
-function renderReelSources() {
-  elements.reelSourceCount.textContent = state.reelSources.length
-    ? `${state.reelSources.length} added`
-    : "No sources yet";
-  if (!state.reelSources.length) {
-    elements.reelSourceList.innerHTML = '<li class="reel-source-empty">Add a URL or local video.</li>';
-    return;
-  }
-  const metadata = {
-    video_file: { icon: "film", label: "Local video" },
-    url: { icon: "link", label: "URL" },
-  };
-  elements.reelSourceList.innerHTML = state.reelSources
-    .map((source) => {
-      const detail = metadata[source.kind];
-      return `
-        <li class="reel-source-item">
-          <div class="reel-source-info">
-            <span class="reel-source-kind"><i data-lucide="${detail.icon}"></i>${detail.label}</span>
-            <strong title="${escapeHtml(source.label)}">${escapeHtml(source.label)}</strong>
-          </div>
-          <button class="icon-button remove-source-button" type="button" data-remove-reel-source="${source.id}"
-            aria-label="Remove ${escapeHtml(detail.label)} source" title="Remove source">
-            <i data-lucide="x"></i>
-          </button>
-        </li>`;
-    })
-    .join("");
-  initializeIcons();
+  elements.ttsEnabled.checked = Boolean(narration.enabled);
+  elements.ttsProvider.value = narration.provider || "chatterbox";
+  elements.ttsVoice.value = narration.voice || "";
+  elements.ttsLanguage.value = narration.language || "en";
+  elements.ttsSpeed.value = String(narration.speed || 1);
+  updateNarrationControls();
 }
 
 function setTheme(theme) {
@@ -188,6 +139,107 @@ function initializeTheme() {
   setTheme(theme);
 }
 
+function sourceKindForFile(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  if (file.type.startsWith("image/") || imageExtensions.has(extension)) {
+    return "image_file";
+  }
+  if (file.type.startsWith("video/") || videoExtensions.has(extension)) {
+    return "video_file";
+  }
+  return null;
+}
+
+function addSource(source) {
+  state.sourceSequence += 1;
+  state.sources.push({ id: `source-${state.sourceSequence}`, ...source });
+  renderSources();
+  setError();
+}
+
+function addLocalFiles(files) {
+  for (const file of Array.from(files || [])) {
+    const kind = sourceKindForFile(file);
+    if (!kind) {
+      setError("Choose a supported video or image file.");
+      continue;
+    }
+    const exists = state.sources.some(
+      (source) =>
+        source.kind === kind &&
+        source.file.name === file.name &&
+        source.file.size === file.size &&
+        source.file.lastModified === file.lastModified,
+    );
+    if (!exists) {
+      addSource({ kind, file, label: file.name });
+    }
+  }
+  elements.localFiles.value = "";
+}
+
+function addUrlSource() {
+  const value = elements.clipUrl.value.trim();
+  if (!value) {
+    setError("Enter a URL before adding it to the clip.");
+    return;
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error();
+    }
+  } catch {
+    setError("Enter a valid http or https URL.");
+    return;
+  }
+  addSource({ kind: "url", value, label: value });
+  elements.clipUrl.value = "";
+}
+
+function addArticleSource() {
+  const value = elements.clipArticleText.value.trim();
+  if (value.length < 120) {
+    setError("Pasted article text must contain at least 120 characters.");
+    return;
+  }
+  addSource({ kind: "article_text", value, label: value.slice(0, 100) });
+  elements.clipArticleText.value = "";
+}
+
+function renderSources() {
+  elements.clipSourceCount.textContent = state.sources.length
+    ? `${state.sources.length} added`
+    : "No sources yet";
+  if (!state.sources.length) {
+    elements.clipSourceList.innerHTML = "<li class=\"clip-source-empty\">Add a URL, local video or image, or article text.</li>";
+    return;
+  }
+  const metadata = {
+    article_text: { icon: "file-text", label: "Article text" },
+    image_file: { icon: "image", label: "Local image" },
+    url: { icon: "link", label: "URL" },
+    video_file: { icon: "film", label: "Local video" },
+  };
+  elements.clipSourceList.innerHTML = state.sources
+    .map((source) => {
+      const detail = metadata[source.kind];
+      return `
+        <li class="clip-source-item">
+          <div class="clip-source-info">
+            <span class="clip-source-kind"><i data-lucide="${detail.icon}"></i>${detail.label}</span>
+            <strong title="${escapeHtml(source.label)}">${escapeHtml(source.label)}</strong>
+          </div>
+          <button class="icon-button remove-source-button" type="button" data-remove-source="${source.id}"
+            aria-label="Remove ${escapeHtml(detail.label)} source" title="Remove source">
+            <i data-lucide="x"></i>
+          </button>
+        </li>`;
+    })
+    .join("");
+  initializeIcons();
+}
+
 function updateProgress(job) {
   const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
   const isProcessing = processingStatuses.has(job.status);
@@ -199,7 +251,17 @@ function updateProgress(job) {
   elements.jobState.textContent = job.status === "FAILED" ? "Run failed" : job.current_step;
   elements.progressMessage.textContent = job.error || job.current_step;
 
-  const stageOrder = ["ACQUIRING", "TRANSCRIBING", "ANALYZING", "RENDERING"];
+  const stageOrder = [
+    "ACQUIRING",
+    "EXTRACTING",
+    "TRANSCRIBING",
+    "ANALYZING",
+    "STORY_SELECTING",
+    "SCRIPTING",
+    "PLANNING",
+    "SYNTHESIZING",
+    "RENDERING",
+  ];
   const currentIndex = stageOrder.indexOf(job.status);
   document.querySelectorAll(".pipeline-steps li").forEach((item) => {
     const itemIndex = stageOrder.indexOf(item.dataset.stage);
@@ -210,10 +272,10 @@ function updateProgress(job) {
 
 function resetProgress() {
   updateProgress({ status: "CREATED", progress: 0, current_step: "Queued" });
-  elements.workflowTitle.textContent = "Sources";
-  elements.processButtonLabel.textContent = "Generate reel";
+  elements.workflowTitle.textContent = "Rough clip";
+  elements.processButtonLabel.textContent = "Generate rough clip";
   elements.jobState.textContent = "Ready when you are";
-  elements.progressMessage.textContent = "Pick a source to begin a run.";
+  elements.progressMessage.textContent = "Add related sources to begin a clip.";
 }
 
 function formatDuration(seconds) {
@@ -223,39 +285,179 @@ function formatDuration(seconds) {
   return `${minutes}:${remaining}`;
 }
 
-function renderResults(job) {
+function formatScore(score) {
+  const value = Number(score);
+  return Number.isFinite(value) ? value.toFixed(2) : "Unavailable";
+}
+
+function formatEvidence(evidence) {
+  return (evidence || [])
+    .map((reference) => reference.segment_id || reference.asset_id || reference.source_id)
+    .map((reference) => escapeHtml(reference))
+    .join(" · ");
+}
+
+function renderEmptyResults() {
+  elements.resultsTitle.textContent = "Generated output";
+  elements.results.innerHTML = `
+    <div class="empty-results">
+      <i data-lucide="video"></i>
+      <p>Completed videos will appear here.</p>
+    </div>`;
+  initializeIcons();
+}
+
+async function renderResults(job) {
   if (job?.reel) {
-    const jobId = encodeURIComponent(job.id);
-    const reelUrl = `/api/jobs/${jobId}/reel`;
-    elements.resultsTitle.textContent = "Generated reel";
-    elements.results.innerHTML = `
-      <article class="clip-card reel-card">
-        <video controls preload="metadata" src="${reelUrl}"></video>
+    await renderClipResult(job);
+    return;
+  }
+  if (job?.clip) {
+    renderLegacyManagedClip(job);
+    return;
+  }
+  if (job?.clips?.length) {
+    renderLegacyClips(job);
+    return;
+  }
+  renderEmptyResults();
+}
+
+async function renderClipResult(job) {
+  const jobId = encodeURIComponent(job.id);
+  const clipUrl = `/api/jobs/${jobId}/story-clip`;
+  const planUrl = `/api/jobs/${jobId}/story-clip/plan`;
+  const storyClip = job.reel;
+  let plan = null;
+  try {
+    const response = await fetch(planUrl);
+    if (response.ok) {
+      plan = await response.json();
+    }
+  } catch {
+    plan = null;
+  }
+  const story = plan?.story;
+  const sources = story?.source_ids || [];
+  const sections = plan?.script?.sections || [];
+  const scenes = plan?.scenes || [];
+  const sourceMaterials = plan?.sources || [];
+  const editorial = plan?.editorial;
+  const selectedAngle = editorial?.selected_angle;
+  const selectedHook = editorial?.selected_hook;
+  const narration = plan?.narration;
+  const narrationRequest = job.narration_request;
+  const narrationOptions = narration?.options || narrationRequest?.options;
+  const narrationEnabled = narration ? true : narrationRequest?.enabled;
+  elements.resultsTitle.textContent = "Generated rough clip";
+  elements.results.innerHTML = `
+    <article class="clip-result">
+      <div class="clip-preview">
+        <video controls preload="metadata" src="${clipUrl}"></video>
         <div class="clip-details">
           <div class="clip-topline">
-            <span>REEL · ${formatDuration(job.reel.duration)}</span>
-            <span class="clip-score">${escapeHtml(String(job.reel.source_count))} sources</span>
+            <span>ROUGH CLIP ${formatDuration(storyClip.duration)}</span>
+            <span class="clip-score">${narrationEnabled ? `VOICE ${formatDuration(narration?.duration || storyClip.narration_duration)}` : "SILENT"}</span>
           </div>
-          <h3>${escapeHtml(job.reel.title)}</h3>
-          <a href="${reelUrl}?download=true" download="reel.mp4">
-            <i data-lucide="download"></i><span>Download</span>
-          </a>
+          <h3>${escapeHtml(storyClip.title)}</h3>
+          <div class="artifact-links">
+            <a href="${clipUrl}?download=true" download="story_01.mp4"><i data-lucide="download"></i><span>MP4</span></a>
+            <a href="${planUrl}?download=true" download="story_01.json"><i data-lucide="file-down"></i><span>JSON</span></a>
+          </div>
         </div>
-      </article>`;
-    initializeIcons();
-    return;
-  }
-  if (!job?.clips?.length) {
-    elements.resultsTitle.textContent = "Generated output";
-    elements.results.innerHTML = `
-      <div class="empty-results">
-        <i data-lucide="video"></i>
-        <p>Completed videos will appear here.</p>
-      </div>`;
-    initializeIcons();
-    return;
-  }
+      </div>
+      <section class="clip-inspector" aria-label="Clip plan">
+        <div class="story-summary">
+          <span class="section-label">SELECTED STORY</span>
+          <h3>${escapeHtml(story?.title || storyClip.title)}</h3>
+          <p class="story-summary-copy">${escapeHtml(story?.summary || "A source-grounded rough clip.")}</p>
+          <div class="decision-grid">
+            <div><span>Story score</span><strong>${escapeHtml(formatScore(story?.overall_score))}</strong></div>
+            <div><span>Angle score</span><strong>${escapeHtml(formatScore(selectedAngle?.overall_score))}</strong></div>
+          </div>
+          <details class="selection-details">
+            <summary>Why selected</summary>
+            <p>${escapeHtml(formatClipTerminology(story?.selection_reason || "Story plan is loading."))}</p>
+          </details>
+          ${selectedAngle ? `
+            <div class="angle-summary">
+              <span class="section-label">SELECTED ANGLE</span>
+              <strong>${escapeHtml(selectedAngle.angle)}</strong>
+              <p>${escapeHtml(selectedAngle.selection_reason || selectedAngle.rationale)}</p>
+            </div>` : ""}
+          <div class="source-pills">${sources.map((source) => `<span>${escapeHtml(source)}</span>`).join("")}</div>
+        </div>
+        <details class="plan-details">
+          <summary>Script</summary>
+          <div class="hook-callout">
+            <span>Hook</span>
+            <p>${escapeHtml(selectedHook?.text || plan?.script?.hook || "Script plan is unavailable.")}</p>
+          </div>
+          <ol class="script-list">${sections.map((section) => `
+            <li>
+              <span>${escapeHtml(`${section.role}${section.statement_type ? ` · ${section.statement_type}` : ""}`)}</span>
+              <p>${escapeHtml(section.text)}</p>
+              <small>${formatEvidence(section.evidence)}</small>
+              ${section.visual_intent ? `<small class="visual-intent">${escapeHtml(section.visual_intent)}</small>` : ""}
+            </li>`).join("") || "<li><p>Script plan is unavailable.</p></li>"}</ol>
+        </details>
+        <details class="plan-details">
+          <summary>Sources</summary>
+          <ul class="source-list">${sourceMaterials.map((material) => `
+            <li>
+              <strong>${escapeHtml(material.source?.name || material.source?.id || "Source")}</strong>
+              <small>${escapeHtml(`${material.source?.id || ""} · ${material.source?.type || ""}`)}</small>
+            </li>`).join("") || "<li><p>Source plan is unavailable.</p></li>"}</ul>
+        </details>
+        <details class="plan-details">
+          <summary>Scenes</summary>
+          <ol class="scene-list">${scenes.map((scene) => `
+            <li>
+              <span>${escapeHtml(scene.visual.type.replaceAll("_", " "))}</span>
+              <p>${escapeHtml(scene.narration)}</p>
+              <small>${escapeHtml(scene.visual.reason || scene.visual.source_id || "Text card")}</small>
+              <small class="visual-intent">${escapeHtml(scene.visual_intent || "")}</small>
+              <small>${formatEvidence(scene.evidence)}</small>
+            </li>`).join("") || "<li><p>Scene plan is unavailable.</p></li>"}</ol>
+        </details>
+        <details class="plan-details">
+          <summary>Narration</summary>
+          <div class="narration-diagnostics">
+            <div><span>Status</span><strong>${narrationEnabled ? "Generated" : "Disabled"}</strong></div>
+            <div><span>Provider</span><strong>${escapeHtml(narration?.provider || narrationRequest?.provider || "Unavailable")}</strong></div>
+            <div><span>Voice</span><strong>${escapeHtml(narrationOptions?.voice || "Default")}</strong></div>
+            <div><span>Language</span><strong>${escapeHtml(narrationOptions?.language || "en")}</strong></div>
+            <div><span>Speed</span><strong>${escapeHtml(String(narrationOptions?.speed || 1))}</strong></div>
+            <div><span>Duration</span><strong>${formatDuration(narration?.duration || storyClip.narration_duration)}</strong></div>
+          </div>
+          ${narration?.segments?.length ? `<ol class="narration-segment-list">${narration.segments.map((segment) => `
+            <li><span>${escapeHtml(segment.id)}</span><strong>${formatDuration(segment.duration)}</strong><small>${escapeHtml(segment.scene_id)} · ${escapeHtml(segment.script_section_id)}</small></li>`).join("")}</ol>` : ""}
+        </details>
+      </section>
+    </article>`;
+  initializeIcons();
+}
 
+function renderLegacyManagedClip(job) {
+  const jobId = encodeURIComponent(job.id);
+  const clipUrl = `/api/jobs/${jobId}/clip`;
+  elements.resultsTitle.textContent = "Generated clip";
+  elements.results.innerHTML = `
+    <article class="clip-card">
+      <video controls preload="metadata" src="${clipUrl}"></video>
+      <div class="clip-details">
+        <div class="clip-topline">
+          <span>CLIP ${formatDuration(job.clip.duration)}</span>
+          <span class="clip-score">${escapeHtml(String(job.clip.source_count))} sources</span>
+        </div>
+        <h3>${escapeHtml(job.clip.title)}</h3>
+        <a href="${clipUrl}?download=true" download="clip.mp4"><i data-lucide="download"></i><span>Download</span></a>
+      </div>
+    </article>`;
+  initializeIcons();
+}
+
+function renderLegacyClips(job) {
   const jobId = encodeURIComponent(job.id);
   elements.resultsTitle.textContent = "Generated clips";
   elements.results.innerHTML = job.clips
@@ -267,14 +469,12 @@ function renderResults(job) {
           <video controls preload="metadata" src="${clipUrl}"></video>
           <div class="clip-details">
             <div class="clip-topline">
-              <span>CLIP ${String(index + 1).padStart(2, "0")} · ${formatDuration(clip.end - clip.start)}</span>
+              <span>CLIP ${String(index + 1).padStart(2, "0")} ${formatDuration(clip.end - clip.start)}</span>
               <span class="clip-score">${escapeHtml(String(clip.score))}/100</span>
             </div>
             <h3>${escapeHtml(clip.title)}</h3>
             <p>${escapeHtml(clip.reason)}</p>
-            <a href="${clipUrl}?download=true" download="${escapeHtml(clip.filename)}">
-              <i data-lucide="download"></i><span>Download MP4</span>
-            </a>
+            <a href="${clipUrl}?download=true" download="${escapeHtml(clip.filename)}"><i data-lucide="download"></i><span>MP4</span></a>
           </div>
         </article>`;
     })
@@ -303,7 +503,7 @@ async function pollJob() {
     if (job.status === "COMPLETED") {
       stopPolling();
       elements.processButton.disabled = false;
-      renderResults(job);
+      await renderResults(job);
       return;
     }
     if (job.status === "FAILED") {
@@ -316,74 +516,49 @@ async function pollJob() {
   } catch (error) {
     stopPolling();
     elements.processButton.disabled = false;
-    setError(error.message || "Lost connection to the local server.");
+    setError(error instanceof Error ? error.message : "Lost connection to the local server.");
   }
 }
 
 async function submitJob(event) {
   event.preventDefault();
   setError();
-
-  let response;
+  if (!state.sources.length) {
+    setError("Add at least one video, image, or article source first.");
+    return;
+  }
   try {
     elements.processButton.disabled = true;
-    if (state.mode === "reel") {
-      response = await submitReelJob();
-    } else if (state.mode === "upload") {
-      const clipCount = clampClipCount(elements.clipCount.value);
-      elements.clipCount.value = String(clipCount);
-      if (!state.file) {
-        throw new Error("Choose a local video file first.");
+    const formData = new FormData();
+    for (const source of state.sources) {
+      if (source.kind === "video_file") {
+        formData.append("video_files", source.file);
+      } else if (source.kind === "image_file") {
+        formData.append("image_files", source.file);
+      } else if (source.kind === "url") {
+        formData.append("urls", source.value);
+      } else if (source.kind === "article_text") {
+        formData.append("article_texts", source.value);
       }
-      const formData = new FormData();
-      formData.append("file", state.file);
-      formData.append("clip_count", String(clipCount));
-      response = await fetch("/api/jobs/upload", { method: "POST", body: formData });
-    } else if (state.mode === "url") {
-      const clipCount = clampClipCount(elements.clipCount.value);
-      elements.clipCount.value = String(clipCount);
-      const url = elements.sourceUrl.value.trim();
-      if (!url) {
-        throw new Error("Enter a URL first.");
-      }
-      response = await fetch("/api/jobs/youtube", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, clip_count: clipCount }),
-      });
-    } else {
-      throw new Error("Choose a source type first.");
     }
-
+    formData.append("tts_enabled", String(elements.ttsEnabled.checked));
+    formData.append("tts_provider", elements.ttsProvider.value);
+    formData.append("tts_voice", elements.ttsVoice.value.trim());
+    formData.append("tts_language", elements.ttsLanguage.value.trim());
+    formData.append("tts_speed", elements.ttsSpeed.value);
+    const response = await fetch("/api/jobs/story-clip", { method: "POST", body: formData });
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.detail || "The job could not be created.");
+      throw new Error(payload.detail || "The clip job could not be created.");
     }
     state.jobId = payload.id;
     updateProgress(payload);
     stopPolling();
-    pollJob();
+    void pollJob();
   } catch (error) {
     elements.processButton.disabled = false;
-    setError(error.message || "The job could not be created.");
+    setError(error instanceof Error ? error.message : "The clip job could not be created.");
   }
-}
-
-async function submitReelJob() {
-  if (!state.reelSources.length) {
-    throw new Error("Add at least one video or article source first.");
-  }
-  const formData = new FormData();
-  for (const source of state.reelSources) {
-    if (source.kind === "video_file") {
-      formData.append("video_files", source.file);
-    } else if (source.kind === "url") {
-      formData.append("urls", source.value);
-    } else if (source.kind === "article_text") {
-      formData.append("article_texts", source.value);
-    }
-  }
-  return fetch("/api/jobs/reel", { method: "POST", body: formData });
 }
 
 async function refreshJobs() {
@@ -394,10 +569,10 @@ async function refreshJobs() {
     }
     const jobs = await response.json();
     const completed = jobs.find(
-      (job) => job.status === "COMPLETED" && (job.reel || job.clips?.length),
+      (job) => job.status === "COMPLETED" && (job.reel || job.clip || job.clips?.length),
     );
     if (completed) {
-      renderResults(completed);
+      await renderResults(completed);
     }
   } catch {
     // The health status communicates a server that is unavailable.
@@ -411,6 +586,7 @@ async function loadHealth() {
       throw new Error();
     }
     const health = await response.json();
+    applyNarrationDefaults(health.tts);
     const missing = [];
     if (!health.ffmpeg_available) {
       missing.push("FFmpeg");
@@ -429,63 +605,61 @@ async function loadHealth() {
   }
 }
 
-elements.reelSourcePicker.addEventListener("click", () => elements.reelFileInput.click());
-elements.reelSourceBar.addEventListener("keydown", (event) => {
+elements.clipSourcePicker.addEventListener("click", () => elements.localFiles.click());
+elements.clipSourceBar.addEventListener("keydown", (event) => {
+  if (event.target !== elements.clipSourceBar) {
+    return;
+  }
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
-    elements.reelFileInput.click();
+    elements.localFiles.click();
   }
 });
-elements.reelFileInput.addEventListener("change", () => addReelFiles(elements.reelFileInput.files));
+elements.localFiles.addEventListener("change", () => addLocalFiles(elements.localFiles.files));
 ["dragenter", "dragover"].forEach((eventName) => {
-  elements.reelSourceBar.addEventListener(eventName, (event) => {
+  elements.clipSourceBar.addEventListener(eventName, (event) => {
     event.preventDefault();
-    elements.reelSourceBar.classList.add("is-dragging");
+    elements.clipSourceBar.classList.add("is-dragging");
   });
 });
 ["dragleave", "drop"].forEach((eventName) => {
-  elements.reelSourceBar.addEventListener(eventName, (event) => {
+  elements.clipSourceBar.addEventListener(eventName, (event) => {
     event.preventDefault();
-    elements.reelSourceBar.classList.remove("is-dragging");
+    elements.clipSourceBar.classList.remove("is-dragging");
   });
 });
-elements.reelSourceBar.addEventListener("drop", (event) => addReelFiles(event.dataTransfer.files));
-elements.addUrlSource.addEventListener("click", () => {
-  addUrlSource(elements.reelUrl, "url", "URL");
+elements.clipSourceBar.addEventListener("drop", (event) => addLocalFiles(event.dataTransfer.files));
+elements.addUrlSource.addEventListener("click", addUrlSource);
+elements.addArticleSource.addEventListener("click", addArticleSource);
+elements.clipArticleText.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    addArticleSource();
+  }
 });
-elements.reelSourceList.addEventListener("click", (event) => {
+elements.clipSourceList.addEventListener("click", (event) => {
   if (!(event.target instanceof Element)) {
     return;
   }
-  const button = event.target.closest("[data-remove-reel-source]");
+  const button = event.target.closest("[data-remove-source]");
   if (!button) {
     return;
   }
-  state.reelSources = state.reelSources.filter(
-    (source) => source.id !== button.dataset.removeReelSource,
-  );
-  renderReelSources();
+  state.sources = state.sources.filter((source) => source.id !== button.dataset.removeSource);
+  renderSources();
   setError();
 });
-
-elements.decreaseClips.addEventListener("click", () => {
-  elements.clipCount.value = String(clampClipCount(Number(elements.clipCount.value) - 1));
-});
-document.querySelector("#increase-clips").addEventListener("click", () => {
-  elements.clipCount.value = String(clampClipCount(Number(elements.clipCount.value) + 1));
-});
-elements.clipCount.addEventListener("change", () => {
-  elements.clipCount.value = String(clampClipCount(elements.clipCount.value));
-});
 elements.form.addEventListener("submit", submitJob);
-elements.refreshJobs.addEventListener("click", refreshJobs);
+elements.ttsEnabled.addEventListener("change", updateNarrationControls);
+elements.ttsProvider.addEventListener("change", updateNarrationControls);
+elements.refreshJobs.addEventListener("click", () => void refreshJobs());
 elements.themeToggle.addEventListener("click", () => {
-  const currentTheme = document.documentElement.dataset.theme;
-  setTheme(currentTheme === "dark" ? "light" : "dark");
+  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
 initializeIcons();
 initializeTheme();
+updateNarrationControls();
 resetProgress();
-loadHealth();
-refreshJobs();
+void loadHealth();
+void refreshJobs();

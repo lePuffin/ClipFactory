@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.models.broll import BRollKind, VideoSourceContext
 from app.models.media import VideoMetadata
-from app.models.script import NarrationTiming, ReelScript, ScriptSentence
+from app.models.script import ClipScript, NarrationTiming, ScriptSentence
 from app.models.transcript import TranscriptSegment
 from app.services.broll_selection import BRollSelector
 
@@ -17,7 +17,7 @@ def _video_source(source_id: str, transcript: tuple[TranscriptSegment, ...]) -> 
 
 
 def test_broll_selection_prefers_script_referenced_relevant_video() -> None:
-    script = ReelScript(
+    script = ClipScript(
         title="Market report",
         sentences=[
             ScriptSentence(
@@ -50,8 +50,8 @@ def test_broll_selection_prefers_script_referenced_relevant_video() -> None:
     assert selected[0].source_end == 35
 
 
-def test_broll_selection_fills_an_article_only_reel_with_placeholders() -> None:
-    script = ReelScript(
+def test_broll_selection_fills_an_article_only_clip_with_placeholders() -> None:
+    script = ClipScript(
         title="Article report",
         sentences=[
             ScriptSentence(
@@ -72,7 +72,7 @@ def test_broll_selection_fills_an_article_only_reel_with_placeholders() -> None:
 
 
 def test_broll_selection_avoids_reusing_the_same_transcript_window() -> None:
-    script = ReelScript(
+    script = ClipScript(
         title="Video report",
         sentences=[
             ScriptSentence(text="Markets moved during the announcement.", duration_seconds=4),

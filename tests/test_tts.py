@@ -1,9 +1,12 @@
 import wave
 from pathlib import Path
 
+import perth
+import pytest
+
 from app.core.config import Settings
-from app.models.script import ReelScript, ScriptSentence
-from app.services.tts import Pyttsx3TTSService
+from app.models.script import ClipScript, ScriptSentence
+from app.services.tts import ChatterboxTTSService, Pyttsx3TTSService, TTSError
 
 
 class FakeEngine:
@@ -37,7 +40,7 @@ def test_tts_synthesizes_sentence_wavs_with_measured_timings(tmp_path: Path, mon
     )
     engine = FakeEngine()
     monkeypatch.setattr(service, "_get_engine", lambda: engine)
-    script = ReelScript(
+    script = ClipScript(
         title="Test script",
         sentences=[
             ScriptSentence(text="First narration sentence.", duration_seconds=2),
@@ -55,3 +58,34 @@ def test_tts_synthesizes_sentence_wavs_with_measured_timings(tmp_path: Path, mon
         assert output.getframerate() == 8_000
         assert output.getnframes() == 18_000
     assert not (tmp_path / "tts-segments").exists()
+
+
+def test_chatterbox_tts_patches_missing_perth_watermarker(monkeypatch) -> None:
+    dummy = type("DummyWatermarker", (), {})
+    monkeypatch.setattr(perth, "PerthImplicitWatermarker", None, raising=False)
+    monkeypatch.setattr(perth, "DummyWatermarker", dummy, raising=False)
+    monkeypatch.setattr(perth, "__all__", list(getattr(perth, "__all__", [])), raising=False)
+
+    ChatterboxTTSService._patch_perth_watermarker_compatibility()
+
+    assert perth.PerthImplicitWatermarker is dummy
+    assert "PerthImplicitWatermarker" in perth.__all__
+
+
+def test_chatterbox_does_not_fallback_without_explicit_configuration(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = ChatterboxTTSService(Settings(_env_file=None, tts_fallback_enabled=False))
+    script = ClipScript(
+        title="Test script",
+        sentences=[ScriptSentence(text="A narration sentence.", duration_seconds=1)],
+    )
+
+    def unavailable_model() -> object:
+        raise TTSError("model unavailable")
+
+    monkeypatch.setattr(service, "_get_model", unavailable_model)
+
+    with pytest.raises(TTSError, match="model unavailable"):
+        service.synthesize(script, tmp_path / "narration.wav")

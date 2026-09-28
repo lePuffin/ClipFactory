@@ -34,56 +34,75 @@
         </header>
 
         <main>
-            <section class="workbench" aria-label="Create a clip or reel job">
+            <section class="workbench" aria-label="Create a rough clip">
                 <section class="source-panel">
                     <div class="section-label">NEW RUN</div>
-                    <h1 id="workflow-title">Sources</h1>
-                    <form id="job-form" data-mode="reel" novalidate>
-                        <div class="source-input reel-source" id="reel-source">
-                            <div class="reel-source-heading">
+                    <h1 id="workflow-title">Rough clip</h1>
+                    <form id="job-form" data-mode="clip" novalidate>
+                        <div class="source-input clip-source" id="clip-source">
+                            <div class="clip-source-heading">
                                 <span>Sources</span>
-                                <span id="reel-source-count" class="reel-source-count">No sources yet</span>
+                                <span id="clip-source-count" class="clip-source-count">No sources yet</span>
                             </div>
-                            <div id="reel-source-bar" class="source-bar" data-mode="url" role="button" tabindex="0"
+                            <div id="clip-source-bar" class="source-bar" role="button" tabindex="0"
                                 aria-label="Add a source from a URL or local file">
                                 <div class="url-control source-url-control">
                                     <i data-lucide="link"></i>
-                                    <input id="reel-url" type="url" inputmode="url" placeholder="URL" />
+                                    <input id="clip-url" type="url" inputmode="url"
+                                        placeholder="Video or article URL" />
                                 </div>
-                                <input id="reel-video-files" type="file"
-                                    accept="video/*,.mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg" multiple hidden />
-                                <button id="reel-source-picker" class="icon-button source-folder-button" type="button"
+                                <input id="clip-local-files" type="file"
+                                    accept="video/*,image/*,.mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg,.jpg,.jpeg,.png,.webp"
+                                    multiple hidden />
+                                <button id="clip-source-picker" class="icon-button source-folder-button" type="button"
                                     aria-label="Choose local files" title="Choose local files">
                                     <i data-lucide="folder"></i>
                                 </button>
-                                <button id="add-url-source" class="source-add-button" type="button" title="Add source">
+                                <button id="add-url-source" class="source-add-button" type="button"
+                                    title="Add URL source">
                                     <i data-lucide="plus"></i><span>Add</span>
                                 </button>
                             </div>
-                            <ul id="reel-source-list" class="reel-source-list" aria-live="polite">
-                                <li class="reel-source-empty">Add a URL or local video.</li>
-                            </ul>
-                        </div>
-
-                        <div id="clip-run-options" class="run-options">
-                            <label for="clip-count">Clips</label>
-                            <div class="stepper">
-                                <button class="icon-button" type="button" id="decrease-clips"
-                                    aria-label="Decrease clip count" title="Decrease clip count">
-                                    <i data-lucide="minus"></i>
-                                </button>
-                                <input id="clip-count" type="number" min="1" max="10" value="5" />
-                                <button class="icon-button" type="button" id="increase-clips"
-                                    aria-label="Increase clip count" title="Increase clip count">
+                            <div class="article-source-control">
+                                <textarea id="clip-article-text" rows="3" placeholder="Paste article text"></textarea>
+                                <button id="add-article-source" class="icon-button article-add-button" type="button"
+                                    aria-label="Add pasted article text" title="Add pasted article text">
                                     <i data-lucide="plus"></i>
                                 </button>
                             </div>
+                            <ul id="clip-source-list" class="clip-source-list" aria-live="polite">
+                                <li class="clip-source-empty">Add a URL, local video or image, or article text.</li>
+                            </ul>
                         </div>
+                        <fieldset id="narration-controls" class="narration-controls">
+                            <legend>AI narration</legend>
+                            <label class="narration-toggle" for="tts-enabled">
+                                <input id="tts-enabled" type="checkbox" checked />
+                                <span>Enabled</span>
+                            </label>
+                            <div class="narration-control-grid">
+                                <label for="tts-provider">Provider
+                                    <select id="tts-provider">
+                                        <option value="chatterbox">Chatterbox Turbo</option>
+                                        <option value="pyttsx3">Local system voice</option>
+                                    </select>
+                                </label>
+                                <label for="tts-voice">Voice
+                                    <input id="tts-voice" type="text" maxlength="300" autocomplete="off" />
+                                </label>
+                                <label for="tts-language">Language
+                                    <input id="tts-language" type="text" value="en" minlength="2" maxlength="16" />
+                                </label>
+                                <label for="tts-speed">Speed
+                                    <input id="tts-speed" type="number" value="1" min="0.75" max="1.25" step="0.05" />
+                                </label>
+                            </div>
+                        </fieldset>
 
                         <p id="form-error" class="form-error" role="alert" hidden></p>
                         <button id="process-button" class="process-button" type="submit">
                             <i data-lucide="sparkles"></i>
-                            <span id="process-button-label">Process video</span>
+                            <span id="process-button-label">Generate rough clip</span>
                         </button>
                     </form>
                 </section>
@@ -106,8 +125,13 @@
                     <p id="progress-message" class="progress-message">Pick a source to begin a run.</p>
                     <ol class="pipeline-steps" aria-label="Processing stages">
                         <li data-stage="ACQUIRING"><i data-lucide="inbox"></i><span>Acquire</span></li>
+                        <li data-stage="EXTRACTING"><i data-lucide="file-search"></i><span>Extract</span></li>
                         <li data-stage="TRANSCRIBING"><i data-lucide="audio-lines"></i><span>Transcribe</span></li>
                         <li data-stage="ANALYZING"><i data-lucide="scan-text"></i><span>Analyze</span></li>
+                        <li data-stage="STORY_SELECTING"><i data-lucide="git-merge"></i><span>Story</span></li>
+                        <li data-stage="SCRIPTING"><i data-lucide="pen-line"></i><span>Script</span></li>
+                        <li data-stage="PLANNING"><i data-lucide="list-video"></i><span>Plan</span></li>
+                        <li data-stage="SYNTHESIZING"><i data-lucide="audio-lines"></i><span>Voice</span></li>
                         <li data-stage="RENDERING"><i data-lucide="clapperboard"></i><span>Render</span></li>
                     </ol>
                 </section>

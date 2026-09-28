@@ -5,7 +5,7 @@
 **Project name:** ClipFactory
 
 **Description:**  
-AI-powered personal tool that automatically identifies the best moments from long-form videos and turns them into vertical clips suitable for YouTube Shorts, Instagram Reels, and similar short-form formats.
+AI-powered personal tool that automatically identifies the best moments from long-form videos and turns them into vertical clips suitable for YouTube Shorts, Instagram Clips, and similar short-form formats.
 
 **Primary goal:**  
 Take a local video file or a YouTube URL, analyze the content, identify several self-contained/high-value moments, and generate vertical 9:16 MP4 clips.
@@ -14,6 +14,7 @@ Take a local video file or a YouTube URL, analyze the content, identify several 
 This is a personal-use application for a single user. It does not need authentication, multi-user support, billing, subscriptions, public deployment, collaboration, social-media publishing, or enterprise infrastructure.
 
 The application should optimize for:
+
 - simplicity
 - local execution
 - low operating cost
@@ -40,6 +41,7 @@ The user should be able to:
 7. Download/use the resulting MP4 files manually.
 
 The application does NOT need to:
+
 - publish to YouTube
 - publish to Instagram
 - publish to TikTok
@@ -101,6 +103,7 @@ Traditional video tools should be responsible for cutting, cropping, resizing, a
 ### 4.1 Local file
 
 Supported initially:
+
 - MP4
 - MOV
 - MKV
@@ -110,6 +113,7 @@ Supported initially:
 The frontend should allow drag-and-drop and file selection.
 
 The backend should validate:
+
 - extension
 - MIME type where possible
 - file size
@@ -122,6 +126,7 @@ Do not unnecessarily impose an aggressive file-size limit for personal use.
 Use `yt-dlp` to acquire the video.
 
 The system should:
+
 - validate that the URL is a supported YouTube URL
 - download the best practical video/audio combination
 - store it in a temporary working directory
@@ -142,6 +147,7 @@ It should identify moments that are suitable for short-form content.
 ### Desired characteristics
 
 Prefer clips with:
+
 - a strong opening/hook
 - a complete thought or mini-story
 - useful or interesting information
@@ -155,6 +161,7 @@ Prefer clips with:
 - minimal dependence on information far outside the clip
 
 Avoid:
+
 - long introductions
 - dead air
 - incomplete sentences
@@ -195,11 +202,13 @@ Use Pydantic models for validation.
 Use an existing speech-to-text solution rather than implementing speech recognition.
 
 Preferred initial option:
+
 - `faster-whisper`
 
 The transcript should retain timestamps.
 
 Ideally preserve:
+
 - segment start
 - segment end
 - text
@@ -258,7 +267,7 @@ Initial defaults:
 
 These should be configurable where easy, but do not build a large settings system.
 
-The generated clips should be compatible with common Shorts/Reels workflows.
+The generated clips should be compatible with common Shorts/Clips workflows.
 
 ---
 
@@ -275,6 +284,7 @@ Prefer intelligent framing when practical.
 For example, when a person is speaking in a 16:9 video, the vertical crop should try to keep the person visible rather than always using a fixed center crop.
 
 Possible implementation approaches:
+
 - face detection
 - person detection
 - tracking
@@ -287,6 +297,7 @@ Do NOT train a custom computer-vision model.
 ### Fallback
 
 If no reliable subject can be detected:
+
 - use a centered crop
 - ensure output is always generated rather than failing
 
@@ -297,6 +308,7 @@ If no reliable subject can be detected:
 Use **FFmpeg** as the main video processing engine.
 
 FFmpeg should handle:
+
 - trimming
 - crop
 - scale
@@ -316,6 +328,7 @@ ComfyUI is NOT part of the required V1 architecture.
 ComfyUI should remain optional and out of the core pipeline.
 
 Potential future use:
+
 - AI-generated B-roll
 - image generation
 - video generation
@@ -335,6 +348,7 @@ Use an LLM through an abstraction layer.
 The code should not hard-code application logic around one specific provider.
 
 A provider interface should make it possible to use:
+
 - OpenAI
 - OpenRouter
 - another OpenAI-compatible API
@@ -390,6 +404,7 @@ Preferred stack:
 A lightweight background-job mechanism is desirable because video processing is long-running.
 
 For V1, this can be simple:
+
 - FastAPI creates a job
 - a local worker/background process performs processing
 - frontend polls job status or receives progress updates
@@ -407,12 +422,14 @@ The first version should prioritize functionality over visual polish.
 Required UI:
 
 ### Input section
+
 - file drag-and-drop
 - file picker
 - YouTube URL input
 - process button
 
 ### Processing section
+
 - current state
 - progress indicator
 - useful status messages
@@ -426,7 +443,9 @@ Example:
     Complete.
 
 ### Results section
+
 For each clip:
+
 - video preview
 - clip number
 - duration
@@ -542,6 +561,7 @@ Never hard-code API keys.
 Use Python's standard logging facilities.
 
 Log:
+
 - job creation
 - input acquisition
 - transcription start/end
@@ -587,6 +607,7 @@ Likewise, if AI analysis produces invalid structured output, retry or fail the a
 At minimum, create tests for:
 
 ### Unit tests
+
 - transcript parsing
 - clip schema validation
 - candidate generation
@@ -596,7 +617,9 @@ At minimum, create tests for:
 - filename/path generation
 
 ### Integration tests
+
 Where practical:
+
 - FFmpeg clip extraction
 - aspect ratio conversion
 - end-to-end processing with a short test video
@@ -612,6 +635,7 @@ Mock the LLM.
 The project is primarily intended to run locally on Windows initially.
 
 The developer has experience with:
+
 - Python
 - C++
 - Linux
@@ -633,6 +657,7 @@ The simplest local development experience is preferred.
 The application should be efficient on a personal workstation/laptop.
 
 Normal video operations:
+
 - FFmpeg crop
 - trimming
 - encoding
@@ -655,6 +680,7 @@ Do not design V1 around NPU acceleration.
 NPU support is optional future optimization only.
 
 The application should work correctly using:
+
 - CPU
 - NVIDIA GPU where available
 - external LLM API
@@ -729,6 +755,7 @@ These can be considered later only if actual personal usage shows a need.
 Possible future evolution:
 
 ### V1.1
+
 - captions
 - configurable caption styles
 - better face/person tracking
@@ -736,12 +763,14 @@ Possible future evolution:
 - better preview
 
 ### V1.2
+
 - AI-generated hooks
 - titles
 - descriptions
 - automatic B-roll suggestions
 
 ### V2
+
 - ComfyUI integration
 - AI-generated B-roll
 - automatic thumbnails
@@ -813,6 +842,7 @@ V1 is complete when the following workflow works end-to-end:
 When implementing ClipFactory:
 
 ### General
+
 - Build the smallest working solution first.
 - Do not implement future features unless explicitly requested.
 - Prefer simple, well-known libraries.
@@ -823,6 +853,7 @@ When implementing ClipFactory:
 - Add tests for non-trivial logic.
 
 ### AI
+
 - Treat LLM output as untrusted data.
 - Validate all structured output.
 - Never execute LLM-generated shell commands.
@@ -830,18 +861,21 @@ When implementing ClipFactory:
 - Make the LLM provider configurable.
 
 ### Video
+
 - Use FFmpeg.
 - Do not use ComfyUI for ordinary video manipulation.
 - Keep source, temporary, and output files separate.
 - Prefer robust fallbacks over hard failures.
 
 ### UX
+
 - The user should understand what the application is doing.
 - Long-running operations must not freeze the browser.
 - Show meaningful processing states.
 - Generated clips should be immediately accessible.
 
 ### Architecture
+
 - Start as a single application.
 - Avoid microservices.
 - Avoid Kubernetes.
@@ -887,6 +921,7 @@ Frontend technology should be chosen for simplicity. A lightweight HTML/JS front
 Implement in this order:
 
 ### Phase 1 — Skeleton
+
 - repository structure
 - FastAPI application
 - configuration
@@ -894,21 +929,25 @@ Implement in this order:
 - basic frontend
 
 ### Phase 2 — Input
+
 - local upload
 - YouTube URL
 - yt-dlp integration
 
 ### Phase 3 — Video utilities
+
 - FFmpeg wrapper
 - metadata extraction
 - clip extraction
 - 9:16 conversion
 
 ### Phase 4 — Transcription
+
 - faster-whisper integration
 - timestamped transcript model
 
 ### Phase 5 — AI selection
+
 - candidate generation
 - LLM prompt
 - structured response
@@ -916,22 +955,26 @@ Implement in this order:
 - overlap removal
 
 ### Phase 6 — Smart crop
+
 - subject/face detection
 - tracking
 - center-crop fallback
 
 ### Phase 7 — End-to-end jobs
+
 - background processing
 - job state
 - progress
 - error handling
 
 ### Phase 8 — Results UI
+
 - previews
 - metadata
 - downloads
 
 ### Phase 9 — Cleanup
+
 - tests
 - documentation
 - logging
@@ -962,13 +1005,15 @@ Repository name:
 
 Suggested GitHub description:
 
-**AI-powered tool that automatically identifies the best moments from long-form videos and turns them into vertical clips for Shorts and Reels.**
+**AI-powered tool that automatically identifies the best moments from long-form videos and turns them into vertical clips for Shorts and Clips.**
 
 Recommended:
+
 - `.gitignore`: Python
 - License: MIT
 
 Do not commit:
+
 - `.env`
 - source videos
 - generated videos

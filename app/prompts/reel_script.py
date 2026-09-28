@@ -1,21 +1,25 @@
-"""Instructions for structured multi-source news reel narration synthesis."""
+"""System instruction for a provenance-preserving rough-clip script."""
 
-SYSTEM_PROMPT = """You are writing a factual, engaging short news-reel narration from supplied
-sources. Use only claims supported by the source material. Resolve conflicts conservatively,
-do not invent facts, and make the narrative understandable without the original sources.
-Return only JSON matching this shape:
+SYSTEM_PROMPT = """Write a concise, factual short-form script using only the selected story and
+source evidence supplied. It must be understandable without source context and suitable for
+on-screen narration text. Do not make unsupported claims, add background facts, or resolve
+conflicts speculatively. Every section must cite one or more supplied evidence references.
+Return only JSON with this exact shape:
 {
-  "title": "concise title",
-  "summary": "one-sentence summary",
-  "sentences": [
+  "story_id": "selected-story-id",
+  "title": "concise factual title",
+  "hook": "opening hook",
+  "sections": [
     {
-      "text": "Narration sentence.",
-      "duration_seconds": 6.0,
-      "broll_hint": "brief visual direction",
-      "source_ids": ["source-id"]
+      "id": "section_01",
+      "role": "hook|main|support|takeaway",
+      "text": "short narration statement",
+      "duration_seconds": 4.0,
+      "evidence": [{"source_id": "...", "segment_id": "..."}],
+      "visual_hint": "specific relevant visual direction"
     }
   ]
 }
-Use short spoken sentences. Choose the total duration that best serves the supplied source
-material within the provided safe duration range. Do not pad a weak story or omit essential
-context just to target a particular length. Reference only source IDs included in the input."""
+Use a hook, main information, and a takeaway where source material supports one. Choose a total
+duration within the supplied range. Evidence must use only supplied source IDs, segment IDs, or
+asset IDs."""

@@ -24,6 +24,7 @@ SUPPORTED_VIDEO_EXTENSIONS = frozenset(
         ".mpg",
     }
 )
+SUPPORTED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _SAFE_JOB_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 _SAFE_SOURCE_ID = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
@@ -57,6 +58,18 @@ class FileManager:
             raise InvalidInputError("The uploaded file does not have a video MIME type")
         return safe_name
 
+    def validate_image_upload_metadata(self, filename: str | None, content_type: str | None) -> str:
+        safe_name = self.sanitize_filename(filename or "")
+        extension = Path(safe_name).suffix.lower()
+        if extension not in SUPPORTED_IMAGE_EXTENSIONS:
+            supported = ", ".join(sorted(SUPPORTED_IMAGE_EXTENSIONS))
+            raise InvalidInputError(f"Unsupported image format. Supported formats: {supported}")
+        if content_type and not (
+            content_type.startswith("image/") or content_type == "application/octet-stream"
+        ):
+            raise InvalidInputError("The uploaded file does not have an image MIME type")
+        return safe_name
+
     def sanitize_filename(self, filename: str) -> str:
         base_name = Path(filename).name.strip()
         if not base_name or base_name in {".", ".."}:
@@ -81,7 +94,7 @@ class FileManager:
     def upload_source_path(self, job_id: str, filename: str) -> Path:
         return self.workspace_dir(job_id) / f"source{Path(filename).suffix.lower()}"
 
-    def reel_upload_source_path(
+    def clip_upload_source_path(
         self,
         job_id: str,
         source_id: str,
@@ -91,22 +104,31 @@ class FileManager:
         filename_with_extension = f"{source_id}{Path(filename).suffix.lower()}"
         return self.workspace_dir(job_id) / "sources" / filename_with_extension
 
+    def reel_upload_source_path(self, job_id: str, source_id: str, filename: str) -> Path:
+        """Store reel video and image uploads under the same managed source directory."""
+        return self.clip_upload_source_path(job_id, source_id, filename)
+
+    def reel_article_image_path(self, job_id: str, source_id: str, asset_id: str) -> Path:
+        self._validate_source_id(source_id)
+        self._validate_source_id(asset_id)
+        return self.workspace_dir(job_id) / "article-images" / source_id / f"{asset_id}.image"
+
     def downloaded_source_template(self, job_id: str) -> Path:
         return self.download_dir(job_id) / "source.%(ext)s"
 
-    def reel_downloaded_source_template(self, job_id: str, source_id: str) -> Path:
+    def clip_downloaded_source_template(self, job_id: str, source_id: str) -> Path:
         self._validate_source_id(source_id)
         return self.download_dir(job_id) / source_id / "source.%(ext)s"
 
-    def reel_source_audio_path(self, job_id: str, source_id: str) -> Path:
+    def clip_source_audio_path(self, job_id: str, source_id: str) -> Path:
         self._validate_source_id(source_id)
         return self.workspace_dir(job_id) / "audio" / f"{source_id}.wav"
 
-    def reel_narration_path(self, job_id: str) -> Path:
-        return self.workspace_dir(job_id) / "narration.wav"
+    def reel_source_audio_path(self, job_id: str, source_id: str) -> Path:
+        return self.clip_source_audio_path(job_id, source_id)
 
-    def reel_path(self, job_id: str) -> Path:
-        return self.output_dir(job_id) / "reel.mp4"
+    def clip_narration_path(self, job_id: str) -> Path:
+        return self.workspace_dir(job_id) / "narration.wav"
 
     def find_upload_source(self, job_id: str) -> Path:
         sources = sorted(self.workspace_dir(job_id).glob("source.*"))
@@ -154,11 +176,11 @@ class FileManager:
         destination.write_text(json.dumps(framing, indent=2), encoding="utf-8")
         return destination
 
-    def write_reel_sources(self, job_id: str, sources: list[Mapping[str, Any]]) -> Path:
-        return self._write_job_json(job_id, "reel_sources.json", sources)
+    def write_clip_sources(self, job_id: str, sources: list[Mapping[str, Any]]) -> Path:
+        return self._write_job_json(job_id, "clip_sources.json", sources)
 
-    def write_reel_script(self, job_id: str, script: Mapping[str, Any]) -> Path:
-        return self._write_job_json(job_id, "reel_script.json", script)
+    def write_clip_script(self, job_id: str, script: Mapping[str, Any]) -> Path:
+        return self._write_job_json(job_id, "clip_script.json", script)
 
     def write_narration_timing(self, job_id: str, narration: Mapping[str, Any]) -> Path:
         return self._write_job_json(job_id, "narration.json", narration)
@@ -166,7 +188,31 @@ class FileManager:
     def write_broll_timeline(self, job_id: str, timeline: list[Mapping[str, Any]]) -> Path:
         return self._write_job_json(job_id, "broll_timeline.json", timeline)
 
-    def clip_path(self, job_id: str, filename: str) -> Path:
+    def write_reel_sources(self, job_id: str, sources: list[Mapping[str, Any]]) -> Path:
+        return self._write_job_json(job_id, "reel_sources.json", sources)
+
+    def write_reel_story_candidates(self, job_id: str, stories: list[Mapping[str, Any]]) -> Path:
+        return self._write_job_json(job_id, "reel_story_candidates.json", stories)
+
+    def write_reel_editorial(self, job_id: str, editorial: Mapping[str, Any]) -> Path:
+        return self._write_job_json(job_id, "reel_editorial.json", editorial)
+
+    def write_reel_narration(self, job_id: str, narration: Mapping[str, Any]) -> Path:
+        return self._write_job_json(job_id, "reel_narration.json", narration)
+
+    def write_reel_script(self, job_id: str, script: Mapping[str, Any]) -> Path:
+        return self._write_job_json(job_id, "reel_script.json", script)
+
+    def write_reel_scenes(self, job_id: str, scenes: list[Mapping[str, Any]]) -> Path:
+        return self._write_job_json(job_id, "reel_scenes.json", scenes)
+
+    def write_reel_plan(self, job_id: str, plan: Mapping[str, Any]) -> Path:
+        destination = self.reel_plan_path(job_id)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        return destination
+
+    def clip_path(self, job_id: str, filename: str = "clip.mp4") -> Path:
         if Path(filename).name != filename or Path(filename).suffix.lower() != ".mp4":
             raise InvalidInputError("Invalid clip filename")
         directory = self.output_dir(job_id)
@@ -174,6 +220,38 @@ class FileManager:
         if not candidate.is_relative_to(directory.resolve()):
             raise InvalidInputError("Invalid clip path")
         return candidate
+
+    def reel_path(self, job_id: str) -> Path:
+        return self._managed_output_path(job_id, "story_01.mp4")
+
+    def reel_narration_path(self, job_id: str) -> Path:
+        """Return the optional final narration WAV stored with a completed v0.5 reel."""
+        return self._managed_output_path(job_id, "narration.wav")
+
+    def persist_reel_narration(self, job_id: str, source: Path) -> Path:
+        """Copy a completed workspace narration WAV into the managed reel output directory."""
+        workspace = self.workspace_dir(job_id).resolve()
+        resolved_source = source.resolve()
+        if (
+            not resolved_source.is_relative_to(workspace)
+            or resolved_source.suffix.lower() != ".wav"
+        ):
+            raise InvalidInputError("Invalid reel narration source")
+        if not resolved_source.is_file():
+            raise InvalidInputError("Completed reel narration is unavailable")
+        destination = self.reel_narration_path(job_id)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(resolved_source, destination)
+        return destination
+
+    def reel_plan_path(self, job_id: str) -> Path:
+        return self._managed_output_path(job_id, "story_01.json")
+
+    def tts_cache_dir(self) -> Path:
+        """Return the controlled local cache for reusable provider-normalized narration WAVs."""
+        directory = self.settings.data_dir / "cache" / "tts"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
     def cleanup_successful_job(self, job_id: str) -> None:
         shutil.rmtree(self.workspace_dir(job_id), ignore_errors=True)
@@ -193,3 +271,10 @@ class FileManager:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return destination
+
+    def _managed_output_path(self, job_id: str, filename: str) -> Path:
+        directory = self.output_dir(job_id)
+        candidate = (directory / filename).resolve()
+        if not candidate.is_relative_to(directory.resolve()):
+            raise InvalidInputError("Invalid managed output path")
+        return candidate

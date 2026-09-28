@@ -1,4 +1,4 @@
-"""OpenAI-compatible generation of validated multi-source reel narration."""
+"""OpenAI-compatible generation of validated multi-source clip narration."""
 
 from __future__ import annotations
 
@@ -11,16 +11,17 @@ from typing import Protocol
 from app.core.config import Settings
 from app.core.exceptions import LLMError
 from app.models.article import ArticleDocument
-from app.models.script import ReelScript
+from app.models.script import ClipScript
 from app.models.transcript import TranscriptSegment
-from app.prompts.reel_script import SYSTEM_PROMPT
+from app.prompts.clip_script import SYSTEM_PROMPT
+from app.services.openrouter import request_with_rate_limit_retries
 
 logger = logging.getLogger(__name__)
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
 class ScriptGenerator(Protocol):
-    """Produces a structured reel narration from normalized source material."""
+    """Produces a structured clip narration from normalized source material."""
 
     def generate(
         self,
@@ -28,7 +29,7 @@ class ScriptGenerator(Protocol):
         video_transcripts: Mapping[str, Sequence[TranscriptSegment]],
         minimum_duration_seconds: int,
         maximum_duration_seconds: int,
-    ) -> ReelScript: ...
+    ) -> ClipScript: ...
 
 
 class OpenRouterScriptGenerator:
@@ -43,7 +44,7 @@ class OpenRouterScriptGenerator:
         video_transcripts: Mapping[str, Sequence[TranscriptSegment]],
         minimum_duration_seconds: int,
         maximum_duration_seconds: int,
-    ) -> ReelScript:
+    ) -> ClipScript:
         if not self.settings.llm_is_configured:
             raise LLMError("OPENROUTER_API_KEY is not configured")
         user_message = build_script_message(
@@ -54,26 +55,28 @@ class OpenRouterScriptGenerator:
         )
         allowed_source_ids = {article.source_id for article in articles} | set(video_transcripts)
         if not allowed_source_ids:
-            raise LLMError("A reel requires at least one article or transcribed video source")
+            raise LLMError("A clip requires at least one article or transcribed video source")
 
         client = self._create_client()
         failures: list[str] = []
         for attempt in range(2):
-            try:
-                completion = client.chat.completions.create(
+            content = request_with_rate_limit_retries(
+                self.settings,
+                lambda request_message=user_message: client.chat.completions.create(
                     model=self.settings.llm_model,
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
+                        {"role": "user", "content": request_message},
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.25,
                     max_tokens=4_000,
-                )
-                content = completion.choices[0].message.content
+                ).choices[0].message.content,
+            )
+            try:
                 if not content:
-                    raise LLMError("The LLM returned an empty reel script")
-                script = parse_reel_script(content)
+                    raise LLMError("The LLM returned an empty clip script")
+                script = parse_clip_script(content)
                 self._validate_script(
                     script,
                     allowed_source_ids,
@@ -83,12 +86,12 @@ class OpenRouterScriptGenerator:
                 return script
             except Exception as error:
                 failures.append(str(error))
-                logger.warning("Reel script attempt %s failed: %s", attempt + 1, error)
+                logger.warning("Clip script attempt %s failed: %s", attempt + 1, error)
                 user_message += (
                     "\nReturn only valid JSON using only supplied source IDs and durations."
                 )
         raise LLMError(
-            f"The LLM returned an invalid reel script after two attempts: {failures[-1]}"
+            f"The LLM returned an invalid clip script after two attempts: {failures[-1]}"
         )
 
     def _create_client(self) -> object:
@@ -106,7 +109,7 @@ class OpenRouterScriptGenerator:
 
     def _validate_script(
         self,
-        script: ReelScript,
+        script: ClipScript,
         allowed_source_ids: set[str],
         minimum_duration_seconds: int,
         maximum_duration_seconds: int,
@@ -118,10 +121,10 @@ class OpenRouterScriptGenerator:
             if source_id not in allowed_source_ids
         }
         if unknown_source_ids:
-            raise LLMError("The reel script referenced sources that were not provided")
+            raise LLMError("The clip script referenced sources that were not provided")
         if not minimum_duration_seconds <= script.planned_duration <= maximum_duration_seconds:
             raise LLMError(
-                "The reel script duration is outside the allowed range "
+                "The clip script duration is outside the allowed range "
                 f"({script.planned_duration:.1f}s; expected {minimum_duration_seconds}-"
                 f"{maximum_duration_seconds}s)"
             )
@@ -158,7 +161,7 @@ def build_script_message(
                 }
             )
     if not sources:
-        raise LLMError("A reel requires usable article text or a video transcript")
+        raise LLMError("A clip requires usable article text or a video transcript")
     payload = {
         "duration_range_seconds": {
             "minimum": minimum_duration_seconds,
@@ -166,18 +169,18 @@ def build_script_message(
         },
         "sources": sources,
     }
-    return "Create a news reel script from this JSON source data:\n" + json.dumps(
+    return "Create a news clip script from this JSON source data:\n" + json.dumps(
         payload,
         ensure_ascii=True,
     )
 
 
-def parse_reel_script(content: str) -> ReelScript:
+def parse_clip_script(content: str) -> ClipScript:
     """Validate untrusted model output before it reaches audio or video composition."""
     normalized = _CODE_FENCE.sub("", content.strip())
     try:
-        return ReelScript.model_validate_json(normalized)
+        return ClipScript.model_validate_json(normalized)
     except Exception as error:
         raise LLMError(
-            f"The LLM response does not match the reel script schema: {error}"
+            f"The LLM response does not match the clip script schema: {error}"
         ) from error

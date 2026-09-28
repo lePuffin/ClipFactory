@@ -14,20 +14,29 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import register_error_handlers, router
 from app.core.config import Settings, get_settings
 from app.pipelines.dispatch import JobDispatcher, JobProcessor
+from app.pipelines.generate_clip import ClipGenerationPipeline
 from app.pipelines.generate_reel import ReelGenerationPipeline
 from app.pipelines.process import ProcessingPipeline
 from app.services.article_ingestion import ArticleIngestionService
 from app.services.broll_selection import BRollSelector
-from app.services.composition import ReelCompositionService
+from app.services.composition import ClipCompositionService
 from app.services.crop import SmartCropper
+from app.services.editorial import OpenRouterEditorialEngine
 from app.services.ffmpeg import FFmpegService
 from app.services.files import FileManager
 from app.services.jobs import JobStore
 from app.services.llm import OpenRouterClipSelector
+from app.services.reel_composition import ReelCompositionService
+from app.services.reel_narration import build_reel_narration_service
+from app.services.reel_script_generation import OpenRouterReelScriptGenerator
 from app.services.runner import JobRunner
+from app.services.scene_planning import OpenRouterScenePlanner
 from app.services.script_generation import OpenRouterScriptGenerator
+from app.services.source_analysis import OpenRouterSourceAnalyzer
+from app.services.story_selection import OpenRouterStorySelector
 from app.services.transcription import FasterWhisperTranscriber
 from app.services.tts import resolve_tts_service
+from app.services.visual_selection import VisualSelector
 from app.services.youtube import YoutubeDownloader
 
 logger = logging.getLogger(__name__)
@@ -55,7 +64,7 @@ def build_container(
     cropper = SmartCropper.from_settings(settings)
     transcriber = FasterWhisperTranscriber(settings)
     youtube = YoutubeDownloader()
-    clip_pipeline = ProcessingPipeline(
+    processing_pipeline = ProcessingPipeline(
         settings=settings,
         files=files,
         jobs=jobs,
@@ -65,7 +74,7 @@ def build_container(
         cropper=cropper,
         youtube=youtube,
     )
-    reel_pipeline = ReelGenerationPipeline(
+    clip_pipeline = ClipGenerationPipeline(
         settings=settings,
         files=files,
         jobs=jobs,
@@ -75,10 +84,27 @@ def build_container(
         script_generator=OpenRouterScriptGenerator(settings),
         tts=resolve_tts_service(settings),
         broll_selector=BRollSelector(),
-        composer=ReelCompositionService(ffmpeg, cropper),
+        composer=ClipCompositionService(ffmpeg, cropper),
         youtube=youtube,
     )
-    dispatcher = JobDispatcher(jobs, clip_pipeline, reel_pipeline)
+    reel_pipeline = ReelGenerationPipeline(
+        settings=settings,
+        files=files,
+        jobs=jobs,
+        ffmpeg=ffmpeg,
+        article_ingestion=ArticleIngestionService(),
+        transcriber=transcriber,
+        source_analyzer=OpenRouterSourceAnalyzer(settings),
+        story_selector=OpenRouterStorySelector(settings),
+        script_generator=OpenRouterReelScriptGenerator(settings),
+        scene_planner=OpenRouterScenePlanner(settings),
+        visual_selector=VisualSelector(),
+        composer=ReelCompositionService(ffmpeg, cropper),
+        youtube=youtube,
+        editorial_engine=OpenRouterEditorialEngine(settings),
+        narration_factory=build_reel_narration_service,
+    )
+    dispatcher = JobDispatcher(jobs, processing_pipeline, clip_pipeline, reel_pipeline)
     return ApplicationContainer(
         settings=settings,
         files=files,
@@ -105,7 +131,7 @@ def create_app(
         finally:
             container.runner.shutdown()
 
-    app = FastAPI(title="ClipFactory", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="ClipFactory", version="0.5.0", lifespan=lifespan)
     register_error_handlers(app)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

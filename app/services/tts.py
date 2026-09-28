@@ -12,7 +12,7 @@ import numpy as np
 
 from app.core.config import Settings
 from app.core.exceptions import ClipFactoryError
-from app.models.script import NarrationTiming, ReelScript
+from app.models.script import ClipScript, NarrationTiming
 
 
 class TTSError(ClipFactoryError):
@@ -37,20 +37,21 @@ class TTSService(Protocol):
     @property
     def unavailable_reason(self) -> str | None: ...
 
-    def synthesize(self, script: ReelScript, destination: Path) -> NarrationAudio: ...
+    def synthesize(self, script: ClipScript, destination: Path) -> NarrationAudio: ...
 
 
 class ChatterboxTTSService:
-    """Uses the Chatterbox Turbo English model when available, with a pyttsx3 fallback."""
+    """Uses Chatterbox Turbo, with an explicitly configured optional pyttsx3 fallback."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, fallback_enabled: bool = False) -> None:
         self.settings = settings
+        self.fallback_enabled = fallback_enabled
         self._model: Any | None = None
         self._availability_error: str | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Self:
-        return cls(settings)
+        return cls(settings, fallback_enabled=settings.tts_fallback_enabled)
 
     @property
     def is_available(self) -> bool:
@@ -67,7 +68,7 @@ class ChatterboxTTSService:
             return None
         return self._availability_error
 
-    def synthesize(self, script: ReelScript, destination: Path) -> NarrationAudio:
+    def synthesize(self, script: ClipScript, destination: Path) -> NarrationAudio:
         try:
             model = self._get_model()
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -78,12 +79,20 @@ class ChatterboxTTSService:
             narration = self._assemble_wav(segment_paths, destination)
             return narration
         except TTSError as error:
+            if not self.fallback_enabled:
+                destination.unlink(missing_ok=True)
+                raise
             fallback = Pyttsx3TTSService.from_settings(self.settings)
             if fallback.is_available:
                 return fallback.synthesize(script, destination)
             destination.unlink(missing_ok=True)
-            raise TTSError(str(error) or fallback.unavailable_reason or "Chatterbox Turbo is unavailable") from error
+            raise TTSError(
+                str(error) or fallback.unavailable_reason or "Chatterbox Turbo is unavailable"
+            ) from error
         except Exception as error:
+            if not self.fallback_enabled:
+                destination.unlink(missing_ok=True)
+                raise TTSError(f"Chatterbox narration synthesis failed: {error}") from error
             fallback = Pyttsx3TTSService.from_settings(self.settings)
             if fallback.is_available:
                 return fallback.synthesize(script, destination)
@@ -92,6 +101,29 @@ class ChatterboxTTSService:
         finally:
             if (destination.parent / "tts-segments").exists():
                 shutil.rmtree(destination.parent / "tts-segments", ignore_errors=True)
+
+    @staticmethod
+    def _patch_perth_watermarker_compatibility() -> None:
+        import logging
+
+        logger = logging.getLogger("app.services.tts")
+        try:
+            import perth
+        except Exception:
+            return
+
+        if getattr(perth, "PerthImplicitWatermarker", None) is not None:
+            return
+
+        if hasattr(perth, "DummyWatermarker"):
+            logger.warning(
+                "TTS: Perth implicit watermarking is unavailable; using a dummy no-op "
+                "watermarker compatibility shim."
+            )
+            perth.PerthImplicitWatermarker = perth.DummyWatermarker
+            if "PerthImplicitWatermarker" not in getattr(perth, "__all__", []):
+                perth.__all__.append("PerthImplicitWatermarker")
+            return
 
     def _get_model(self) -> Any:
         if self._model is not None:
@@ -107,8 +139,10 @@ class ChatterboxTTSService:
 
         try:
             import logging
+
             logger = logging.getLogger("app.services.tts")
-            
+            self._patch_perth_watermarker_compatibility()
+
             # Determine target device
             if self.settings.tts_force_cpu:
                 device = "cpu"
@@ -119,7 +153,7 @@ class ChatterboxTTSService:
             else:
                 device = "cpu"
                 logger.info("TTS: CUDA not available, using CPU")
-            
+
             # Attempt model load
             try:
                 self._model = ChatterboxTurboTTS.from_pretrained(device=device)
@@ -129,13 +163,12 @@ class ChatterboxTTSService:
                 # CUDA device incompatibility or CUDA out of memory
                 error_msg = str(cuda_error).lower()
                 if device == "cuda" and (
-                    "no kernel image is available" in error_msg 
+                    "no kernel image is available" in error_msg
                     or "cuda" in error_msg
                     or "out of memory" in error_msg
                 ):
                     logger.warning(
-                        f"TTS: GPU initialization failed ({error_msg[:100]}), "
-                        f"falling back to CPU"
+                        f"TTS: GPU initialization failed ({error_msg[:100]}), falling back to CPU"
                     )
                     device = "cpu"
                     self._model = ChatterboxTurboTTS.from_pretrained(device=device)
@@ -151,7 +184,7 @@ class ChatterboxTTSService:
     def _synthesize_sentences(
         self,
         model: Any,
-        script: ReelScript,
+        script: ClipScript,
         segment_directory: Path,
     ) -> tuple[Path, ...]:
         paths: list[Path] = []
@@ -178,7 +211,7 @@ class ChatterboxTTSService:
 
     def _assemble_wav(self, paths: tuple[Path, ...], destination: Path) -> NarrationAudio:
         if not paths:
-            raise TTSError("The reel script does not contain narration sentences")
+            raise TTSError("The clip script does not contain narration sentences")
         reference_params: tuple[int, int, int, str, str] | None = None
         cursor = 0.0
         timings: list[NarrationTiming] = []
@@ -197,21 +230,15 @@ class ChatterboxTTSService:
                             reference_params = params
                             output.setparams(input_file.getparams())
                         elif params != reference_params:
-                            raise TTSError(
-                                "Chatterbox Turbo produced incompatible WAV segments"
-                            )
+                            raise TTSError("Chatterbox Turbo produced incompatible WAV segments")
                         frame_count = input_file.getnframes()
                         frame_rate = input_file.getframerate()
                         output.writeframes(input_file.readframes(frame_count))
                 except wave.Error as error:
-                    raise TTSError(
-                        "Chatterbox Turbo produced an invalid WAV segment"
-                    ) from error
+                    raise TTSError("Chatterbox Turbo produced an invalid WAV segment") from error
 
                 spoken_duration = frame_count / frame_rate
-                pause = (
-                    self.settings.tts_sentence_pause_seconds if index < len(paths) - 1 else 0
-                )
+                pause = self.settings.tts_sentence_pause_seconds if index < len(paths) - 1 else 0
                 if pause:
                     output.writeframes(self._silence_frames(reference_params, pause))
                 end = cursor + spoken_duration + pause
@@ -266,7 +293,7 @@ class Pyttsx3TTSService:
             return None
         return self._availability_error
 
-    def synthesize(self, script: ReelScript, destination: Path) -> NarrationAudio:
+    def synthesize(self, script: ClipScript, destination: Path) -> NarrationAudio:
         engine = self._get_engine()
         destination.parent.mkdir(parents=True, exist_ok=True)
         segment_directory = destination.parent / "tts-segments"
@@ -316,7 +343,7 @@ class Pyttsx3TTSService:
     def _synthesize_sentences(
         self,
         engine: Any,
-        script: ReelScript,
+        script: ClipScript,
         segment_directory: Path,
     ) -> tuple[Path, ...]:
         paths: list[Path] = []
@@ -331,7 +358,7 @@ class Pyttsx3TTSService:
 
     def _assemble_wav(self, paths: tuple[Path, ...], destination: Path) -> NarrationAudio:
         if not paths:
-            raise TTSError("The reel script does not contain narration sentences")
+            raise TTSError("The clip script does not contain narration sentences")
         reference_params: tuple[int, int, int, str, str] | None = None
         cursor = 0.0
         timings: list[NarrationTiming] = []
@@ -362,9 +389,7 @@ class Pyttsx3TTSService:
                     ) from error
 
                 spoken_duration = frame_count / frame_rate
-                pause = (
-                    self.settings.tts_sentence_pause_seconds if index < len(paths) - 1 else 0
-                )
+                pause = self.settings.tts_sentence_pause_seconds if index < len(paths) - 1 else 0
                 if pause:
                     output.writeframes(self._silence_frames(reference_params, pause))
                 end = cursor + spoken_duration + pause

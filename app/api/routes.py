@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.core.exceptions import InvalidInputError, JobNotFoundError
 from app.models.job import JobRecord
-from app.models.source import ReelSourceOrigin, ReelSourceType, Source
+from app.models.reel import NarrationRequest, TTSOptions
+from app.models.source import ClipSourceOrigin, ClipSourceType, Source
 from app.services.article_ingestion import ArticleIngestionService, validate_article_url
 from app.services.files import FileManager
 from app.services.youtube import validate_youtube_url
@@ -41,6 +42,13 @@ def health(request: Request) -> dict[str, object]:
         "ffmpeg_available": container.ffmpeg.is_available,
         "llm_configured": container.settings.llm_is_configured,
         "whisper_model": container.settings.whisper_model,
+        "tts": {
+            "enabled": container.settings.tts_enabled,
+            "provider": container.settings.tts_provider,
+            "voice": container.settings.tts_voice_id,
+            "language": container.settings.tts_language,
+            "speed": container.settings.tts_speed,
+        },
     }
 
 
@@ -83,8 +91,8 @@ async def create_upload_job(
         await file.close()
 
 
-@router.post("/jobs/reel", response_model=JobRecord)
-async def create_reel_job(
+@router.post("/jobs/clip", response_model=JobRecord)
+async def create_clip_job(
     request: Request,
     video_files: Annotated[list[UploadFile] | None, File(description="Local source videos")] = None,
     urls: Annotated[list[str] | None, Form()] = None,
@@ -92,12 +100,12 @@ async def create_reel_job(
     youtube_urls: Annotated[list[str] | None, Form()] = None,
     article_urls: Annotated[list[str] | None, Form()] = None,
 ) -> JobRecord:
-    """Normalize mixed local/video/article sources into one managed reel job."""
+    """Normalize mixed local/video/article sources into one managed clip job."""
     container = request.app.state.container
     uploads = video_files or []
     job_id = uuid4().hex
     try:
-        sources = await _build_reel_sources(
+        sources = await _build_clip_sources(
             container.files,
             job_id,
             uploads,
@@ -107,14 +115,14 @@ async def create_reel_job(
             article_urls or [],
         )
         if not sources:
-            raise InvalidInputError("Add at least one video or article source to create a reel")
+            raise InvalidInputError("Add at least one video or article source to create a clip")
         job = container.jobs.create(
             JobRecord(
                 id=job_id,
-                job_type="reel",
-                source_type="reel",
+                job_type="clip",
+                source_type="clip",
                 source_name=(
-                    f"News reel from {len(sources)} source{'s' if len(sources) != 1 else ''}"
+                    f"News clip from {len(sources)} source{'s' if len(sources) != 1 else ''}"
                 ),
                 sources=sources,
             )
@@ -126,6 +134,71 @@ async def create_reel_job(
         raise
     finally:
         for upload in uploads:
+            await upload.close()
+
+
+@router.post("/jobs/story-clip", response_model=JobRecord)
+@router.post("/jobs/reel", response_model=JobRecord, include_in_schema=False)
+async def create_story_clip_job(
+    request: Request,
+    video_files: Annotated[list[UploadFile] | None, File(description="Local source videos")] = None,
+    image_files: Annotated[list[UploadFile] | None, File(description="Local source images")] = None,
+    urls: Annotated[list[str] | None, Form()] = None,
+    article_texts: Annotated[list[str] | None, Form()] = None,
+    youtube_urls: Annotated[list[str] | None, Form()] = None,
+    article_urls: Annotated[list[str] | None, Form()] = None,
+    tts_enabled: Annotated[bool | None, Form()] = None,
+    tts_provider: Annotated[Literal["pyttsx3", "chatterbox"] | None, Form()] = None,
+    tts_voice: Annotated[str | None, Form(max_length=300)] = None,
+    tts_language: Annotated[str | None, Form(min_length=2, max_length=16)] = None,
+    tts_speed: Annotated[float | None, Form(ge=0.75, le=1.25)] = None,
+) -> JobRecord:
+    """Normalize heterogeneous sources into one managed v0.5 narrated rough-clip job."""
+    container = request.app.state.container
+    video_uploads = video_files or []
+    image_uploads = image_files or []
+    job_id = uuid4().hex
+    try:
+        sources = await _build_reel_sources(
+            container.files,
+            job_id,
+            video_uploads,
+            image_uploads,
+            urls or [],
+            article_texts or [],
+            youtube_urls or [],
+            article_urls or [],
+        )
+        if not sources:
+            raise InvalidInputError(
+                "Add at least one video, image, or article source to create a clip"
+            )
+        job = container.jobs.create(
+            JobRecord(
+                id=job_id,
+                job_type="reel",
+                source_type="reel",
+                source_name=(
+                    f"Rough clip from {len(sources)} source{'s' if len(sources) != 1 else ''}"
+                ),
+                sources=sources,
+                narration_request=_narration_request(
+                    container.settings,
+                    tts_enabled,
+                    tts_provider,
+                    tts_voice,
+                    tts_language,
+                    tts_speed,
+                ),
+            )
+        )
+        container.runner.submit(job.id)
+        return job
+    except Exception:
+        container.files.cleanup_successful_job(job_id)
+        raise
+    finally:
+        for upload in [*video_uploads, *image_uploads]:
             await upload.close()
 
 
@@ -144,7 +217,7 @@ def create_youtube_job(payload: YoutubeJobRequest, request: Request) -> JobRecor
     return job
 
 
-async def _build_reel_sources(
+async def _build_clip_sources(
     files: FileManager,
     job_id: str,
     video_files: Sequence[UploadFile],
@@ -168,13 +241,13 @@ async def _build_reel_sources(
         source_id = f"video-{video_index:02d}"
         await files.save_upload(
             upload,
-            files.reel_upload_source_path(job_id, source_id, safe_name),
+            files.clip_upload_source_path(job_id, source_id, safe_name),
         )
         sources.append(
             Source(
                 id=source_id,
-                type=ReelSourceType.VIDEO,
-                origin=ReelSourceOrigin.UPLOAD,
+                type=ClipSourceType.VIDEO,
+                origin=ClipSourceOrigin.UPLOAD,
                 name=safe_name,
                 reference=safe_name,
             )
@@ -193,8 +266,8 @@ async def _build_reel_sources(
         sources.append(
             Source(
                 id=source_id,
-                type=ReelSourceType.VIDEO,
-                origin=ReelSourceOrigin.YOUTUBE,
+                type=ClipSourceType.VIDEO,
+                origin=ClipSourceOrigin.YOUTUBE,
                 name=f"YouTube video {video_index:02d}",
                 reference=normalized_url,
             )
@@ -205,8 +278,8 @@ async def _build_reel_sources(
         source_id = f"article-{article_index:02d}"
         source = Source(
             id=source_id,
-            type=ReelSourceType.ARTICLE,
-            origin=ReelSourceOrigin.ARTICLE_TEXT,
+            type=ClipSourceType.ARTICLE,
+            origin=ClipSourceOrigin.ARTICLE_TEXT,
             name=f"Pasted article {article_index:02d}",
             reference=text,
         )
@@ -220,8 +293,102 @@ async def _build_reel_sources(
         sources.append(
             Source(
                 id=source_id,
-                type=ReelSourceType.ARTICLE,
-                origin=ReelSourceOrigin.ARTICLE_URL,
+                type=ClipSourceType.ARTICLE,
+                origin=ClipSourceOrigin.ARTICLE_URL,
+                name=f"Article from {hostname}"[:180],
+                reference=normalized_url,
+            )
+        )
+        article_index += 1
+    return sources
+
+
+async def _build_reel_sources(
+    files: FileManager,
+    job_id: str,
+    video_files: Sequence[UploadFile],
+    image_files: Sequence[UploadFile],
+    urls: Sequence[str],
+    article_texts: Sequence[str],
+    youtube_urls: Sequence[str],
+    article_urls: Sequence[str],
+) -> list[Source]:
+    values = {
+        "urls": _provided_values(urls),
+        "youtube_urls": _provided_values(youtube_urls),
+        "article_texts": _provided_values(article_texts),
+        "article_urls": _provided_values(article_urls),
+    }
+    sources: list[Source] = []
+    video_index = 1
+    article_index = 1
+    image_index = 1
+    for upload in video_files:
+        safe_name = files.validate_upload_metadata(upload.filename, upload.content_type)
+        source_id = f"video-{video_index:02d}"
+        await files.save_upload(upload, files.reel_upload_source_path(job_id, source_id, safe_name))
+        sources.append(
+            Source(
+                id=source_id,
+                type=ClipSourceType.VIDEO,
+                origin=ClipSourceOrigin.UPLOAD,
+                name=safe_name,
+                reference=safe_name,
+            )
+        )
+        video_index += 1
+    for upload in image_files:
+        safe_name = files.validate_image_upload_metadata(upload.filename, upload.content_type)
+        source_id = f"image-{image_index:02d}"
+        await files.save_upload(upload, files.reel_upload_source_path(job_id, source_id, safe_name))
+        sources.append(
+            Source(
+                id=source_id,
+                type=ClipSourceType.IMAGE,
+                origin=ClipSourceOrigin.UPLOAD,
+                name=safe_name,
+                reference=safe_name,
+            )
+        )
+        image_index += 1
+    for url in values["urls"]:
+        source, video_index, article_index = _source_from_url(url, video_index, article_index)
+        sources.append(source)
+    for url in values["youtube_urls"]:
+        source_id = f"video-{video_index:02d}"
+        normalized_url = validate_youtube_url(url)
+        sources.append(
+            Source(
+                id=source_id,
+                type=ClipSourceType.VIDEO,
+                origin=ClipSourceOrigin.YOUTUBE,
+                name=f"YouTube video {video_index:02d}",
+                reference=normalized_url,
+            )
+        )
+        video_index += 1
+    article_ingestion = ArticleIngestionService()
+    for text in values["article_texts"]:
+        source_id = f"article-{article_index:02d}"
+        source = Source(
+            id=source_id,
+            type=ClipSourceType.ARTICLE,
+            origin=ClipSourceOrigin.ARTICLE_TEXT,
+            name=f"Pasted article {article_index:02d}",
+            reference=text,
+        )
+        article_ingestion.ingest(source)
+        sources.append(source)
+        article_index += 1
+    for url in values["article_urls"]:
+        source_id = f"article-{article_index:02d}"
+        normalized_url = validate_article_url(url)
+        hostname = urlparse(normalized_url).hostname or "article"
+        sources.append(
+            Source(
+                id=source_id,
+                type=ClipSourceType.ARTICLE,
+                origin=ClipSourceOrigin.ARTICLE_URL,
                 name=f"Article from {hostname}"[:180],
                 reference=normalized_url,
             )
@@ -243,8 +410,8 @@ def _source_from_url(
         return (
             Source(
                 id=f"article-{article_index:02d}",
-                type=ReelSourceType.ARTICLE,
-                origin=ReelSourceOrigin.ARTICLE_URL,
+                type=ClipSourceType.ARTICLE,
+                origin=ClipSourceOrigin.ARTICLE_URL,
                 name=f"Article from {hostname}"[:180],
                 reference=normalized_url,
             ),
@@ -254,8 +421,8 @@ def _source_from_url(
     return (
         Source(
             id=f"video-{video_index:02d}",
-            type=ReelSourceType.VIDEO,
-            origin=ReelSourceOrigin.YOUTUBE,
+            type=ClipSourceType.VIDEO,
+            origin=ClipSourceOrigin.YOUTUBE,
             name=f"Video from {urlparse(normalized_url).hostname}"[:180],
             reference=normalized_url,
         ),
@@ -268,8 +435,42 @@ def _provided_values(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(value.strip() for value in values if value.strip())
 
 
+def _narration_request(
+    settings: object,
+    enabled: bool | None,
+    provider: Literal["pyttsx3", "chatterbox"] | None,
+    voice: str | None,
+    language: str | None,
+    speed: float | None,
+) -> NarrationRequest:
+    """Freeze safe generic narration choices so delayed job execution cannot change them."""
+    from app.core.config import Settings
+
+    if not isinstance(settings, Settings):
+        raise TypeError("Story clip narration requires application settings")
+    selected_provider = settings.tts_provider if provider is None else provider
+    selected_voice = voice.strip() or None if voice is not None else settings.tts_voice_id
+    if selected_provider == "chatterbox":
+        if voice is not None and selected_voice is not None:
+            raise InvalidInputError(
+                "Chatterbox Turbo does not support named voices; leave Voice blank"
+            )
+        selected_voice = None
+    return NarrationRequest(
+        enabled=settings.tts_enabled if enabled is None else enabled,
+        provider=selected_provider,
+        options=TTSOptions(
+            voice=selected_voice,
+            language=language.strip().casefold() or settings.tts_language
+            if language is not None
+            else settings.tts_language,
+            speed=settings.tts_speed if speed is None else speed,
+        ),
+    )
+
+
 @router.get("/jobs/{job_id}/clips/{filename}")
-def serve_clip(
+def serve_rendered_clip(
     job_id: str,
     filename: str,
     request: Request,
@@ -289,26 +490,72 @@ def serve_clip(
     )
 
 
-@router.get("/jobs/{job_id}/reel")
-def serve_reel(
+@router.get("/jobs/{job_id}/clip")
+def serve_clip(
     job_id: str,
     request: Request,
     download: bool = Query(default=False),
 ) -> FileResponse:
-    """Serve the single managed output created by a completed reel job."""
+    """Serve the single managed output created by a completed clip job."""
+    container = request.app.state.container
+    job = container.jobs.get(job_id)
+    if not job.is_clip():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    clip_path = container.files.clip_path(job_id)
+    if not clip_path.is_file():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    disposition = "attachment" if download else "inline"
+    return FileResponse(
+        clip_path,
+        media_type="video/mp4",
+        filename="clip.mp4",
+        content_disposition_type=disposition,
+    )
+
+
+@router.get("/jobs/{job_id}/story-clip")
+@router.get("/jobs/{job_id}/reel", include_in_schema=False)
+def serve_story_clip(
+    job_id: str,
+    request: Request,
+    download: bool = Query(default=False),
+) -> FileResponse:
+    """Serve the one managed rough-clip MP4 for a completed story-clip job."""
     container = request.app.state.container
     job = container.jobs.get(job_id)
     if not job.is_reel():
-        raise HTTPException(status_code=404, detail="Reel not found")
+        raise HTTPException(status_code=404, detail="Clip not found")
     reel_path = container.files.reel_path(job_id)
     if not reel_path.is_file():
-        raise HTTPException(status_code=404, detail="Reel not found")
-    disposition = "attachment" if download else "inline"
+        raise HTTPException(status_code=404, detail="Clip not found")
     return FileResponse(
         reel_path,
         media_type="video/mp4",
-        filename="reel.mp4",
-        content_disposition_type=disposition,
+        filename="story_01.mp4",
+        content_disposition_type="attachment" if download else "inline",
+    )
+
+
+@router.get("/jobs/{job_id}/story-clip/plan")
+@router.get("/jobs/{job_id}/reel/plan", include_in_schema=False)
+def serve_story_clip_plan(
+    job_id: str,
+    request: Request,
+    download: bool = Query(default=False),
+) -> FileResponse:
+    """Serve the persisted machine-readable story and scene plan for a story-clip job."""
+    container = request.app.state.container
+    job = container.jobs.get(job_id)
+    if not job.is_reel():
+        raise HTTPException(status_code=404, detail="Clip plan not found")
+    plan_path = container.files.reel_plan_path(job_id)
+    if not plan_path.is_file():
+        raise HTTPException(status_code=404, detail="Clip plan not found")
+    return FileResponse(
+        plan_path,
+        media_type="application/json",
+        filename="story_01.json",
+        content_disposition_type="attachment" if download else "inline",
     )
 
 

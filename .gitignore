@@ -211,7 +211,7 @@ data/
 output/
 downloads/
 temp/
-models/
+# models/
 *.mp4
 *.mov
 *.mkv

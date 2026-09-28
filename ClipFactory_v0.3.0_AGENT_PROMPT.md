@@ -1,345 +1,1195 @@
-# ClipFactory v0.3.0 Implementation Plan
+# ClipFactory v0.3.0 — Multi-Source AI Story → Rough Reel
 
-## AI-Generated News Reels from Multi-Source Input
+## Objective
 
-### Executive Summary
+Implement ClipFactory v0.3.0 as the first end-to-end multi-source content generation milestone.
 
-Transform ClipFactory from a "clip extraction" tool (v0.2) to a "reel generation" tool (v0.3) that accepts multiple video/article sources, synthesizes an AI voice-over narration, and composes vertical reels using source clips as b-roll with AI-generated visuals as filler.
+**Hard requirement:** v0.3.0 MUST produce a real, watchable 9:16 MP4 Reel/Short from multiple heterogeneous sources. The purpose is to evaluate the quality of the AI's content understanding, story selection, script generation, and visual selection before moving to later phases.
 
-**Key Constraint:** Local-first, single-user, no external publishing. Balanced quality for production evaluation.
-
----
-
-## 1. Current State Analysis (v0.2.0)
-
-### What Works
-
-- **Source acquisition:** YouTube URLs + local video files
-- **Transcription:** Whisper-based, timestamp-aligned
-- **Clip selection:** LLM-driven intelligent moment detection
-- **Smart framing:** Face detection + scene-aware camera tracking
-- **Rendering:** FFmpeg vertical (9:16) MP4 output
-- **Pipeline architecture:** Clean separation (services → pipelines → API)
-
-### What's Missing for v0.3
-
-- Multi-source input coordination (articles + videos)
-- Article text extraction and ingestion
-- Script generation from diverse sources
-- Text-to-speech synthesis with proper timing
-- B-roll assembly (source clips + AI-generated placeholders)
-- Audio/video composition and mixing
-- Reel assembly pipeline (stitch components into final video)
+This is NOT merely an ingestion/analysis milestone.
 
 ---
 
-## 2. Proposed v0.3.0 Architecture
+## 1. Existing Context
 
-### High-Level Pipeline
+ClipFactory currently has:
 
-```
-Multiple Sources (videos/articles)
-  ├── Video sources → extract key moments (v0.2 logic)
-  ├── Article sources → extract text
-  └── Combine → synthesize master narrative
-                 ↓
-        Generate script (LLM: narrative + timing)
-                 ↓
-        Generate AI voice (TTS: local open-source)
-                 ↓
-        Assemble B-roll
-        ├── Primary: source video clips (reuse v0.2 moments)
-        ├── Secondary: AI-generated visuals (placeholder/simple first)
-        └── Combine with timing
-                 ↓
-        Compose & mix (audio + video)
-                 ↓
-        Render final reel (9:16 vertical MP4)
+- v0.1.x: local video / YouTube → automatically selected clips
+- v0.2.0: dynamic scene-aware Smart Crop / virtual camera
+
+Preserve the existing v0.1.x and v0.2.0 functionality.
+
+Long-term target:
+
+```text
+1+ videos + articles + images
+        ↓
+understand source material
+        ↓
+decide what story/stories to tell
+        ↓
+write narration/script
+        ↓
+AI human-like voice
+        ↓
+select source footage/images
+        ↓
+B-roll where useful
+        ↓
+9:16 composition
+        ↓
+finished Reel/Short
 ```
 
-### Scope for v0.3.0
+v0.3.0 should establish:
 
-**IN:**
-
-- Multiple video inputs (YouTube/local)
-- Multiple article inputs (text paste or URL extraction)
-- Local TTS (e.g., pyttsx3 or gTTS)
-- Source video clip b-roll (clips extracted via v0.2 logic)
-- Placeholder/simple AI visuals (solid colors, text overlays)
-- Balanced composition (good enough for evaluation)
-
-**OUT (defer to v0.4+):**
-
-- Advanced AI image/video generation (ComfyUI, Stable Diffusion)
-- Sophisticated video effects and transitions
-- Captions/subtitles
-- Dynamic thumbnails
-- Social publishing
-- Multiple output formats (keep 9:16 only)
-
----
-
-## 3. Implementation Phases & Milestones
-
-### Phase A: Input & Data Model (Milestone 1)
-
-**Goal:** Accept and normalize multiple sources; build unified data model
-
-**Tasks:**
-
-- A1: Define `Source` model (video/article type, metadata, storage)
-- A2: Add article ingestion service (text extraction, basic parsing)
-- A3: Create `Job` model that coordinates multiple sources
-- A4: Extend UI to accept multiple inputs (drag-drop, paste text)
-- A5: Write tests for multi-source validation
-
-**Deliverable:** CLI/API accepts articles + videos, normalizes them into internal Job format
+```text
+Multiple Sources
+      ↓
+Source Acquisition
+      ↓
+Content Extraction
+      ↓
+Content Analysis
+      ↓
+Story Selection
+      ↓
+Script Generation
+      ↓
+Visual Selection
+      ↓
+Scene Plan
+      ↓
+9:16 Rendering
+      ↓
+ROUGH REEL / SHORT
+```
 
 ---
 
-### Phase B: Script Generation (Milestone 2)
+## 2. Scope
 
-**Goal:** Convert diverse sources into coherent, timed narration script
+### Implement
 
-**Tasks:**
+- Multiple local video inputs
+- YouTube URLs
+- Article URLs
+- Pasted article text
+- Local images
+- Unified source representation
+- Content extraction
+- Timestamped video transcription
+- Article extraction
+- Image/vision analysis
+- Source-level AI analysis
+- Cross-source story grouping
+- Story selection
+- Short-form script generation
+- Script provenance
+- Scene/visual planning
+- Source video segment selection
+- Source image selection
+- Existing Smart Crop during video rendering
+- Simple readable narration text overlays
+- 9:16 MP4 rendering
+- Saved machine-readable story/scene JSON
+- UI support for the workflow
+- Tests and documentation
 
-- B1: Define `Script` model (sentences, timestamps, metadata)
-- B2: Create script-generation service (LLM orchestration)
-  - Prompt: synthesize narrative from multiple sources
-  - Enforce: sentence-level granularity, estimated durations
-  - Output: structured JSON with timing hints
-- B3: Validate script coherence and timing (Pydantic)
-- B4: Write tests with fixed LLM responses (mock OpenRouter)
+### Explicitly DO NOT implement
 
-**Deliverable:** Given articles + video transcripts, produce timed script in ~2-5 minute range
+- AI TTS / voice generation
+- AI-generated B-roll
+- ComfyUI
+- social publishing
+- authentication/users
+- billing
+- cloud deployment
+- analytics
+- timeline editor
+- custom ML training
+- music generation
+- automatic thumbnails
+- sophisticated motion graphics
+- production subtitle/caption editing
 
----
-
-### Phase C: TTS & Audio Generation (Milestone 3)
-
-**Goal:** Convert script to human-quality voice with proper timing
-
-**Tasks:**
-
-- C1: Integrate local TTS (pyttsx3 or similar)
-- C2: Create TTS service (script → WAV audio file)
-  - Sentence-by-sentence with silence padding
-  - Voice speed/pitch tuning
-  - Fallback for errors
-- C3: Generate audio metadata (timestamps, durations)
-- C4: Write tests with synthetic audio samples
-
-**Deliverable:** Given script, produce aligned audio file with timing markers
-
----
-
-### Phase D: B-Roll Assembly (Milestone 4)
-
-**Goal:** Extract and organize source video clips for composition
-
-**Tasks:**
-
-- D1: Extend v0.2 clip extraction to multi-source context
-  - Extract key moments from each source video
-  - Label by source + semantic meaning
-- D2: Build `BRollClip` model (video segment, duration, source, metadata)
-- D3: Create B-roll selection service
-  - Allocate clips to script sentences
-  - Pad with placeholders (solid colors, text overlay) if insufficient clips
-- D4: Write tests with fixture video segments
-
-**Deliverable:** Given script + source videos, produce ordered list of b-roll segments ready for composition
+Those belong to later milestones.
 
 ---
 
-### Phase E: Composition & Rendering (Milestone 5)
+## 3. Inspect the Repository First
 
-**Goal:** Assemble audio + video into final 9:16 reel
+Before modifying code:
 
-**Tasks:**
+1. Inspect the complete repository structure.
+2. Understand the current v0.1.x pipeline.
+3. Understand the current v0.2.0 Smart Crop implementation.
+4. Identify existing:
+   - models
+   - services
+   - pipelines
+   - FFmpeg utilities
+   - transcription
+   - LLM abstraction
+   - API
+   - frontend
+   - job management
+   - configuration
+   - tests
+5. Run the existing test suite.
+6. Run a small existing end-to-end example if practical.
 
-- E1: Design composition strategy
-  - Audio-driven timeline (script + TTS)
-  - B-roll placed over audio
-  - Placeholder visuals fill gaps
-  - Simple transitions (fade/cut)
-- E2: Create FFmpeg composition service
-  - Build complex filter graph (audio, video, concat)
-  - Render to 1080×1920 H.264/AAC MP4
-- E3: Validate output (duration, resolution, codec)
-- E4: Write integration tests (end-to-end with fixtures)
+Adapt this specification to the existing repository. Do NOT rewrite working architecture unnecessarily.
 
-**Deliverable:** Given script + audio + b-roll, produce final 9:16 MP4 reel
-
----
-
-### Phase F: Pipeline Integration & Refinement (Milestone 6)
-
-**Goal:** Wire all phases together; optimize for quality and user feedback
-
-**Tasks:**
-
-- F1: Create unified `GenerateReel` pipeline orchestrator
-  - Coordinate phases A–E
-  - Error recovery and logging
-  - Progress reporting
-- F2: Extend UI to show reel generation status
-- F3: Test end-to-end flow (article + video → reel)
-- F4: Refinement loop
-  - Evaluate output quality
-  - Tune TTS timing, composition, b-roll selection
-  - Address user feedback
-
-**Deliverable:** Full v0.3.0 flow working via web UI; downloadable reel for evaluation
+Do NOT duplicate existing transcription, YouTube acquisition, Smart Crop, or rendering functionality.
 
 ---
 
-## 4. Technical Decisions
+## 4. Multi-Source Input
 
-### TTS Choice
+A job should accept any combination of:
 
-- **Selected:** Local open-source (pyttsx3 or gTTS)
-- **Rationale:** No API keys, cost, or latency; good enough for v0.3 evaluation
-- **Future:** Can swap for ElevenLabs, Google Cloud TTS in v0.4 if quality demands it
+- local video
+- YouTube URL
+- article URL
+- pasted article text
+- local image
 
-### B-Roll Strategy
+Examples that must be possible:
 
-- **Selected:** Mixed (source clips first, placeholders for filler)
-- **Rationale:** Reuses v0.2 extraction logic; enables end-to-end flow without external AI generation
-- **Future:** Add ComfyUI integration in v0.4 for sophisticated AI visuals
+```text
+video + video + article + article
+```
 
-### Composition Approach
+and:
 
-- **Selected:** Balanced (clean, functional, not fancy)
-- **Rationale:** Focus on core feature (reel generation) vs. visual polish
-- **Future:** Add transitions, effects, dynamic cropping in v0.4
+```text
+video + 3 articles + 2 images
+```
 
-### Storage & Job Management
+Do not require every source type.
 
-- **Extend existing:** Reuse `data/jobs/<job-id>/` structure for reel jobs
-- **Add:** Artifact tracking (audio files, b-roll clips, composition config)
-- **Cleanup:** Post-job cleanup as in v0.2
-
----
-
-## 5. Development Flow
-
-### Recommended Sequence
-
-1. **Start with Phase A:** Input model + multi-source UI (fast feedback loop)
-2. **Parallel B & C:** Script generation + TTS (core AI components)
-3. **Phase D:** B-roll selection (leverages v0.2)
-4. **Phase E:** Composition (where pieces come together)
-5. **Phase F:** Integration & polish (refinement based on output)
-
-### Testing Strategy
-
-- **Unit tests:** Each phase independently (mock LLM, audio, FFmpeg)
-- **Integration tests:** Phase boundaries (e.g., script → audio timing)
-- **End-to-end:** Full flow with fixture inputs → download + evaluate
-
-### Quality Gates
-
-- Script coherence (no nonsensical transitions)
-- Audio timing accuracy (±200ms tolerance)
-- Video output (correct resolution, duration, codec)
-- No runtime errors on valid inputs
+Extend the existing UI rather than replacing it.
 
 ---
 
-## 6. Deliverables & Success Criteria
+## 5. Unified Source Model
 
-### v0.3.0 Release
+Introduce or extend a normalized source abstraction. Adapt names to existing conventions.
 
-- **Functional:** Accept 1 article + 1 video → generate 1 reel (2–5 min vertical)
-- **Quality:** Balanced composition; human-understandable narration; no major artifacts
-- **Testable:** Downloadable MP4; can evaluate in normal video player
-- **Code:** Clean pipeline; testable; documented
+Conceptually:
 
-### Evaluation Metrics
+```python
+class SourceType(str, Enum):
+    VIDEO = "video"
+    YOUTUBE = "youtube"
+    ARTICLE = "article"
+    IMAGE = "image"
+    AUDIO = "audio"
+```
 
-- Reel plays end-to-end without errors
-- Voice narration is clear and synchronized
-- B-roll clips are meaningful and relevant
-- No visual glitches or audio dropouts
-- Renders in <10 min for typical 10-min source video + 5-min article
+A source should contain:
 
----
+```python
+class Source:
+    id: str
+    type: SourceType
+    original_location: str | None
+    local_path: str | None
+    metadata: SourceMetadata
+    content: ExtractedContent
+    analysis: SourceAnalysis | None
+```
 
-## 7. Open Questions & Risks
-
-### Questions to Clarify During Development
-
-- TTS voice: Which voice/gender/accent? (pyttsx3 limitation: basic options)
-- Pacing: How long should each sentence's b-roll play? (algorithmic or manual tuning?)
-- Placeholders: Solid colors, gradients, text overlays, or something else?
-- Multi-video: How to prioritize clips when multiple sources are present?
-
-### Risks
-
-- **TTS quality:** pyttsx3 sounds robotic; may need API swap earlier than v0.4
-- **Timing sync:** Audio/video drift; needs robust validation
-- **B-roll availability:** Articles have no b-roll; placeholder quality matters
-- **LLM script generation:** May produce misaligned sentences or nonsensical transitions
-
-### Mitigation
-
-- Early prototype with actual TTS output; decide on v0.3 vs. v0.4 boundary
-- Strict timing validation in composition (fail fast)
-- Diverse placeholder strategies (test multiple)
-- Fixed test prompts for LLM; validate script structure rigorously
+Do not blindly copy this model if suitable abstractions already exist.
 
 ---
 
-## 8. Files & Services to Create/Modify
+## 6. Provenance Is Mandatory
 
-### New Services (app/services/)
+Every fact, claim, script statement, and visual asset used by the pipeline must be traceable to its source.
 
-- `article_ingestion.py` – Extract text from URLs or paste
-- `script_generation.py` – LLM orchestration for narrative synthesis
-- `tts.py` – Text-to-speech wrapper (pyttsx3)
-- `broll_selection.py` – Choose + order video clips
-- `composition.py` – FFmpeg filter graph generation
+Examples:
 
-### New Models (app/models/)
+```text
+video_01_seg_031
+132.4s → 138.2s
+```
 
-- `Source` – Video/Article with metadata
-- `Script` – Timed narration (sentences + durations)
-- `BRollClip` – Video segment reference
-- `ReelJob` – Multi-source reel generation job
+or:
 
-### New Pipelines (app/pipelines/)
+```text
+article_01_p17
+```
 
-- `generate_reel.py` – Orchestrate A→B→C→D→E phases
+or:
 
-### Modified Services
+```text
+article_01_image_02
+```
 
-- `clip_extraction.py` – Adapt for multi-source context
-- `source_acquisition.py` – Potentially expand for articles
+The system must be able to answer:
 
-### UI Changes (app/static/)
+> Where did this statement in the generated script come from?
 
-- Add multi-input form (video + article fields)
-- Show reel progress (phases, timestamps)
-- Preview reel before download
-
-### Tests (tests/)
-
-- `test_article_ingestion.py`
-- `test_script_generation.py`
-- `test_tts.py`
-- `test_broll_selection.py`
-- `test_composition.py`
-- `test_reel_pipeline_integration.py`
+Do not create important claims without provenance.
 
 ---
 
-## 9. Success Definition
+## 7. Video Processing
 
-A successful v0.3.0 release means:
+Reuse the existing video acquisition and transcription infrastructure.
 
-- ✅ **End-to-end flow:** Article + video → reel works via web UI
-- ✅ **Downloadable output:** MP4 plays in any standard video player
-- ✅ **Evaluation ready:** Quality is "balanced" (not perfect, but coherent and usable)
-- ✅ **Testable:** Unit + integration tests pass; can reproduce errors
-- ✅ **Documented:** Code is readable; pipeline is clear; TTS/composition choices are justified
+For video:
+
+```text
+video
+ ↓
+audio extraction
+ ↓
+existing transcription
+ ↓
+timestamped transcript
+ ↓
+scene information
+ ↓
+source analysis
+```
+
+Preserve timestamps.
+
+Example:
+
+```json
+{
+  "source_id": "video_01",
+  "segments": [
+    {
+      "id": "video_01_seg_001",
+      "start": 132.4,
+      "end": 137.8,
+      "text": "..."
+    }
+  ]
+}
+```
+
+The existing dynamic Smart Crop must be reused when these segments are rendered.
+
+---
+
+## 8. Article Processing
+
+For article URLs:
+
+```text
+URL
+ ↓
+fetch
+ ↓
+extract main article content
+ ↓
+metadata
+ ↓
+images
+ ↓
+analysis
+```
+
+Strip navigation, advertisements, cookie banners, menus, and unrelated page content.
+
+Capture where possible:
+
+- title
+- author
+- publication date
+- main text
+- images
+- image URLs
+- source URL
+
+Keep article paragraphs addressable for provenance.
+
+Pasted text should bypass fetching and go directly through normalization.
+
+Use a minimal, reliable article extraction dependency compatible with the existing project.
+
+---
+
+## 9. Image Processing
+
+For local images:
+
+```text
+image
+ ↓
+metadata
+ ↓
+vision analysis
+ ↓
+description / entities / relevance
+```
+
+Reuse the existing LLM/provider abstraction where possible.
+
+Analysis should identify:
+
+- what is visible
+- relevant entities
+- likely topic/story
+- whether the image is useful for a short-form scene
+
+Do not hard-code the system to a new provider if the repository already has an abstraction.
+
+---
+
+## 10. Source Analysis
+
+Convert each source into structured information.
+
+Conceptually:
+
+```python
+class SourceAnalysis:
+    summary: str
+    topics: list[str]
+    entities: list[Entity]
+    claims: list[Claim]
+    notable_quotes: list[Quote]
+    important_segments: list[SegmentReference]
+    assets: list[AssetReference]
+```
+
+Identify:
+
+- main topic
+- secondary topics
+- people
+- companies
+- organizations
+- places
+- events
+- important facts
+- claims
+- quotes
+- notable moments
+- useful visual assets
+
+Use validated structured outputs rather than unstructured LLM prose where possible.
+
+---
+
+## 11. Cross-Source Understanding
+
+This is a core feature.
+
+Given:
+
+```text
+Video A
+Video B
+Article A
+Article B
+Image A
+```
+
+determine:
+
+- which sources discuss the same story
+- shared facts
+- differing facts
+- supporting sources
+- useful visuals
+- unrelated stories
+
+Pipeline:
+
+```text
+Sources
+   ↓
+Source Analysis
+   ↓
+Topic/semantic grouping
+   ↓
+Story Candidates
+```
+
+Conceptual output:
+
+```json
+{
+  "stories": [
+    {
+      "id": "story_01",
+      "title": "Example announcement",
+      "topic": "Example topic",
+      "importance": 0.94,
+      "sources": ["video_01", "article_01", "article_02"],
+      "key_points": [
+        {
+          "text": "...",
+          "evidence": ["video_01_seg_014", "article_01_p17"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+If multiple unrelated stories exist, produce multiple candidates.
+
+---
+
+## 12. Story Selection
+
+Automatically select the strongest story for the v0.3.0 Reel.
+
+Consider:
+
+- relevance
+- factual support
+- source coverage
+- visual availability
+- short-form interest
+- coherence
+- amount of usable source footage
+- useful images
+
+Do NOT simply choose the first source.
+
+Support multiple story candidates in the data model, even if v0.3.0 renders only the highest-ranked story.
+
+---
+
+## 13. Script Generation
+
+v0.3.0 MUST generate a short-form script.
+
+The script is text only. TTS is deferred.
+
+Default target: approximately 20–60 seconds.
+
+The script should be:
+
+- concise
+- coherent
+- factually grounded
+- based only on supplied sources
+- suitable for a Reel/Short
+- structured for visual storytelling
+
+Include:
+
+- hook
+- main information
+- supporting information
+- conclusion/takeaway where appropriate
+
+Keep the style controlled by prompts/configuration rather than deeply hard-coded logic.
+
+---
+
+## 14. Script Provenance
+
+Every script section must reference supporting source material.
+
+Example:
+
+```json
+{
+  "id": "narration_03",
+  "text": "The company expects...",
+  "evidence": [
+    {
+      "source_id": "article_02",
+      "segment_id": "article_02_p14"
+    }
+  ]
+}
+```
+
+For video:
+
+```json
+{
+  "source_id": "video_01",
+  "segment_id": "video_01_seg_031",
+  "start": 241.2,
+  "end": 246.7
+}
+```
+
+This must remain available to future storyboard and visual-selection stages.
+
+---
+
+## 15. Scene / Visual Planning
+
+Convert the script into a scene plan.
+
+This is the bridge between story generation and rendering.
+
+Conceptually:
+
+```python
+class Scene:
+    id: str
+    duration: float
+    narration: str
+    visual_type: str
+    visual_reference: str
+    source_id: str | None
+    start: float | None
+    end: float | None
+```
+
+Supported visual types:
+
+```text
+source_video
+source_image
+article_image
+text_card
+```
+
+Do NOT implement generated B-roll.
+
+---
+
+## 16. Visual Selection
+
+Select actual source visuals for each scene.
+
+Preference order:
+
+1. relevant source video
+2. relevant source image
+3. relevant article image
+4. text card fallback
+
+Do not randomly select footage.
+
+The visual should match the narration semantically.
+
+For example, narration about a specific person should preferentially use footage/image containing that person when available.
+
+---
+
+## 17. Video Segment Selection
+
+Map story/script requirements to timestamped source video segments.
+
+Example:
+
+```text
+Narration:
+"CEO John Smith said..."
+
+Visual:
+video_02
+243.2s → 248.7s
+```
+
+Reuse the existing Smart Crop implementation.
+
+Do not duplicate or replace Smart Crop.
+
+---
+
+## 18. Scene Timing
+
+Timing does not need to be perfect in v0.3.0.
+
+A sensible first approach is:
+
+```text
+scene duration ≈ narration reading duration
+```
+
+with reasonable minimum/maximum bounds.
+
+Handle:
+
+- source clips shorter than required
+- invalid timestamps
+- missing assets
+- scene durations
+- transitions/cuts
+
+Do not produce black frames or invalid media.
+
+---
+
+## 19. Rough Reel Renderer
+
+The primary deliverable is a real MP4.
+
+Output:
+
+```text
+1080x1920
+9:16
+H.264
+MP4
+```
+
+Reuse existing FFmpeg infrastructure.
+
+Support:
+
+- source video scenes
+- image scenes
+- text cards
+- scene sequencing
+- basic cuts/transitions
+- dynamic Smart Crop on source video
+
+Keep visual effects intentionally simple.
+
+The goal is to evaluate content quality, not cinematic polish.
+
+---
+
+## 20. Narration Text Overlay
+
+Because TTS is deferred, represent generated narration visually.
+
+Implement a simple readable text overlay.
+
+This is NOT a full subtitle/caption editor.
+
+Requirements:
+
+- readable on a phone
+- reasonable font size
+- line wrapping
+- safe margins
+- consistent placement
+- avoid obscuring important content where practical
+
+The overlay must allow the user to judge:
+
+> Is this what I would want the future AI voice to say?
+
+---
+
+## 21. Output
+
+A successful job should produce:
+
+```text
+output/
+└── <job_id>/
+    ├── story_01.mp4
+    └── story_01.json
+```
+
+The JSON should contain the complete machine-readable story and scene plan.
+
+Example:
+
+```json
+{
+  "story": {
+    "id": "story_01",
+    "title": "Example story",
+    "hook": "Something just happened...",
+    "duration": 38
+  },
+  "scenes": [
+    {
+      "id": "scene_01",
+      "duration": 5.2,
+      "narration": "Something just happened...",
+      "visual": {
+        "type": "source_video",
+        "source_id": "video_01",
+        "start": 132.4,
+        "end": 137.6
+      }
+    },
+    {
+      "id": "scene_02",
+      "duration": 4.8,
+      "narration": "The biggest change is...",
+      "visual": {
+        "type": "source_image",
+        "source_id": "article_01",
+        "asset_id": "image_02"
+      }
+    }
+  ]
+}
+```
+
+---
+
+## 22. UI
+
+Extend the current UI.
+
+The user must be able to:
+
+1. add multiple sources
+2. see the sources in the current job
+3. start processing
+4. see progress/current stage
+5. see the selected story
+6. inspect the generated script
+7. inspect scene/visual choices
+8. preview the generated MP4
+9. download the MP4
+10. download the JSON plan
+
+The generated video is the primary deliverable.
+
+---
+
+## 23. Job Pipeline
+
+Extend the existing job state machine.
+
+Possible stages:
+
+```text
+CREATED
+→ ACQUIRING
+→ EXTRACTING
+→ ANALYZING
+→ STORY_SELECTING
+→ SCRIPTING
+→ PLANNING
+→ RENDERING
+→ COMPLETED
+```
+
+Existing states may be extended instead of replaced.
+
+Failures must remain explicit:
+
+```text
+FAILED
+```
+
+A partial source failure should not necessarily destroy the entire job if enough material remains.
+
+---
+
+## 24. LLM Architecture
+
+Reuse the existing LLM abstraction.
+
+Use structured outputs and validation.
+
+The LLM should handle:
+
+- source analysis
+- cross-source interpretation
+- story selection
+- script generation
+- visual planning
+
+Prefer a deterministic pipeline:
+
+```text
+extract
+→ analyze
+→ group
+→ select
+→ script
+→ plan
+→ render
+```
+
+Do not introduce an agent framework merely for this feature.
+
+If the existing project uses OpenAI-compatible APIs/OpenRouter, preserve that architecture.
+
+---
+
+## 25. Prompt Design
+
+Keep prompts separate from Python/business logic where appropriate.
+
+At minimum, separate prompts for:
+
+```text
+source_analysis
+story_grouping
+story_selection
+script_generation
+visual_planning
+```
+
+Prompts must explicitly instruct the model to:
+
+- use only supplied source information
+- not invent facts
+- preserve provenance
+- distinguish fact from interpretation
+- select visuals relevant to narration
+- return the requested structured schema
+
+---
+
+## 26. Error Handling
+
+Handle partial source failures where practical.
+
+Examples:
+
+```text
+article_02:
+Unable to extract article content.
+```
+
+or:
+
+```text
+video_02:
+Transcription failed.
+```
+
+Continue with remaining sources if a meaningful story can still be generated.
+
+Fail the job when there is insufficient material for a meaningful Reel.
+
+---
+
+## 27. Testing
+
+Preserve all existing tests.
+
+### Unit tests
+
+Add coverage for:
+
+- source normalization
+- source types
+- article extraction/normalization
+- transcript mapping
+- provenance
+- story grouping
+- story ranking
+- script schema
+- scene validation
+- visual references
+- duration calculation
+- renderer input validation
+
+### Integration tests
+
+Create deterministic fixtures representing:
+
+```text
+2 related video/transcript sources
++
+2 article/text sources
++
+1 image analysis source
+```
+
+Verify:
+
+```text
+sources
+→ analysis
+→ story
+→ script
+→ scenes
+```
+
+Mock the LLM in deterministic tests.
+
+### Rendering test
+
+Use a small synthetic/fixture video and verify:
+
+- FFmpeg succeeds
+- MP4 exists
+- output is valid
+- resolution is 1080x1920
+- expected scenes are present
+
+---
+
+## 28. Mandatory End-to-End Acceptance Test
+
+This is non-negotiable.
+
+Create/use a small reproducible dataset containing:
+
+- at least two related sources
+- at least one video
+- at least one article/text source
+
+Run the complete pipeline.
+
+The result MUST be a real MP4.
+
+Validate:
+
+### Content
+
+- selected story is coherent
+- script reflects the source material
+- claims have provenance
+- unrelated source material is not mixed into the story
+
+### Visuals
+
+- selected visuals are relevant
+- video timestamps are valid
+- source images are relevant
+- Smart Crop works on selected source video
+
+### Video
+
+- real MP4
+- 1080x1920
+- 9:16
+- no corrupted frames
+- no unexplained black sections
+- scenes in correct order
+- readable narration overlays
+
+### Regression
+
+- v0.1.x still works
+- v0.2.0 Smart Crop still works
+- existing tests pass
+
+---
+
+## 29. Quality Evaluation Is Part of the Feature
+
+Expose enough intermediate information to determine why a Reel is good or bad.
+
+For each result show:
+
+```text
+Story
+Why it was selected
+Sources used
+Script
+Scenes
+Visual choices
+Final video
+```
+
+This allows diagnosis of failures in:
+
+```text
+source extraction
+→ analysis
+→ story selection
+→ script
+→ visual selection
+→ rendering
+```
+
+The goal is not merely to make the pipeline execute.
+
+The goal is to determine whether ClipFactory's core content intelligence is good enough to justify proceeding to TTS and more advanced visual generation.
+
+---
+
+## 30. Architecture for Future Versions
+
+Do not implement the entire pipeline as one monolithic function.
+
+Prefer explicit stages:
+
+```text
+Source
+  ↓
+ExtractedContent
+  ↓
+SourceAnalysis
+  ↓
+StoryCandidate
+  ↓
+Story
+  ↓
+Script
+  ↓
+ScenePlan
+  ↓
+RenderedVideo
+```
+
+Future milestones should be able to replace individual stages:
+
+```text
+v0.4.0 → better Story → Script
+v0.5.0 → Script → TTS Audio
+v0.6.0 → Script → Visual Storyboard
+v0.7.0 → Storyboard → source/B-roll selection
+v0.8.0 → ScenePlan + Audio + Visuals → polished composition
+```
+
+---
+
+## 31. Do Not Overengineer
+
+This is a personal/local application.
+
+Do not introduce:
+
+- Redis
+- Celery
+- Kafka
+- Kubernetes
+- microservices
+- distributed workers
+- cloud storage
+- authentication systems
+
+unless already present and genuinely required.
+
+Prefer the existing local architecture and:
+
+```text
+Python
+FastAPI
+Pydantic
+existing LLM abstraction
+existing transcription
+FFmpeg
+local filesystem
+SQLite if already used
+```
+
+---
+
+## 32. Hardware
+
+Development machine:
+
+```text
+NVIDIA RTX PRO 500 Black
+~6 GB VRAM
+```
+
+Keep local models lightweight.
+
+Do not introduce a large local multimodal model merely because it is possible.
+
+Prefer the existing API-based multimodal capability where appropriate.
+
+---
+
+## 33. Security
+
+Article and YouTube URLs are external input.
+
+- Validate URLs where appropriate.
+- Never concatenate untrusted input into shell commands.
+- Use safe subprocess argument arrays/APIs.
+- Do not execute downloaded content.
+
+---
+
+## 34. Documentation
+
+Update documentation for v0.3.0:
+
+- purpose
+- supported sources
+- pipeline
+- source model
+- provenance
+- story model
+- scene model
+- output format
+- how to run
+- how to inspect JSON
+- how to evaluate the generated Reel
+
+Update version metadata to `0.3.0` where appropriate.
+
+---
+
+## 35. Change Discipline
+
+Follow:
+
+```text
+inspect
+→ test
+→ plan
+→ implement
+→ test
+→ review
+```
+
+Do not make unrelated refactors.
+
+Preserve v0.1.x/v0.2.0 behavior.
+
+At the end report:
+
+- files changed
+- architecture added
+- tests added
+- commands run
+- how to run v0.3.0
+- output location
+- known limitations
+
+---
+
+# 36. Definition of Done
+
+v0.3.0 is complete only when:
+
+- [ ] multiple heterogeneous sources can be supplied
+- [ ] local videos work
+- [ ] YouTube sources work
+- [ ] article URLs work
+- [ ] pasted article text works
+- [ ] local images work
+- [ ] sources have normalized representations
+- [ ] extracted content has provenance
+- [ ] videos are transcribed with timestamps
+- [ ] articles are cleaned/normalized
+- [ ] images can be analyzed
+- [ ] sources are analyzed
+- [ ] related sources can be grouped
+- [ ] strongest story can be selected
+- [ ] short-form script is generated
+- [ ] script sections retain provenance
+- [ ] visual scenes are planned
+- [ ] source video segments can be selected
+- [ ] source images can be selected
+- [ ] existing Smart Crop is used
+- [ ] a real 9:16 MP4 is rendered
+- [ ] output is 1080x1920
+- [ ] narration is represented by readable text overlays
+- [ ] story/scene JSON is saved
+- [ ] UI previews the result
+- [ ] MP4 can be downloaded
+- [ ] JSON can be downloaded
+- [ ] existing tests pass
+- [ ] new tests cover the new pipeline
+- [ ] end-to-end test produces a real MP4
+- [ ] documentation is updated
+- [ ] version is 0.3.0
+
+---
+
+# 37. Final Acceptance Criterion
+
+The decisive test is:
+
+> Give ClipFactory multiple related source materials and receive a vertical MP4 that tells a coherent short-form story using relevant excerpts/images from those sources.
+
+Then ask:
+
+> **If I watched this rough Reel, would I trust ClipFactory's understanding of the source material enough to move on to AI voice generation and more sophisticated visual generation?**
+
+If that cannot be evaluated from the generated MP4, v0.3.0 is not complete.
+
+**Do not stop at JSON, database records, API responses, or an internal storyboard.**
+
+**The rendered video is the v0.3.0 deliverable.**

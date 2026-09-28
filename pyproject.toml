@@ -1,7 +1,7 @@
 [project]
 name = "clipfactory"
-version = "0.2.0"
-description = "Local-first AI video clip extraction for Shorts and Reels."
+version = "0.5.0"
+description = "Local-first multi-source AI editorial selection and narrated rough-reel rendering."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -36,6 +36,9 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "real_tts: requires CLIPFACTORY_REAL_TTS=1 and a usable configured local provider",
+]
 
 [tool.ruff]
 line-length = 100
