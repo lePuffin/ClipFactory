@@ -1,0 +1,42 @@
+@startuml component-diagram
+' Backend packages and dependency rules — see ../application-architecture.md
+title ClipFactory — Backend Components and Dependencies
+
+package "api" as api
+package "workflow" as workflow
+package "Application (feature packages)" as app {
+  package "research" as research
+  package "planning" as planning
+  package "assets" as assets
+  package "production" as production
+  package "composition" as composition
+  package "evaluation" as evaluation
+  package "publishing" as publishing
+  package "analytics" as analytics
+}
+package "ports" as ports
+package "domain" as domain
+package "infrastructure" as infra {
+  component "settings / logging"
+  component "db (SQLAlchemy, Alembic, repositories)"
+  component "storage (LocalStorageProvider)"
+  component "media runner (FFmpeg)"
+  component "safe HTTP client"
+  component "providers/* (adapters + fakes)"
+}
+component "bootstrap.py\n(composition root)" as boot
+
+api --> workflow
+api --> app
+workflow --> app
+app --> ports
+app --> domain
+ports --> domain
+infra ..|> ports : implements
+infra --> domain
+evaluation --> production : alignment metrics
+publishing --> analytics : metric tasks
+boot --> api
+boot --> workflow
+boot --> infra
+@enduml

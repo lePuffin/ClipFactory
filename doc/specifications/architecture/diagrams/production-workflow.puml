@@ -1,0 +1,47 @@
+@startuml production-workflow
+' Stage names are canonical — ../../16-scheduling-and-runs.md#stages
+title ClipFactory — Production Workflow (one Run)
+
+start
+:Run created (scheduled / run_now / manual_url)\nsnapshot profile + settings;
+if (trigger = manual_url?) then (yes)
+  :ingest_url;
+else (no)
+  :research;
+  :cluster_stories;
+  :select_story;
+endif
+repeat
+  :gather_sources;
+  :extract_claims;
+repeat while (insufficient sources or < 3 accepted claims,\nand fallback candidate left?) is (yes: select next Story)
+->no;
+if (sources and claims sufficient?) then (no)
+  :run_failed (insufficient_sources / insufficient_claims);
+  stop
+endif
+:build_story_package;
+repeat
+  :write_script + script gate;
+  :plan_visuals;
+  :select_assets\n(reuse → acquire → generate → title card);
+  :generate_narration + narration gates;
+  :transcribe_narration;
+  :build_captions + timing reconciliation;
+  :compose_clip (plan gate → FFmpeg);
+  :validate_clip (deterministic);
+  if (passed?) then (yes)
+    :evaluate_clip (semantic);
+  endif
+  backward:plan_retry → re-enter earliest affected stage\n(reuse unchanged artefacts);
+repeat while (blocking issues and retries left?) is (yes)
+->no;
+if (Clip approved?) then (yes)
+  :publish (per enabled platform,\nmode disabled / dry_run / live);
+  :create metric snapshot tasks;
+  :run_completed (published / partially_published / not_published);
+else (no)
+  :run_failed (evaluation_failed_after_retries / abort code);
+endif
+stop
+@enduml

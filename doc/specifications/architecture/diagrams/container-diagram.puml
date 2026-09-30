@@ -1,0 +1,32 @@
+@startuml container-diagram
+' Containers — see ../system-architecture.md#containers
+title ClipFactory — Containers (single host)
+
+actor "Owner" as owner
+
+node "Backend process (1 Uvicorn worker)" as backend {
+  component "Web UI\n(React SPA, static files)" as spa
+  component "FastAPI\n(REST + SSE)" as api
+  component "Workflow runner\n(LangGraph, asyncio task)" as runner
+  component "Scheduler loop\n(PostgreSQL-backed tasks)" as scheduler
+  component "Media runner\n(FFmpeg / FFprobe subprocesses)" as mediarunner
+  component "Provider adapters" as adapters
+}
+
+database "PostgreSQL 16\n(domain data, run events,\nsettings, scheduled tasks,\nLangGraph checkpoints)" as pg
+folder "Data directory\n(assets, clips, work, cache, secrets)" as data
+cloud "External providers" as ext
+
+owner --> spa : HTTPS
+spa --> api : /api (REST, SSE)
+api --> runner : start Run
+scheduler --> runner : daily Run
+scheduler --> pg
+runner --> pg
+api --> pg
+runner --> mediarunner
+runner --> adapters
+adapters --> ext
+mediarunner --> data
+adapters --> data
+@enduml

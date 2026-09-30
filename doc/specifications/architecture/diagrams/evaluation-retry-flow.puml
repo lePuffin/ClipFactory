@@ -1,0 +1,36 @@
+@startuml evaluation-retry-flow
+' Requirements: ../../11-evaluation-and-retry.md
+title ClipFactory — Evaluation and Targeted Retry
+
+start
+:Clip candidate (Attempt n);
+:validate_clip — deterministic\n(duration, resolution, aspect, FPS, streams,\ncodecs, decode, captions, assets, metadata, WER, drift);
+if (blocking issues?) then (yes)
+else (no)
+  if (semantic_enabled?) then (yes)
+    :evaluate_clip — one structured LLM call\n(grounding, script, hook, visuals, pacing,\nnarration, captions, editorial);
+  else (no)
+    :warning: semantic_evaluation_skipped;
+  endif
+endif
+if (blocking issues?) then (no)
+  :Clip approved;
+  :publish;
+  stop
+else (yes)
+  :Clip rejected;
+  :map issue codes → target stage + Action\n(fixed routing table, code);
+  if (any Action = abort?) then (yes)
+    :run_failed (issue code);
+    stop
+  elseif (revision_retries_used < max_revision_retries?) then (yes)
+    :re-entry = earliest target stage;
+    :retry_started (attempt n+1);
+    :re-run from re-entry stage,\nreuse unchanged narration / assets / segment renders;
+    stop
+  else (no)
+    :run_failed (evaluation_failed_after_retries)\nno Publication;
+    stop
+  endif
+endif
+@enduml
