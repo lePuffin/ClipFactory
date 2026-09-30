@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate documentation
+        run: python3 scripts/check_docs.py
+
+  detect:
+    name: Detect project parts
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.parts.outputs.backend }}
+      frontend: ${{ steps.parts.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: parts
+        run: |
+          echo "backend=$([ -f backend/pyproject.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$([ -f frontend/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  backend:
+    name: Backend
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: clipfactory
+          POSTGRES_PASSWORD: clipfactory
+          POSTGRES_DB: clipfactory_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clipfactory"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://clipfactory:clipfactory@localhost:5432/clipfactory_test
+      SCHEDULER_ENABLED: "false"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: Pyright
+        run: uv run pyright
+      - name: Migrations
+        run: uv run alembic upgrade head
+      - name: Tests
+        run: uv run pytest
+
+  frontend:
+    name: Frontend
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  e2e:
+    name: End-to-end (fakes)
+    needs: [detect, backend, frontend]
+    if: needs.detect.outputs.backend == 'true' && needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run E2E suite
+        # Defined in Phase 1/9: starts PostgreSQL, the backend with all providers
+        # set to `fake`, and runs Playwright (see doc/specifications/21-testing.md).
+        run: make e2e
