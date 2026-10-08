@@ -47,6 +47,18 @@ defined in [04-domain-model.md](04-domain-model.md); this file defines meaning.
 | **Script** | The versioned narration text, split into Script Segments, each citing the Claims it uses. |
 | **Hook** | The first Script Segment, intended to capture attention in the first seconds. |
 | **Visual Plan** | Ordered Visual Segments describing what is shown during each part of the narration. |
+| **VisualDraft** | The typed, structured visual intent in the existing `write_script` response; its kind is `media`, `infographic` or `scientific`. |
+| **Infographic** | A typed, bounded graphic Asset such as a statistic, comparison or timeline; it contains no executable/model-authored markup. |
+| **Scientific graphic** | A typed, bounded mathematical/scientific visual such as an enum-based function plot or Claim-grounded relationship diagram; mathematical output is not empirical data. |
+| **Graphics renderer** | A trusted local adapter selected by the VisualDraft kind to render a typed graphic Asset; it is not selected by media-provider order. |
+| **Narrative Beat** | A grounded editorial unit recording hook, context, significance, evidence, uncertainty, conclusion or optional invitation, with accepted Claim/segment references. |
+| **Shot Intent** | The explanatory purpose of a Visual Segment, with beat/evidence references, shot type and current/archive/illustrative/graphic status. |
+| **Editorial Overlay** | Contextual person/place/source labels, quotes or numbers, distinct from spoken-word captions. |
+| **Overlay Cue** | A versioned timed Editorial Overlay with evidence, layout/animation and displayed-shot binding. |
+| **Shot Anchor** | A validated image-region or frame-layout reference transformed through fitting/cropping for safe label placement. |
+| **Audio Cue** | A timed licensed music/SFX Asset reference with gain/fades, anchored to a beat, shot boundary or word. |
+| **Quality Review** | Hash-bound evidence separating deterministic checks, model judgments, owner playback review and publication readiness; pending is not approved. |
+| **Render Revision** | Immutable output/presentation revision derived from retained inputs with explicit invalidation and cache reuse; not an invented successful Run. |
 | **Visual Segment** | One entry of the Visual Plan: narration context, visual objective, asset requirement, strategy, duration, motion, transition, selected Asset. |
 | **Asset requirement** | A description of the media needed for a Visual Segment (type, subjects, tags, description, strategy). |
 | **Provenance** | Where an Asset came from: origin, provider, source URL, author, licence, attribution, and generation metadata when generated. |

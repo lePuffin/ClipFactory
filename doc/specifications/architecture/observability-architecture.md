@@ -7,7 +7,7 @@ Requirements: [20-observability.md](../20-observability.md).
 | Signal | Store | Consumer |
 | --- | --- | --- |
 | Run Events | `run_event` table | Run detail API, SSE, dashboard |
-| Structured logs | stdout (JSON in production), optionally redirected to `${DATA_DIR}/logs/` | Operator (terminal running `clipfactory serve`) |
+| Structured logs | stdout (JSON in production), optionally redirected to `${DATA_DIR}/logs/` | Operator (terminal running `clipfactory run`) |
 | LLM audit files | `work/<run_id>/llm/*.json` | Debugging prompts/responses |
 | Evaluations | `evaluation` table | Run detail, retry planner |
 | Health | `/api/health` | Operator, container health check |

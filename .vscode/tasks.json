@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Validate media acquisition",
+			"type": "shell",
+			"command": "cd backend && uv run python -m pytest -q -p no:cacheprovider --no-cov tests/unit/test_asset_acquisition.py tests/unit/test_media_sources.py && uv run ruff format src/clipfactory/ports/media.py src/clipfactory/ports/media_sources.py src/clipfactory/assets/acquisition.py src/clipfactory/assets/importing.py src/clipfactory/assets/selection.py src/clipfactory/infrastructure/http.py src/clipfactory/infrastructure/providers/media_sources.py src/clipfactory/bootstrap.py src/clipfactory/workflow/production_stages.py tests/unit/test_asset_acquisition.py tests/unit/test_asset_selection.py tests/unit/test_media_sources.py && uv run ruff check . && uv run pyright",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

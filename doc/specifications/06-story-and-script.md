@@ -60,14 +60,19 @@ references). They never call a `NewsSource` again.
   visual style), `script.*` settings, and — on revision — the Actions to apply.
 - **Behaviour:** One LLM request (task `write_script`) returns the script
   segments, the social metadata text (CF-REQ-160) and the visual plan draft
-  (CF-REQ-250). Each segment lists the `claim_ids` it uses and an
+  (CF-REQ-250, CF-REQ-263). Each visual draft has a typed `kind` and, for
+  graphics, a schema-validated declarative payload from the bounded templates
+  in CF-REQ-263; legacy drafts without a kind default to `media`. Factual
+  graphic labels, values and text cite accepted Claim IDs. This remains the
+  same single structured request, not an additional LLM call or loop. Each
+  segment lists the `claim_ids` it uses and an
   `attribution` when required (CF-REQ-116). The prompt forbids facts,
   numbers, names, dates or quotes not present in the provided Claims.
 - **Acceptance:**
   - With a fake LLM, every returned segment is persisted with its claim IDs.
   - A segment citing a Claim ID not in the package is rejected by the script gate.
   - A first-attempt Run makes exactly one `write_script` request.
-- **Related:** CF-REQ-158, CF-REQ-406
+- **Related:** CF-REQ-158, CF-REQ-263, CF-REQ-406
 
 ### CF-REQ-154 — Script language
 
@@ -162,3 +167,31 @@ references). They never call a `NewsSource` again.
 - **Acceptance:**
   - A Clip with only external photos and TTS narration has `contains_synthetic_media = false`, `synthetic_voice = true`.
 - **Related:** CF-REQ-453
+
+## News-explainer quality extension
+
+Owner-authorized direction (2026-10-06): factual modern news explainers for YouTube, Instagram, TikTok and Facebook. These requirements extend the baseline; their presence does not mean their implementation or live verification is complete.
+
+### CF-REQ-163 — Narrative beats and editorial intent
+
+- **Description:** The existing `write_script` request shall return Narrative Beats alongside the narration, social metadata and Visual Plan draft, without an additional request for each creative feature.
+- **Behaviour:** Each beat records its function (`hook`, `context`, `evidence`, `significance`, `uncertainty`, `conclusion` or `call_to_action`), Script Segment references, accepted Claim references, visual objective and emphasis. The Story shall explain what changed and why it matters, present relevant context and uncertainty, and reach an informative ending. Beat functions may be combined; irrelevant context or unsupported consequences shall not be invented to fill a template. Every Script Segment is covered in order. Word-count splitting is a timing safeguard, not a substitute for editorial shot planning.
+- **Failure:** Missing or invalid references enter structured-output repair; incomplete or repetitive narration produces a blocking `editorial_quality` issue and a targeted script revision.
+- **Acceptance:** A fixture containing a clipped sentence is rejected; an unchanged context beat survives a hook-only revision; a first successful script request supplies both narration and beats; every factual beat references accepted Claims.
+- **Related:** CF-REQ-153, CF-REQ-157, CF-REQ-159, CF-REQ-406
+
+### CF-REQ-164 — Evidence-bound engagement
+
+- **Description:** Hooks, headlines and narrative emphasis shall make the Story understandable and interesting without misleading viewers.
+- **Behaviour:** The hook identifies a supported development or significance within the existing hook duration. Material qualifications and uncertainty are preserved. The system shall not fabricate urgency, outrage, identity, quotes, unanswered questions or promised outcomes; withhold the central fact merely to force continued viewing; or optimize factual selection for controversy alone. Views, comments and subscriptions are goals to measure, not guaranteed outputs or factual quality scores.
+- **Failure:** Unsupported statements or misleading framing block quality review using the existing grounding/editorial issue codes.
+- **Acceptance:** A hook claiming a confirmed outcome when the evidence reports an allegation fails; a grounded question that the Story actually addresses passes; an unsupported engagement claim never appears in social metadata.
+- **Related:** CF-REQ-116, CF-REQ-157, CF-REQ-160, CF-REQ-406, CF-REQ-408
+
+### CF-REQ-165 — Optional audience invitation
+
+- **Description:** A Clip may include a relevant, non-coercive audience invitation under `quality.*` policy.
+- **Behaviour:** No more than `quality.max_ctas_per_clip` invitations are allowed; their duration counts against the existing Clip budget. A question must relate to the covered Story without asserting a new fact. Subscription invitations are optional rather than mandatory in every Clip. Sensitive-story policy suppresses promotional or playful invitations. Invitations are separately typed beats, never fabricated accepted Claims.
+- **Failure:** Invalid invitations are removed or revised; they shall not force publication or bypass quality review.
+- **Acceptance:** Two invitations fail when the configured maximum is one; disabling invitations emits no invitation text; a sensitive-story fixture contains no promotional invitation; removing an invitation leaves the factual narration unchanged.
+- **Related:** CF-REQ-155, CF-REQ-163, CF-REQ-164

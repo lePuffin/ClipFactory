@@ -9,7 +9,7 @@ decision; do not edit an accepted decision's substance.
 | --- | --- | --- |
 | [ADR-001](ADR-001-python-and-uv.md) | Python 3.13 and uv for the backend | Proposed |
 | [ADR-002](ADR-002-fastapi.md) | FastAPI for HTTP API, SSE and static UI | Proposed |
-| [ADR-003](ADR-003-postgresql.md) | PostgreSQL as the only database | Proposed |
+| [ADR-003](ADR-003-postgresql.md) | PostgreSQL as the only durable database | Proposed |
 | [ADR-004](ADR-004-langgraph-workflow.md) | LangGraph as the workflow engine, kept at the edge | Proposed |
 | [ADR-005](ADR-005-provider-adapters.md) | Ports and adapters for all external capabilities | Proposed |
 | [ADR-006](ADR-006-local-filesystem-storage.md) | Local filesystem media storage behind `StorageProvider` | Proposed |
@@ -21,7 +21,11 @@ decision; do not edit an accepted decision's substance.
 | [ADR-012](ADR-012-provider-independent-tts.md) | Provider-independent TTS (Google first) | Proposed |
 | [ADR-013](ADR-013-provider-independent-media-generation.md) | Provider-independent media generation; deterministic motion | Proposed |
 | [ADR-014](ADR-014-source-grounded-story-claim-model.md) | Source-grounded Story / Source / Claim model | Proposed |
-| [ADR-015](ADR-015-llm-request-governance.md) | LLM request governance in-process and in PostgreSQL (no Dragonfly) | Proposed |
+| [ADR-015](ADR-015-llm-request-governance.md) | LLM request governance in-process and in PostgreSQL (no Dragonfly) | Superseded by ADR-016 |
+| [ADR-016](ADR-016-compose-postgresql-and-dragonfly.md) | Compose-managed PostgreSQL and Dragonfly for local operation | Accepted (owner approved 2026-10-01) |
+| [ADR-017](ADR-017-layered-news-composition.md) | Layered deterministic news composition | Accepted direction (owner authorized 2026-10-06) |
+| [ADR-018](ADR-018-budgeted-quality-review.md) | Budgeted quality review and owner-controlled publication | Accepted direction (owner authorized 2026-10-06) |
+| [ADR-019](ADR-019-local-typed-graphics-renderers.md) | Local typed renderers for infographic and scientific graphics | Accepted (owner authorized 2026-10-08); partially supersedes ADR-017 |
 
 New ADR: copy the structure of an existing one, take the next number, add it
 to this table, and reference it from the affected specification sections.

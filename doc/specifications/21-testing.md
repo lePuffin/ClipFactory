@@ -16,8 +16,8 @@ the same name (`unit`, `integration`, `pipeline`, `llm_contract`, `rendering`,
 | **Unit** | Pure rules and components in isolation | Duration bounds, scoring, routing table rows, word budget, caption layout, frame sampling times, ducking envelope, music selection, cost estimation, limiter arithmetic, React components |
 | **Integration** | Real infrastructure boundaries | PostgreSQL repositories and migrations, FastAPI endpoints incl. SSE and signed media URLs, adapters against mocked HTTP (ComfyUI, Higgsfield, OpenRouter, platforms), scheduler with fake clock |
 | **Pipeline** | Whole workflow paths with all providers `fake` | Scheduled / Run Now / Manual URL Runs end to end, targeted retry paths, story fallback, approval gate, degradation under budget |
-| **LLM contract** | Each of the 4 LLM tasks is well-formed and within budget | Prompt template renders for fixtures; recorded model outputs validate against the task schema; invalid/partial outputs trigger exactly one repair; request count per Run ≤ 4 on the happy path; images attached only to `evaluate_clip`; opt-in live check against the configured model |
-| **Rendering** | FFmpeg output is correct | Motion filters, transitions, fit modes, captions (bounds, escaping, contrast), ducking, loudness, output format and probe values, frame extraction |
+| **LLM contract** | Each of the 5 quality-mode tasks is well-formed and within budget | Versioned prompts and recorded outputs validate; bounded repair/retry counts; five initial requests (four for Manual URL), eight total; images attach to batched candidate/final reviews; cache reuse reduces calls; opt-in live capability/price checks |
+| **Rendering** | FFmpeg output and typed HyperFrames/Manim graphics Assets are correct | Motion filters, transitions, fit modes, captions (bounds, escaping, contrast), ducking, loudness, output format and probe values, frame extraction, real local graphics render/probe/import |
 | **Failure / recovery** | The system fails safely and resumes | Provider transient/permanent errors, 429 per-minute vs daily, circuit breaker, daily/Run LLM caps, cost limits, stage timeout, process kill and resume, interrupted publication, corrupt media quarantine |
 
 ## Test levels
@@ -26,8 +26,8 @@ the same name (`unit`, `integration`, `pipeline`, `llm_contract`, `rendering`,
 | --- | --- | --- | --- |
 | Unit | `backend/tests/unit/`, `frontend/src/**/*.test.ts(x)` | Domain rules, validators, gates, scoring, routing, caption layout, composition spec/commands, provider adapters with mocked HTTP, React components/hooks | None |
 | Contract | `backend/tests/contract/` | One shared test suite per port run against every implementation (fakes always; real adapters only when opted in) | None by default |
-| Integration | `backend/tests/integration/` | PostgreSQL repositories and migrations, FastAPI endpoints (incl. SSE), FFmpeg/FFprobe runner and composition with fixture media, workflow persistence/resume, scheduler with fake clock | PostgreSQL, FFmpeg |
-| End-to-end | `backend/tests/e2e/` (API level) and `frontend/tests/e2e/` (Playwright) | Critical user journeys against a running app with all providers `fake` | PostgreSQL, FFmpeg, browser |
+| Integration | `backend/tests/integration/` | PostgreSQL repositories and migrations, FastAPI endpoints (incl. SSE), FFmpeg/FFprobe runner and composition with fixture media, workflow persistence/resume, scheduler with fake clock; real local renderer fixture when validating CF-AC-033 | PostgreSQL, FFmpeg; pinned HyperFrames/optional Manim for graphics integration |
+| End-to-end | `backend/tests/e2e/` (API level) and `frontend/tests/e2e/` (Playwright) | Critical user journeys against a running app with all external providers `fake`; E2E-11 additionally runs installed local graphics adapters | PostgreSQL, FFmpeg, browser; pinned HyperFrames/optional Manim for E2E-11 |
 | Live (opt-in) | `backend/tests/live/` | Real provider smoke tests | Credentials; `LIVE_TESTS=1` |
 
 ## Fakes
@@ -41,6 +41,7 @@ selectable via configuration (`fake`), used by tests and local demo mode:
 | `NewsSource` | Serves fixture articles from `backend/tests/fixtures/news/` including the Reuters/AP/BBC/CNN/Blog syndication set |
 | `MediaSourceProvider` | Serves fixture images/videos with provenance, including invalid and oversized cases |
 | `ImageProvider` / `VideoProvider` | Renders a deterministic gradient image/clip with FFmpeg |
+| HyperFrames / Manim graphics route | Typed deterministic fake for unit/pipeline tests; CF-AC-033 additionally requires a real local render through each installed adapter, FFprobe/full decode and Asset import |
 | `TTSProvider` | Generates a tone/silence WAV with duration `words × 60 / wpm` |
 | `TranscriptionProvider` | Returns script words with evenly distributed timestamps; can inject substitutions |
 | `Publisher` | Records requests, returns configured results; fake metrics |
@@ -61,6 +62,7 @@ selectable via configuration (`fake`), used by tests and local demo mode:
 | E2E-8 | Asset library: reused Asset in second Run; retire Asset | CF-AC-005 |
 | E2E-9 | Metric snapshot collection and analytics page with estimated revenue label | CF-AC-011 |
 | E2E-10 | Approval gate on + low budget: generation degrades with `budget_degraded`, Clip awaits approval, dashboard shows cost and countdown, auto-publish after timeout (fake clock) | CF-AC-010, CF-AC-023 |
+| E2E-11 | Typed infographic and scientific draft route to their real local renderers, import/probe and expose provenance/progress; a renderer failure remains explicit and creates no Publication | CF-AC-033 |
 
 ## Requirement tagging
 

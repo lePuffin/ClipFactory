@@ -28,7 +28,13 @@ transitions) is trivial to render deterministically.
 ## Consequences
 
 - The workflow does not care which provider produced an Asset.
-- Clips remain producible with generation disabled or unavailable (stock media, then title-card fallback).
+- Suitable stock media keeps generation optional. If both stock and permitted
+  generation fail, missing shots remain blocking; automatic plain cards are
+  prohibited by the owner revision of CF-REQ-209.
+- Owner revision (2026-10-07): native Wan video may fill either shot type and
+  lazily downloads missing official weights into a local cache outside Git.
+  `reuse_first` permits this native fallback after stock selection fails;
+  `acquire_only` and named-person restrictions remain enforced.
 - The reference host's small GPU makes local video generation slow or
   impossible for larger models; Higgsfield is the practical video path, local
   generation is best-effort.

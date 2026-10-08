@@ -1,0 +1,65 @@
+"""Trusted scene. JSON contains bounded declarative data, not Python expressions."""
+import json
+import math
+from pathlib import Path
+
+import numpy as np
+from manim import Arrow, Axes, Dot, FadeIn, Scene, Text, VGroup, VMobject, config
+
+
+class ClipFactoryGraphic(Scene):
+    def construct(self):
+        data = json.loads(Path("input.json").read_text())
+        spec = data["spec"]
+        config.frame_width = 7
+        config.frame_height = 7 * data["height"] / data["width"]
+        self.camera.frame_width = config.frame_width
+        self.camera.frame_height = config.frame_height
+        self.camera.background_color = "#101c30"
+        title = Text(spec["title"]["text"], font="DejaVu Sans", font_size=28)
+        title.scale(min(1, 6 / max(title.width, 0.1))).to_edge(np.array([0, 1, 0]))
+        objects = VGroup(title)
+        if spec["template"] == "function_plot":
+            points = data["samples"]
+            ys = [point[1] for point in points]
+            low, high = min(ys), max(ys)
+            padding = max((high - low) * 0.1, 1)
+            axes = Axes(
+                x_range=[spec["x_min"], spec["x_max"], (spec["x_max"] - spec["x_min"]) / 4],
+                y_range=[low - padding, high + padding, (high - low + 2 * padding) / 4],
+                x_length=5.5, y_length=min(6, config.frame_height * 0.6), tips=False,
+                axis_config={"include_numbers": False},
+            )
+            curve = VMobject(color="#64d8ef")
+            curve.set_points_as_corners([axes.c2p(x, y) for x, y in points])
+            label = Text("Declared mathematical function — not observations", font_size=16)
+            label.scale(min(1, 6 / max(label.width, 0.1))).to_edge(np.array([0, -1, 0]))
+            formula = {
+                "linear": "y = a·x + b", "quadratic": "y = a·x² + b·x + c",
+                "sine": "y = a·sin(b·x + c)", "cosine": "y = a·cos(b·x + c)",
+            }[spec["function"]]
+            definition = Text(f"{formula}   a={spec['a']}, b={spec['b']}, c={spec['c']}", font_size=18)
+            definition.scale(min(1, 6 / max(definition.width, 0.1))).next_to(title, np.array([0, -1, 0]))
+            domain = Text(f"x ∈ [{spec['x_min']}, {spec['x_max']}]", font_size=18)
+            domain.next_to(definition, np.array([0, -1, 0]))
+            objects.add(axes, curve, label, definition, domain)
+        else:
+            positions = {}
+            count = len(spec["nodes"])
+            for index, node in enumerate(spec["nodes"]):
+                angle = 2 * math.pi * index / count
+                position = np.array([2.2 * math.cos(angle), min(3, config.frame_height * 0.3) * math.sin(angle), 0])
+                positions[node["id"]] = position
+                dot = Dot(position, color="#64d8ef")
+                text = Text(node["label"]["text"], font_size=16)
+                text.scale(min(1, 1.7 / max(text.width, 0.1))).next_to(dot, np.array([0, 1, 0]), buff=0.1)
+                objects.add(dot, text)
+            for edge in spec["edges"]:
+                start, end = positions[edge["source"]], positions[edge["target"]]
+                arrow = Arrow(start, end, buff=0.15, stroke_width=2)
+                label = Text(edge["label"]["text"], font_size=12)
+                label.scale(min(1, 2 / max(label.width, 0.1))).move_to((start + end) / 2 + np.array([0, 0.25, 0]))
+                objects.add(arrow, label)
+        reveal = min(data["duration"] * 0.4, 1)
+        self.play(FadeIn(objects), run_time=reveal)
+        self.wait(data["duration"] - reveal)

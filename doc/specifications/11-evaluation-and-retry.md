@@ -124,7 +124,8 @@ Adding an issue code requires adding a row here.
   Unknown codes are rejected by schema validation. The request goes through
   `LLMProvider` only, so the evaluation model can be switched (e.g. to a Luna
   or Terra model) by configuration without code changes.
-- **Failure:** If `semantic_enabled` is false, a `warning` Run Event
+- **Quality-mode override:** Required semantic/visual evidence may not be disabled or replaced by metadata-only approval. If a model rejects images, retain a pending visual review rather than asserting the frames were checked. Every final shot needs the bounded coverage contract of CF-REQ-416.
+- **Failure:** Outside quality mode, if `semantic_enabled` is false, a `warning` Run Event
   `semantic_evaluation_skipped` is emitted and approval relies on deterministic
   validation only. If the model rejects image input, the request is repeated
   once without frames (layer 1 only) and a `warning` `visual_evaluation_unavailable`
@@ -135,7 +136,7 @@ Adding an issue code requires adding a row here.
   - A fake evaluator returning `weak_hook` (blocking) causes a revision retry targeting `write_script`.
   - Per-criterion scores alone never change `passed`.
   - Switching `LLM_MODEL_EVALUATION` requires no code change (contract test with two fake model names).
-  - With the fake model rejecting images, evaluation completes metadata-only with warning `visual_evaluation_unavailable`.
+  - Outside quality mode, a fake rejecting images completes metadata-only with a warning; in quality mode it retains a pending visual review and cannot approve.
 - **Related:** CF-REQ-408, CF-REQ-415, OD-014
 
 ### CF-REQ-406 — Factual grounding evaluation
@@ -183,6 +184,8 @@ Adding an issue code requires adding a row here.
 - **Acceptance:**
   - Issues targeting `select_assets` and `build_captions` ⇒ re-entry at `select_assets`; no `write_script` call.
   - A `reselect_asset` for segment 2 only re-selects segment 2; other segments keep their Assets.
+  - A failed `select_assets` gate enters `plan_retry` before narration or
+    composition; successful reselection records a passing gate for that Attempt.
 - **Related:** ADR-008
 
 ### CF-REQ-411 — Bounded revision retries
@@ -243,3 +246,29 @@ Adding an issue code requires adding a row here.
   - The `evaluate_clip` request contains 5 images and counts as one LLM request.
   - A `visual_irrelevant` issue on the frame from segment 3 routes to `reselect_asset` for segment 3.
 - **Related:** CF-REQ-405, OD-014
+
+## News-explainer quality review
+
+The legacy sparse-frame count in CF-REQ-415 is not evidence that unsampled shots, animation or audio are acceptable. Quality mode uses the following coverage and approval contracts.
+
+### CF-REQ-416 — Complete bounded output review
+
+- **Description:** Quality evaluation shall cover every final Visual Segment, its editorial overlays and the complete audio/video timeline before automatic publication is eligible.
+- **Behaviour:** Deterministic checks include geometry/collisions, licences, identity references, cue times, transitions, actual video duration/frame count and final mixed-audio limits. The one initial `evaluate_clip` request includes representative evidence for every shot up to `evaluation.quality_max_review_images`; sample overlay/transition boundaries where relevant. Images are supplied in one bounded request, not one request per shot. Insufficient capacity leaves explicit uncovered IDs pending owner review. Full playback/listening review is required during rollout; still frames do not prove temporal/audio quality.
+- **Failure:** Any uncovered required evidence remains pending. Canonical issue codes route factual, visual, caption, pacing and audio problems to targeted revisions; scores alone do not approve.
+- **Acceptance:** A 13-shot fixture never reports all shots checked from five images; an obscured person label blocks; a shortened video stream fails even when container duration is correct; boundary/audio defects are visible in review.
+- **Related:** CF-REQ-259–261, CF-REQ-325, CF-REQ-402–405, CF-REQ-415
+
+### CF-REQ-417 — Version-bound Quality Review
+
+- **Description:** Quality Review shall distinguish deterministic validation, candidate/model review, owner playback review and publication eligibility, bound to the exact content/template/render hash.
+- **Behaviour:** Persist review status, evidence coverage, unresolved issues, actor/model/policy versions and decision time. Quota/cost/modality failure preserves artifacts and records pending reasons; it never creates a passing Evaluation. Changed factual text, identity, media, overlays, audio or output invalidates affected review and publication approval. Owners may resolve documented uncertainty with evidence but cannot bypass blocking factual, security or licence checks. Original failed Run history remains intact.
+- **Acceptance:** An unreviewed revision cannot inherit approval from an older file; quota exhaustion makes zero extra calls and preserves the preview; owner approval cannot publish an unresolved wrong-person fixture.
+- **Related:** CF-REQ-220, CF-REQ-361–362, CF-REQ-408, CF-REQ-671
+
+### CF-REQ-418 — Reference-set quality benchmark
+
+- **Description:** Before enabling automatic quality-mode publication, a versioned reference set shall pass the approved editorial, visual, audio and safety rubric and be accepted by the owner.
+- **Behaviour:** Use `quality.reference_story_count` frozen diverse Stories, including sensitive reporting, place/person ambiguity and long-label cases. Render through repository entry points using fakes or recorded outputs in ordinary tests. Compare original/improved outputs with full playback; record findings and actual live/mock/fake evidence. No numerical attention/virality score alone decides approval. Brand/template approval and benchmark provenance are retained.
+- **Acceptance:** Automatic publication is unavailable without the accepted benchmark version; a fixture set includes unrelated coffee versus Mokha and wrong-person labels; all outputs satisfy media/decode/layout/audio checks and owner review.
+- **Related:** CF-REQ-164, CF-REQ-260–262, CF-REQ-323–325, CF-REQ-417

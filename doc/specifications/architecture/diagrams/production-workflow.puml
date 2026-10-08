@@ -24,7 +24,7 @@ endif
 repeat
   :write_script + script gate;
   :plan_visuals;
-  :select_assets\n(reuse → acquire → generate → title card);
+  :select_assets\n(media: reuse → acquire → permitted Wan;\ninfographic: HyperFrames; scientific: Manim);
   :generate_narration + narration gates;
   :transcribe_narration;
   :build_captions + timing reconciliation;

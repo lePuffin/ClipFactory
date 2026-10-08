@@ -1,7 +1,7 @@
 # ClipFactory Specifications
 
 **Baseline:** v1.0.0 (draft for owner review)
-**Status:** Documentation baseline. No application code exists yet.
+**Status:** Partial application exists; v1.0 acceptance is not complete. Owner-authorized news-explainer quality extension started 2026-10-06; typed local graphics direction was authorized 2026-10-08. New requirement/acceptance definitions are not evidence of implemented or validated features.
 
 This directory is the **canonical specification** of ClipFactory. Everything a
 future implementation agent needs to build v1.0.0 lives here. Nothing outside
@@ -51,7 +51,7 @@ update the losing artefact (or raise an Open Decision), then implement.
 | [05-research-and-source-grounding.md](05-research-and-source-grounding.md) | Research, dedup, clustering, selection, sources, claims | Research and grounding |
 | [06-story-and-script.md](06-story-and-script.md) | Story Package, script, social metadata | Script and Story Package |
 | [07-asset-management.md](07-asset-management.md) | Asset library, reuse, provenance, acquisition | Assets |
-| [08-visual-production.md](08-visual-production.md) | Visual plan, motion, generated media | Visual planning |
+| [08-visual-production.md](08-visual-production.md) | Visual plan, typed graphics, local rendering, motion | Visual planning and graphics routing |
 | [09-audio-and-tts.md](09-audio-and-tts.md) | TTS, transcription, captions, music | Audio and captions |
 | [10-composition.md](10-composition.md) | FFmpeg composition and output format | Composition |
 | [11-evaluation-and-retry.md](11-evaluation-and-retry.md) | Validation, semantic evaluation, targeted retry | Evaluation and retry |
@@ -73,7 +73,7 @@ update the losing artefact (or raise an Open Decision), then implement.
 | [glossary.md](glossary.md) | Terms | Terminology |
 | [traceability.md](traceability.md) | Requirement → component → verification | Traceability |
 | [architecture/](architecture/README.md) | Architecture and PlantUML diagrams | Architecture |
-| [decisions/](decisions/README.md) | ADR-001 … ADR-014 | Decisions |
+| [decisions/](decisions/README.md) | ADR-001 … ADR-019 | Decisions |
 
 ## Rules for maintaining these documents
 

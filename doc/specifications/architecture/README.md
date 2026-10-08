@@ -18,8 +18,11 @@ they differ (ADRs record *why*, this records *what*).
 
 ## Architectural principles (binding)
 
-1. **Simplicity first.** One process, one database, one media tool. Every
-   technology needs a concrete requirement.
+1. **Simplicity first.** One native backend process, one durable database,
+   one narrowly scoped operational state store and FFmpeg for final media
+   assembly/probing. HyperFrames and Manim are limited to the typed graphics
+   authoring requirement in CF-REQ-263–265. Every technology needs a concrete
+   requirement.
 2. **Explicit boundaries.** Domain → application (use cases, ports) →
    infrastructure (adapters) → API/UI; workflow orchestration calls use cases.
 3. **Provider isolation.** External capabilities only behind ports; no vendor

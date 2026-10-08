@@ -12,7 +12,7 @@ Package root: `backend/src/clipfactory/`.
 | `ports` | Protocols for providers, repositories, clock, unit of work | `LLMProvider`, `NewsSource`, …, `RunRepository`, `Clock` |
 | `research` | Use cases for stages `research` … `extract_claims`, `ingest_url` | Candidate discovery, extraction orchestration, dedup, clustering, selection, gathering, claims |
 | `planning` | `build_story_package`, `write_script`, `plan_visuals`, script gate, social metadata | |
-| `assets` | `select_assets`, asset manager, library search, media validation orchestration, title cards, music selection, import | |
+| `assets` | `select_assets`, asset manager, library search, media validation orchestration, typed graphics dispatch, title cards, music selection, import | |
 | `production` | `generate_narration`, `transcribe_narration`, `build_captions`, alignment, caption layout | |
 | `composition` | `compose_clip`: plan gate, `CompositionSpec` builder, FFmpeg command builder | |
 | `evaluation` | Deterministic validators, semantic evaluator, routing, retry planner | |
@@ -20,10 +20,10 @@ Package root: `backend/src/clipfactory/`.
 | `analytics` | Metric collection use case, revenue estimation, aggregation queries | |
 | `workflow` | LangGraph graph and nodes, Run runner, resume logic, scheduler loop, retention task | |
 | `api` | FastAPI app, routers, request/response schemas, SSE, auth dependency, static files | |
-| `infrastructure` | Settings, logging, DB (SQLAlchemy models, repositories, Alembic migrations), `LocalStorageProvider`, media runner (FFmpeg/FFprobe), safe HTTP client, provider adapters and fakes | |
+| `infrastructure` | Settings, logging, DB (SQLAlchemy models, repositories, Alembic migrations), `LocalStorageProvider`, media runner (FFmpeg/FFprobe), safe subprocess runner and local graphics adapters, safe HTTP client, provider adapters and fakes | |
 | `prompts` | Versioned prompt templates (text files + version constant) | |
 | `bootstrap.py` | Composition root: builds settings, adapters, repositories, use cases, graph, app | |
-| `cli.py` | `clipfactory serve`, `clipfactory db upgrade`, `clipfactory run-now`, `clipfactory import-assets` | |
+| `cli.py` | `clipfactory setup`, `clipfactory doctor`, `clipfactory run`, `clipfactory db upgrade`, `clipfactory run-now`, `clipfactory import-assets` | |
 
 Feature packages (`research` … `analytics`) are the **application layer**.
 Each exposes use-case classes with an `execute(...)` method taking IDs and
@@ -70,23 +70,28 @@ that translate workflow state to use-case calls and results back to state.
   repair) made by a use case through `LLMProvider.generate_structured(task, messages, schema)`.
 - There is no autonomous agent loop and no LLM tool-calling in the runtime
   pipeline. Code decides control flow; the LLM supplies language and judgement.
-- LLM tasks in v1.0 — exactly four, one request each on the happy path
-  (CF-REQ-666, [ADR-015](../decisions/ADR-015-llm-request-governance.md)):
+- Quality-mode LLM tasks — five initial requests (four for Manual URL), eight total including all retries/repairs; valid cached judgments can reduce counts. This revises the earlier four-task design through [ADR-018](../decisions/ADR-018-budgeted-quality-review.md).
+  (CF-REQ-666, [ADR-016](../decisions/ADR-016-compose-postgresql-and-dragonfly.md)):
 
 | Task name | Stage | Output schema (summary) |
 | --- | --- | --- |
 | `rank_stories` | `select_story` | Merge of deterministic pre-groups; per candidate title, summary, relevance, newsworthiness, exclusion/novelty flags, rationale |
 | `extract_claims` | `extract_claims` | Claims with kind, excerpts and Source IDs; contradictions; key-fact ranking; refined Story title/summary |
-| `write_script` | `write_script` | Segments with text, claim IDs, attribution; social metadata text; visual plan draft (objective, asset requirement, motion, transition per segment) |
-| `evaluate_clip` | `evaluate_clip` | Issues with codes, severity, evidence; scores; uses metadata plus up to 5 frames (CF-REQ-415) |
+| `write_script` | `write_script` | Segments with text, claim IDs, attribution; social metadata text; typed visual draft per segment (kind, bounded graphics payload where applicable, objective, motion and transition); no extra request for graphics |
+| `review_media_candidates` | `select_assets` | One bounded preview batch with candidate/scene IDs and evidence-backed relevance/identity uncertainty; cached versioned judgments |
+| `evaluate_clip` | `evaluate_clip` | Issues/evidence and diagnostic scores; quality mode supplies bounded per-shot coverage and marks missing evidence pending (CF-REQ-416) |
 
 - Deterministic stages that previously could have used an LLM
-  (`cluster_stories`, `ingest_url`, `plan_visuals`, `select_assets`, music
+  (`cluster_stories`, `ingest_url`, `plan_visuals`, final Asset choice, music/SFX
   selection) make no LLM request.
 
 - Prompt templates live in `clipfactory/prompts/` with a version string; the
   version and model are recorded per call (CF-NFR-024).
 - Untrusted text is placed in delimited data blocks (CF-NFR-108).
+
+## Layered news quality ownership
+
+[ADR-017](../decisions/ADR-017-layered-news-composition.md) keeps the renderer and provider boundaries intact. `planning` extends the existing script draft with grounded beats/intent; `assets` owns bounded previews and cached candidate judgments; `production` owns word-aligned cue timing; `composition` renders typed overlay/audio/motion tracks and platform-safe variants; `evaluation` owns coverage, blocking evidence and version-bound Quality Review; `publishing` verifies exact approved hashes and human/automatic policy; `analytics` joins capability-aware metrics to creative versions. `api`/`frontend` expose preview and targeted edits. Workflow state retains IDs/versions only; repositories load the plans. Numeric defaults remain canonical in configuration, not hard-coded into these layers.
 
 ## Conceptual tools (internal capabilities)
 
@@ -99,7 +104,8 @@ use cases:
 | Research tools (feed reading, article fetch/extract, dedup, similarity) | `research`, `infrastructure.http`, `infrastructure.providers.news` | Deterministic + `NewsSource` |
 | Media search tools | `assets` + `MediaSourceProvider` adapters | Provider |
 | Asset tools (library search, validation, import, title cards) | `assets`, `infrastructure.storage` | Deterministic |
-| FFmpeg tools (probe, render segment, concat, mix, burn captions, decode check) | `composition`, `infrastructure.media` (runner) | Deterministic |
+| FFmpeg tools (probe, final render/assembly, concat, mix, burn captions, decode check) | `composition`, `infrastructure.media` (runner) | Deterministic; remains final assembler/prober |
+| Typed graphic rendering (infographics / scientific templates) | `assets` route + `VideoProvider` request + local HyperFrames/Manim adapters | Deterministic trusted templates; no additional port |
 | Provider tools (LLM, TTS, transcription, generation, publishing) | `ports` + `infrastructure.providers.*` | Provider |
 | Validation tools (gates, validators, routing) | `evaluation`, `planning`, `domain` | Deterministic |
 
@@ -149,7 +155,7 @@ is the frontend type source.
 | GET | `/llm/usage` | LLM requests today/last minute, remaining, per task, circuit state | CF-REQ-669, CF-REQ-671 |
 | GET | `/runs/{id}/costs` | Cost entries of a Run | CF-REQ-665 |
 | GET/HEAD | `/public/media/{token}` (outside `/api`, unauthenticated, signed) | Clip file for URL-pull platforms | CF-REQ-461, CF-NFR-114 |
-| GET | `/analytics/summary` | Totals by platform for `period=7d | 30d | all` | CF-REQ-505 |
+| GET | `/analytics/summary` | Totals by platform for `period=7d \| 30d \| all` | CF-REQ-505 |
 | GET | `/analytics/publications/{id}/snapshots` | Time series | CF-REQ-505 |
 | GET | `/assets` | Search/filter Assets | CF-REQ-605 |
 | GET | `/assets/{id}` | Asset detail with provenance and usages | CF-REQ-605 |

@@ -1,6 +1,6 @@
 # ADR-015 — LLM request governance in-process and in PostgreSQL (no Dragonfly)
 
-- **Status:** Proposed
+- **Status:** Superseded by [ADR-016](ADR-016-compose-postgresql-and-dragonfly.md)
 
 ## Context
 

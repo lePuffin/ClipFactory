@@ -8,7 +8,7 @@ any) and keep it behind the stated configuration or provider boundary.
 ## Open decisions
 
 Format: question · why open · provisional choice · boundary that isolates it · who decides.
-Entries marked **Decided** record the owner's answer (2026-09-28 review) and
+Entries marked **Decided** record the owner's answer on the date stated and
 are reflected in the referenced requirements; they stay here for history.
 
 | OD | Topic | Status |
@@ -26,20 +26,24 @@ are reflected in the referenced requirements; they stay here for history.
 | OD-011 | Captions | Decided: 6 % / 88 % / 10 %, 2 lines, centred, bold, box + shadow |
 | OD-012 | Smart cropping | Deferred post-v1.0 |
 | OD-013 | Music source | Decided: local library from YouTube Audio Library + Mixkit with manifest |
-| OD-014 | Multimodal evaluation | Decided: metadata layer + 5 sampled frames |
+| OD-014 | Multimodal evaluation | Revised 2026-10-06: bounded per-shot quality evidence; uncovered shots pending |
 | OD-015 | Performance targets | Decided: benchmark methodology now, targets from Phase 10 measurements |
 | OD-016 | Cost budget | Decided: €1/Clip, €30/month, degrade then fail |
 | OD-017 | Coverage thresholds | Decided: categories now, thresholds after baseline (Phase 10) |
-| OD-018 | Production host | Decided: WSL2 native, manual start |
-| OD-019 | Approval gate | Decided: optional, off, auto-publish after 10 min |
+| OD-018 | Production host | Decided: WSL2, native backend, Compose dependencies, manual start (updated 2026-10-01) |
+| OD-019 | Approval gate | Revised 2026-10-06: human-first, no timeout publication; automation opt-in after benchmark |
 | OD-020 | Provider prices / FX rate | Open (verify in Phase 5) |
 | OD-021 | OpenRouter free-tier limits | Open (baseline 20 RPM / 50 per day; verify) |
+| OD-022 | News brand and creative numeric defaults | Open; provisional neutral template, owner reference-set review |
+| OD-023 | Quality request topology | Decided 2026-10-06: five initial/four Manual URL, eight total, paid models within existing budgets |
 
 ### OD-001 — LLM model(s)
 
 - **Question:** Which model(s) to use via the OpenAI-compatible endpoint (OpenRouter initially)?
 - **Decided:** `google/gemma-4-31b-it:free` — a specific free, vision-capable OpenRouter model (not the `openrouter/free` router) so development is reproducible. Selected from OpenRouter's public model list on 2026-09-28 (free, image input, `response_format` support, 262k context); a live request has not yet been made. Fallback if retired: `qwen/qwen3.8-27b:free`. The model is configuration (`LLM_MODEL`, `LLM_MODEL_EVALUATION`); OpenAI, Luna, Terra or local models are later configuration/adapters behind `LLMProvider` with no application-logic change. Weak free models need schema repair (CF-REQ-758).
 - **Boundary:** `LLMProvider`, configuration.
+
+Quality revision to OD-001 (2026-10-06): owner permits budgeted paid writing/vision models. Model-role identifiers remain configuration; capabilities, availability and prices must be verified before paid calls. Fixed historical free-model choices are not proof of current availability. Candidate and final visual review require image-capable models; unavailable evidence remains pending. No hard-coded vendor/model dependency is introduced.
 
 ### OD-002 — Target duration
 
@@ -65,6 +69,12 @@ are reflected in the referenced requirements; they stay here for history.
 - **Decided:** Inspired by OpenMontage (not a dependency): local ComfyUI (workflow templates; images and video, incl. Wan workflows), native local Wan via diffusers (video), Higgsfield cloud (images and video). Order is a Content Profile setting; default `image: [comfyui, higgsfield]`, `video: [comfyui, wan_local, higgsfield]`. Generated media allowed by default, but never of real identifiable people (CF-REQ-215).
 - **Still open:** Higgsfield API contract, authentication and pricing (verify in Phase 5, OD-020). Reference GPU (RTX PRO 500 Blackwell laptop, ≈ 4–6 GB VRAM) is likely insufficient for Wan video; local adapters are implemented and tested with mocks/fakes, Higgsfield is the practical video path.
 - **Boundary:** `ImageProvider`, `VideoProvider`.
+
+Owner revision (2026-10-07): if no suitable image or video is selected,
+permitted native Wan generation may provide a video for either shot type.
+Missing model files download from the configured official model source into
+the local DATA_DIR cache, not Git. Generation permissions, real-person
+restrictions and final review remain unchanged (CF-REQ-208).
 
 ### OD-006 — Google TTS API and voice
 
@@ -120,7 +130,7 @@ are reflected in the referenced requirements; they stay here for history.
 ### OD-014 — Multimodal visual evaluation
 
 - **Question:** Should semantic evaluation inspect sampled frames with a vision-capable model?
-- **Decided:** Yes, as an optional second layer: one `evaluate_clip` request with metadata/production data (always) plus about 5 representative frames (CF-REQ-405, CF-REQ-415), using the free vision model of OD-001. Falls back to metadata-only if the model rejects images. The evaluation model can later be switched (e.g. Luna or Terra) by configuration.
+- **Revised 2026-10-06:** One initial `evaluate_clip` request remains, using bounded per-shot quality evidence and the configured image-capable model. Unsupported or uncovered visual evidence stays pending in quality mode (CF-REQ-416); the historical optional five-frame/metadata fallback applies only outside quality mode. Actual capabilities, prices and availability are verified, not inferred from a historical model choice.
 - **Boundary:** Semantic evaluator input builder, `LLMProvider`.
 
 ### OD-015 — Performance targets
@@ -141,12 +151,16 @@ are reflected in the referenced requirements; they stay here for history.
 ### OD-018 — Production environment
 
 - **Question:** Where does ClipFactory run?
-- **Decided:** The owner's Windows machine under WSL2, native install (no Docker), started manually with `clipfactory serve` ([23-deployment.md](23-deployment.md)). Consequence: the 05:00 Run only happens when WSL2 and the app are running.
+- **Decided:** The owner's Windows machine under WSL2, with PostgreSQL and
+  Dragonfly managed by Docker Compose and the backend running as one native
+  process, started manually with `clipfactory run` ([23-deployment.md](23-deployment.md)).
+  The owner explicitly approved this revision on 2026-10-01. Consequence: the
+  05:00 Run only happens when WSL2, the dependencies and the app are running.
 
 ### OD-019 — Manual approval before publishing
 
 - **Question:** Should the owner optionally approve Clips before publication?
-- **Decided:** Optional gate `publishing.approval_required` (default off). When on, Clips wait for Approve/Reject in the UI and auto-publish after `publishing.auto_publish_after_minutes` (default 10) without a decision (CF-REQ-459, CF-REQ-460, CF-REQ-613).
+- **Revised 2026-10-06:** Human review first, automation later. The earlier off-by-default/ten-minute timeout choice is superseded for quality rollout: explicit owner approval with indefinite hold; eligible automatic/timeout operation requires accepted benchmark evidence and opt-in, never bypassing exact-version factual/licensing/security review (CF-REQ-459–460, CF-REQ-613, ADR-018).
 
 ### OD-020 — Provider prices and currency conversion
 
@@ -162,12 +176,18 @@ are reflected in the referenced requirements; they stay here for history.
 - **Boundary:** `llm.*` settings, LLM governance wrapper (CF-REQ-666 – CF-REQ-671).
 - **Decides:** Implementer verifies; owner confirms.
 
+### Quality extension owner decisions (2026-10-06)
+
+- **OD-014 revision:** Keep one initial final-evaluation request, but cover every shot within configured model/budget capacity. Sparse legacy sampling is not blanket approval; uncovered or unsupported visual evidence remains pending under CF-REQ-416.
+- **OD-022:** Channel name/logo/palette, exact example videos and creative numeric defaults remain open. Provisional choice: neutral modern news-explainer template and the labelled provisional values in configuration. The owner approves branding and the diverse reference set before creative-template completion is claimed. Boundaries: Content Profile, template versions and Quality Review.
+- **OD-023:** Owner explicitly approved one additional batched visual-review request and paid models within EUR 1 per Clip/EUR 30 monthly. Five initial automatic-research calls, four for Manual URL, and eight total including retries/repairs; cache reuse may reduce initial calls. Boundaries: provider governance, accounting and versioned media judgments; ADR-018.
+
 ## Known conflicts
 
 | # | Conflict | Resolution in this baseline | Status |
 | --- | --- | --- | --- |
 | C-1 | The existing root `README.md` described a different product ("identifies the best moments from long-form videos and turns them into vertical clips" for platform-specific vertical formats), using prohibited terminology. | README rewritten to describe the news-Clip product of the brief; clipping of long-form video is listed as a non-goal. | Resolved — confirmed by owner |
-| C-2 | Workspace notes from earlier sessions describe a prior prototype (package `app/`, versions v0.2–v0.5, Python 3.12, "reel"/"story-clip" jobs, Chatterbox/pyttsx3 TTS, OpenCV smart framing). None of that code exists in this repository. | Treated as informative lessons only (see below); not a source of truth. v1.0 follows this specification (Python 3.13+, provider ports, Clip terminology). | Resolved | <!-- terminology:allow -->
+| C-2 | Workspace notes from earlier sessions describe a prior prototype (package `app/`, versions v0.2–v0.5, Python 3.12, "reel"/"story-clip" jobs, Chatterbox/pyttsx3 TTS, OpenCV smart framing). None of that code exists in this repository. | Treated as informative lessons only (see below); not a source of truth. v1.0 follows this specification (Python 3.13+, provider ports, Clip terminology). | Resolved <!-- terminology:allow --> |
 | C-3 | The brief places specifications under `docs/`; the owner's instruction requires `doc/specifications/`. | `doc/specifications/` is canonical; no `docs/` tree exists. | Resolved |
 | C-4 | The brief's sample tree puts `pyproject.toml` and `package.json` at the root. | Placed in `backend/` and `frontend/` with a root `Makefile` ([22-development-workflow.md](22-development-workflow.md#repository-layout-target-for-v100)). | Resolved — confirmed by owner |
 | C-5 | The brief's ADR list (10 ADRs) differs in numbering from the owner's list (14 ADRs). | The owner's list is used (ADR-001 … ADR-014). | Resolved |
@@ -176,14 +196,17 @@ are reflected in the referenced requirements; they stay here for history.
 | C-8 | Brief duration examples (58 fail, 63 pass, 92 fail) and requirement example (59 fail, 60 pass, 91 fail) | Consistent: bounds are inclusive; all examples are in CF-REQ-401. | No conflict |
 | C-9 | Brief: "target 60 s"; owner review: target 70 s. | Owner decision supersedes the brief (OD-002). | Resolved |
 | C-10 | Brief: generation optional/undecided and "do not hardcode" providers; owner review: ComfyUI, native Wan and Higgsfield. | Implemented as adapters behind existing ports; order is profile configuration (ADR-013). | Resolved |
-| C-11 | Baseline allowed any single Linux host with Docker Compose; owner: WSL2, native, manual start. | Deployment docs rewritten; daily schedule depends on the app running (OD-018). | Resolved |
-| C-12 | Owner review suggested Dragonfly could hold distributed rate-limit/usage state; Dragonfly is on the prohibited list and ClipFactory runs as one process. | Not introduced. Rate-limit and usage state live in PostgreSQL + process memory; rationale and revisit condition in [ADR-015](decisions/ADR-015-llm-request-governance.md). | Resolved — owner to confirm |
-| C-13 | Target ≤ 4 LLM requests per Clip vs. the earlier design (≈ 9 LLM tasks, one call per Source). | LLM work consolidated into 4 tasks; asset choice, visual-plan normalisation and Manual URL summary made deterministic (CF-REQ-666). | Resolved |
+| C-11 | Baseline allowed any single Linux host with Docker Compose; the 2026-09-28 decision selected WSL2 native with no containers. | Owner revised the decision on 2026-10-01: WSL2 with Compose-managed PostgreSQL/Dragonfly and a native, manually started backend (OD-018, ADR-016). | Resolved — owner approved 2026-10-01 |
+| C-12 | ADR-015 rejected Dragonfly, while the owner wanted shared rolling LLM governance state. | [ADR-016](decisions/ADR-016-compose-postgresql-and-dragonfly.md) supersedes ADR-015: Dragonfly stores only rolling RPM/circuit state; PostgreSQL remains durable source of truth. | Resolved — owner approved 2026-10-01 |
+| C-13 | Historical four-task budget versus quality candidate review. | Owner revised to five initial quality calls/four Manual URL, eight total; one bounded candidate review, deterministic final selection and cache reuse under unchanged money limits (CF-REQ-666, ADR-018). | Resolved — owner authorized 2026-10-06 |
 | C-14 | Earlier NFRs contained invented performance targets and coverage thresholds. | Replaced by benchmark methodology and required test categories; values set in Phase 10 (OD-015, OD-017). | Resolved |
 
 `[Derived]` requirements (story novelty, `dry_run` default, disclosure flags,
 attributions, reuse cooldown, real-people rule, English UI) were accepted by
 the owner on 2026-09-28.
+
+`[Derived]` requirements CF-REQ-755, CF-REQ-756 and CF-REQ-757 were explicitly
+accepted by the owner on 2026-10-01 with ADR-016.
 
 ## Informative lessons from the prior prototype
 

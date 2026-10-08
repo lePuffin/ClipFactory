@@ -37,10 +37,15 @@ the others are additions required for diagnosis.
 | `publication_awaiting_approval` | Approval gate on (CF-REQ-459) | `clip_id`, `platforms`, `auto_publish_at` |
 | `publication_approval_resolved` | Owner decision or timeout; may occur after `run_completed` | `clip_id`, `decision` (`approve`/`reject`), `approved_by` |
 | `provider_call_failed` | A provider call fails (after its call retries) | `port`, `provider`, `operation`, `error_code`, `transient`, `call_retries` |
+| `llm_call_started` | An LLM request is sent inside a stage | `task`, `model_role`, `prompt_chars` |
+| `llm_call_completed` | An LLM request returns valid structured output | `task`, `model`, `duration_seconds`, `prompt_tokens?`, `completion_tokens?`, `reasoning?`, `response` (each excerpt ≤ 4 000 characters) |
+| `progress` | A long stage reaches a milestone (e.g. articles fetched, candidates ranked, Claims extracted for a Story, generation/render progress) | free-form counts; renderer progress may include `generation_phase`, `provider`, `model`, `template_id`, `template_version`, `visual_index`, `visual_count`, actual `frames_completed`/`frames_total`, and measured `progress_fraction` |
 | `stage_failed` | A stage raises or its gate fails without retry | `stage`, `error_code`, `message` |
 | `warning` | Non-blocking condition (e.g. `budget_degraded`, `no_music_available`) | `code`, `message` |
 | ● `run_completed` | Run completed | `outcome`, `clip_id` |
 | ● `run_failed` | Run failed | `failure_stage`, `failure_code`, `failure_message` |
+| `run_resumed` | Owner queued continuation | `resume_stage`, `failure_code`, `failure_message`, `previous_settings_snapshot`, `settings_snapshot` |
+| `run_stop_requested` | Owner requested immediate Stop; cleanup pending | stage in event envelope |
 
 ## Requirements
 
@@ -49,10 +54,14 @@ the others are additions required for diagnosis.
 - **Description:** The workflow shall persist Run Events of the types above,
   with per-Run strictly increasing `sequence`, in the same transaction as the
   state change they describe where practical.
+- **Behaviour:** Renderer watchdog heartbeats are internal and never
+  persisted as `progress` events. A renderer `progress_fraction` is emitted
+  only when derived from measured completed frames; otherwise clients show
+  indeterminate rendering progress.
 - **Acceptance:**
   - A successful fake Run persists, in order, `run_started` … `run_completed`, with every ● type relevant to the path present.
   - A failed Run's last event is `run_failed` with a non-empty `failure_message`.
-- **Related:** CF-REQ-654, CF-REQ-655
+- **Related:** CF-REQ-265, CF-REQ-604, CF-REQ-654–655, ADR-019
 
 ### CF-REQ-851 — Structured logs
 

@@ -44,13 +44,22 @@ Global header: product name, current Run indicator, **Run Now** button,
 ### CF-REQ-602 — Live Run progress
 
 - **Description:** The UI shall display live Run progress through the SSE
-  stream of Run Events, rendering the canonical stage list with states
-  pending / running / done / failed / skipped and the current Attempt.
+  stream of Run Events. On Run detail, progress appears inside Execution as
+  a stage-based loading bar, not a separate Live Progress panel. A text
+  bubble anchored to the fill edge names the current stage; its state
+  (pending / running / done / failed / skipped) and Attempt remain visible.
+  Progress represents position in the canonical stage sequence for the
+  trigger, not elapsed time; Retry re-entry can move it backwards. Queued
+  Runs start at 0 %, completed Runs show 100 %, and failed Runs retain
+  their stage position with failure styling.
 - **Behaviour:** On disconnect the client reconnects with `Last-Event-ID` and
   receives missed events; no polling loop is required.
+- **Refresh:** The dashboard's active Run (with live elapsed time and latest event message) and recent Runs refresh automatically; the Run detail page refreshes its record about every second until the Run is `completed` or `failed`.
 - **Acceptance:**
   - An E2E test starting a fake Run sees stages advance to `publish` without page reload.
   - Reconnecting mid-Run shows no duplicated or missing events.
+  - Run detail displays the bar within Execution, updates its fill and stage
+    bubble from SSE, and keeps the bubble within the bar's width on mobile.
 - **Related:** CF-REQ-852
 
 ### CF-REQ-603 — Analytics page
@@ -71,9 +80,41 @@ Global header: product name, current Run indicator, **Run Now** button,
   levels and evidence, Script versions, Visual Plan with selected Assets,
   every Evaluation with issues and actions per Attempt, Clip preview,
   Publications, and the failure stage/code/message.
+- **Behaviour:** The Event Stream displays events in descending sequence
+  order: newest first, with the first event at the bottom. Display ordering
+  does not change the chronological event data used to derive progress.
+  Previously persisted generation heartbeats are hidden from the Event
+  Stream and its displayed count; meaningful generation milestones remain.
+  Execution shows elapsed time from Run start (live until termination, then
+  frozen) and the LLM model and evaluation model from the Run settings
+  snapshot. Elapsed durations of at least one hour use hours, minutes and
+  seconds (for example `1h 05m 09s`); shorter durations retain minutes/seconds.
+  Missing values display "n/a".
+  Execution also shows `Visuals` as the one-based current Visual / total
+  Visuals in the plan (for example `10 / 11`), updated during Asset selection
+  and generation. Missing Visual counts display "n/a"; continuation does
+  not show stale counts from a prior execution before new progress arrives.
+  Generation activity shows its provider, model, phase, actual inference
+  steps or rendered-frame counts, and template provenance via Run Events;
+  loading/download is indeterminate, never an invented percentage.
+  Local graphics renders use phase `rendering`, expose the selected
+  HyperFrames/Manim adapter and template provenance, and may show
+  `progress_fraction` only when measured from actual completed frames;
+  watchdog heartbeats are silent and do not advance the displayed progress.
+  During Wan inference, actual step progress advances the Execution bar within
+  `select_assets`, weighted by Visual index/count. Encoding and validation
+  reserve the end of each Visual's portion; stage completion finishes it.
 - **Acceptance:**
   - For a fixture Run failing with `evaluation_failed_after_retries`, the page shows the final blocking issues and all 4 Attempts.
-- **Related:** CF-REQ-118, CF-REQ-409, CF-REQ-850
+  - Initial and newly received events appear newest first without duplicates.
+  - Execution updates elapsed time while running and freezes it at finish.
+  - Generation phases update live and expose failures, including after reload.
+  - Failed records offer Continue Run with current application settings,
+    preserving the Run ID and completed work (CF-REQ-657); conflicts are shown.
+  - Continue Run and Stop are adjacent to Execution status. Stop is offered
+    for queued/running Runs with confirmation of potential unfinished media
+    loss, shows Stopping until completion, and surfaces API errors.
+- **Related:** CF-REQ-118, CF-REQ-265, CF-REQ-409, CF-REQ-850
 
 ### CF-REQ-605 — Asset library
 
@@ -81,8 +122,20 @@ Global header: product name, current Run indicator, **Run Now** button,
   type, category, origin, status, tag, licence), thumbnails/previews,
   provenance and attribution, usage count, and allow editing tags/description,
   quarantining/retiring, and importing files with licence metadata.
+- **Behaviour:** Selecting an Asset opens an inline preview with video/audio
+  controls or an image, using the existing range-capable Asset file endpoint.
+  The library shows the storage key; the preview shows the resolved local
+  folder and filename when local storage is configured, plus provenance and
+  media metadata. Missing/unplayable media displays an explicit error.
 - **Acceptance:**
   - Retiring an Asset in the UI updates its status via the API and removes it from the default "active" filter.
+  - Image, video and audio Assets can be previewed without leaving the library.
+  - The selected Asset's folder, filename and storage key are visible; the
+    file can also be opened directly using its Asset-ID endpoint.
+    - Media type, origin and provider filters combine with status filtering.
+      Provider choices come from the loaded Assets' provenance, including
+      local generators and external media sources. These filters operate on
+      the current loaded library page (up to 500 Assets for the selected status).
 - **Related:** CF-REQ-213, CF-REQ-216
 
 ### CF-REQ-606 — Settings
@@ -94,6 +147,10 @@ Global header: product name, current Run indicator, **Run Now** button,
 - **Acceptance:**
   - No input on the settings page accepts an API key or token.
   - Server-side validation errors are displayed next to the field.
+  - Settings / Environment exposes `wan_max_generations_per_run` (default 2,
+    integer 0–100) with guidance that 0 disables new Wan calls and Retry/
+    Continue retain usage. Additional Visuals use suitable graphics or refined
+    free-media searches, not unlimited Wan generation (CF-REQ-266).
 - **Related:** CF-REQ-752, CF-REQ-753
 
 ### CF-REQ-607 — Content Profile editor
@@ -148,15 +205,23 @@ Global header: product name, current Run indicator, **Run Now** button,
   and price table on the Settings page.
 - **Acceptance:**
   - The dashboard shows e.g. "€12.40 of €30.00 this month" matching `GET /api/budget`.
+  - Overview budget amounts (spend, monthly limit, remaining and per-Clip
+    limit) display exactly two decimal places, rounding for display only.
   - Estimated entries are visibly labelled "estimated".
 - **Related:** CF-REQ-665
 
 ### CF-REQ-613 — Approval of pending Clips
 
 - **Description:** When Clips are `awaiting_approval`, the dashboard shall
-  show them prominently with preview, metadata per platform, the time left
-  before auto-publish, and Approve / Reject actions.
+  show them prominently with exact-version preview, unresolved review reasons, platform metadata and Approve / Reject actions. Human-review rollout has no auto-publication countdown; an automatic countdown is shown only for explicitly enabled benchmark-qualified timeout mode.
 - **Acceptance:**
   - Approving from the dashboard triggers publication and the item disappears from the pending list.
-  - The countdown matches the `auto_publish` task due time.
+  - Human-review mode requires an explicit decision; eligible automatic mode's countdown matches the task due time.
 - **Related:** CF-REQ-459, CF-REQ-460
+
+### CF-REQ-614 — Storyboard and version-bound quality review UI
+
+- **Description:** The owner shall inspect the beat/shot contact sheet, Asset provenance/licence/date/identity evidence, subtitles and editorial labels, motion/transition intent, audio cues, full playback and remaining request/cost budget before approving a render.
+- **Behaviour:** Permit targeted replace/trim/label/style/audio edits through saved-package rerender. Show cache reuse, pending reasons and exact version/hash. Distinguish technical validity, model review, owner approval and publication eligibility. Blocking factual/licensing/security issues cannot be bypassed. Changed output invalidates stale approval.
+- **Acceptance:** Replacing a shot makes no new research or unchanged TTS calls; unverified identity is visible; stale-hash approval is rejected; quota-blocked evidence remains pending.
+- **Related:** CF-REQ-260, CF-REQ-361, CF-REQ-417, CF-REQ-459

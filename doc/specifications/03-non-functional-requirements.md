@@ -9,32 +9,38 @@ NFRs are in [21-testing.md](21-testing.md) (CF-NFR-150–199).
 ### CF-NFR-001 — Single-host system
 
 - **Description:** v1.0 shall run as one backend process (FastAPI + in-process
-  workflow runner + in-process scheduler) with one PostgreSQL database, FFmpeg
-  binaries and a local data directory. No other runtime infrastructure is required.
+  workflow runner + in-process scheduler) with PostgreSQL as its durable
+  database, Dragonfly for rolling LLM RPM/circuit state only, FFmpeg binaries
+  for final assembly/probing, the scoped local graphics runtimes of
+  CF-REQ-264, and a local data directory.
 - **Acceptance:**
-  - Following the native setup in [23-deployment.md](23-deployment.md) (backend process + PostgreSQL + FFmpeg, no containers) yields a fully working system.
-- **Related:** [deployment-architecture](architecture/deployment-architecture.md), ADR-010
+  - Following [23-deployment.md](23-deployment.md) starts PostgreSQL and
+    Dragonfly with Compose and the backend as one native process with one worker.
+- **Related:** [deployment-architecture](architecture/deployment-architecture.md), ADR-010, ADR-016
 
 ### CF-NFR-002 — Prohibited technology
 
 - **Description:** The implementation shall not introduce microservices,
-  Kubernetes, Celery, RQ, Temporal, Kafka, RabbitMQ, Redis, KeyDB, Dragonfly,
-  service meshes, vector databases, a second database, additional agent
+  Kubernetes, Celery, RQ, Temporal, Kafka, RabbitMQ, Redis, KeyDB,
+  service meshes, vector databases, a second durable database, additional agent
   frameworks (besides LangGraph for workflow), JEV, or dependencies on
   OpenShorts or OpenMontage, unless a new approved ADR demonstrates a concrete
-  requirement.
+  requirement. Dragonfly is allowed only for the scope approved by ADR-016.
 - **Acceptance:**
   - A CI check fails if any prohibited package name appears in `backend/pyproject.toml` or `frontend/package.json` dependencies.
-- **Related:** [system-architecture](architecture/system-architecture.md#prohibited-technology)
+- **Related:** [system-architecture](architecture/system-architecture.md#prohibited-technology), ADR-016
 
 ### CF-NFR-003 — Technology baseline
 
 - **Description:** Backend: Python ≥ 3.13, uv, FastAPI, Pydantic v2,
-  SQLAlchemy 2, Alembic, PostgreSQL (≥ 16), LangGraph, httpx, FFmpeg (≥ 6).
+  SQLAlchemy 2, Alembic, PostgreSQL (≥ 16), Dragonfly, LangGraph, httpx,
+  FFmpeg (≥ 6), a pinned local HyperFrames Node package and optional Manim
+  `graphics-manim` dependency group for typed graphics. Local infrastructure
+  uses Docker Compose; the backend remains native.
   Frontend: TypeScript (strict), React, Vite, Tailwind CSS. New runtime
   dependencies require a one-line justification in the PR description and,
   if architectural, an ADR.
-- **Related:** ADR-001, ADR-002, ADR-003, ADR-004
+- **Related:** ADR-001, ADR-002, ADR-003, ADR-004, ADR-016
 
 ## Reliability
 
@@ -59,9 +65,10 @@ NFRs are in [21-testing.md](21-testing.md) (CF-NFR-150–199).
 
 ### CF-NFR-012 — Non-blocking server
 
-- **Description:** CPU-heavy or blocking work (FFmpeg, transcription, text
-  extraction, image processing) shall run outside the asyncio event loop
-  (subprocess or worker thread), so API and SSE stay responsive during a Run.
+- **Description:** CPU-heavy or blocking work (FFmpeg, HyperFrames/Manim
+  rendering, transcription, text extraction, image processing) shall run
+  outside the asyncio event loop (scoped subprocess or worker thread), so API
+  and SSE stay responsive during a Run.
 - **Acceptance:**
   - During a fake Run with a 5 s blocking composition, `/api/health` responds in < 500 ms.
 

@@ -28,6 +28,7 @@ ClipFactory/
 ├── backend/
 │   ├── pyproject.toml             # uv project, Ruff, Pyright, pytest config
 │   ├── uv.lock
+│   ├── renderers/hyperframes/     # exact-pinned local Node package + lockfile; no remote renderer
 │   ├── alembic.ini
 │   ├── src/clipfactory/
 │   │   ├── domain/                # entities, value objects, rules (pure)
@@ -66,7 +67,7 @@ cross-tool configuration; the root `Makefile` provides one entry point. See
 
 - Python 3.13+ and `uv`
 - Node.js 22 LTS and npm
-- PostgreSQL 16+ installed natively (e.g. `sudo apt install postgresql` in WSL2)
+- Docker Engine with the Compose plugin (PostgreSQL 16 and Dragonfly run in Compose)
 - FFmpeg 6+ with `libx264`, `libass` and `aac` (`ffmpeg -hide_banner -buildconf`)
 - Optional: GPU + CUDA for faster Whisper
 
@@ -75,16 +76,20 @@ cross-tool configuration; the root `Makefile` provides one entry point. See
 | Purpose | Command |
 | --- | --- |
 | Install backend | `cd backend && uv sync --locked --all-groups` |
+| Install local HyperFrames package | `cd backend/renderers/hyperframes && npm ci` |
+| Install optional Manim renderer | `cd backend && uv sync --locked --group graphics-manim` |
 | Install frontend | `cd frontend && npm ci` |
+| Provision local dependencies | `cd backend && uv run clipfactory setup` — Compose up, health wait, migrate and seed; backend remains stopped |
+| Diagnose local environment | `cd backend && uv run clipfactory doctor` — read-only checks; exit 0 only when all required checks pass |
+| Run application | `cd backend && uv run clipfactory run` — native one-process/one-worker backend after dependency checks and migrations |
 | DB migrate | `cd backend && uv run alembic upgrade head` |
-| Run backend (dev) | `cd backend && uv run clipfactory serve --reload` |
 | Run frontend (dev) | `cd frontend && npm run dev` (proxies `/api` to the backend) |
 | Demo with fakes | `APP_ENV=development` and all provider selections set to `fake` |
 | All checks | `make check` |
 | Backend checks | `make backend-check` |
 | Frontend checks | `make frontend-check` |
 | Docs check | `make docs-check` or `python3 scripts/check_docs.py` |
-| E2E (fakes) | `make e2e` — starts PostgreSQL, backend with all providers `fake`, runs Playwright (created in Phase 1, used by CI) |
+| E2E (fakes) | `make e2e` — starts PostgreSQL and Dragonfly, then the native backend with all providers `fake`, and runs Playwright |
 | Pre-commit | `pre-commit install` then automatic; `pre-commit run --all-files` |
 
 Quality gate commands are canonical in [21-testing.md](21-testing.md#cf-nfr-153--quality-gate-commands).
@@ -137,7 +142,7 @@ Branches: `main` (release), `dev` (integration), short-lived feature branches.
 | Job | Runs when | Steps |
 | --- | --- | --- |
 | `docs` | always | `python3 scripts/check_docs.py` |
-| `backend` | `backend/pyproject.toml` exists | PostgreSQL 16 service; install FFmpeg; `uv sync --locked`; Ruff check; Ruff format check; Pyright; `alembic upgrade head`; pytest with coverage |
+| `backend` | `backend/pyproject.toml` exists | PostgreSQL 16 + Dragonfly services; install FFmpeg; `uv sync --locked`; Ruff check; Ruff format check; Pyright; `alembic upgrade head`; pytest with coverage |
 | `frontend` | `frontend/package.json` exists | `npm ci`; lint; typecheck; test; build |
 | `e2e` | both exist | Build frontend; start backend with fakes; Playwright |
 

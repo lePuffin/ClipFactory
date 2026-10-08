@@ -75,3 +75,17 @@ Scheduling: [16-scheduling-and-runs.md](16-scheduling-and-runs.md).
   (Publication, offset label).
 - **Acceptance:**
   - Re-running a completed task does not create a second snapshot.
+
+### CF-REQ-507 — Capability-aware engagement metrics
+
+- **Description:** Engagement reporting shall expose platform-supported views, watch time, retention/completion, comments, shares and attributable follows/subscriptions with metric definitions, source, capture time, denominator and capability availability.
+- **Behaviour:** Unsupported fields remain null, not zero or inferred. Account-level follower delta is not per-Clip subscription conversion. Retention curves or comment intent are not fabricated from aggregate counts. Incompatible platform definitions are not directly compared. Raw-comment ingestion or sentiment analysis is outside this increment.
+- **Acceptance:** Unsupported attributable subscriptions display unavailable; cumulative snapshots are not summed; completion rate has an explicit denominator and is unavailable without it.
+- **Related:** CF-REQ-500, CF-REQ-502, CF-REQ-505
+
+### CF-REQ-508 — Versioned creative comparisons
+
+- **Description:** Analytics shall connect each Publication to its exact Story Package/render/template/hook versions and permit owner-controlled comparisons of creative changes.
+- **Behaviour:** Compare matching platform, capture age and compatible definitions; show sample size, exposure and confounders. Distinguish observational comparisons from platform-provided randomized experiments. Record the changed creative variable. Results inform owner decisions, never guarantee growth or automatically optimize editorial policy for controversy.
+- **Acceptance:** Cumulative observations contribute only the latest count; an observational hook comparison is not labelled an A/B experiment; low-exposure results show sample size rather than declaring a winning style.
+- **Related:** CF-REQ-164, CF-REQ-505, CF-REQ-507

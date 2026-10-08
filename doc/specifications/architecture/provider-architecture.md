@@ -52,7 +52,9 @@ class LLMProvider(Protocol):          # the "LLM client" interface used by use c
 - A shared governance wrapper (applies to every adapter) implements schema
   repair (CF-REQ-758), RPM limiter, daily budget, per-Run cap, selective
   retries with backoff, usage records and circuit breaker (CF-REQ-666 –
-  CF-REQ-671, [ADR-015](../decisions/ADR-015-llm-request-governance.md)).
+  CF-REQ-671). PostgreSQL is authoritative for usage; Dragonfly stores only
+  the rolling RPM window and circuit state
+  ([ADR-016](../decisions/ADR-016-compose-postgresql-and-dragonfly.md)).
 
 ### NewsSource
 
@@ -101,6 +103,13 @@ class VideoProvider(Protocol):
 ```
 
 - Requests: prompt, negative prompt, width, height, (duration for video), seed.
+- For local graphics, the existing request may carry an optional
+  provider-neutral typed `graphics_spec`; the `select_assets` use case selects
+  the named HyperFrames or Manim adapter explicitly from the VisualPlan kind.
+  This is not provider-list fallback and does not add a port. HyperFrames
+  accepts only trusted infographic templates; Manim accepts only trusted
+  scientific templates. Neither accepts model-authored HTML/SVG/source code,
+  arbitrary formulas or URLs. See CF-REQ-263–265 and [ADR-019](../decisions/ADR-019-local-typed-graphics-renderers.md).
 - `GeneratedMedia` includes the file, `GenerationInfo`, and the reported cost if any.
 - Adapters also expose `estimate_cost(request) -> Money` used by the budget
   check (CF-REQ-662); local adapters return 0.
@@ -110,11 +119,21 @@ class VideoProvider(Protocol):
 | --- | --- | --- | --- |
 | `ComfyUIImageProvider`, `ComfyUIVideoProvider` | Image, Video | Local ComfyUI HTTP API | Owner-supplied workflow templates (CF-REQ-217); Wan, Flux, SDXL etc. run as workflows |
 | `WanLocalVideoProvider` | Video | In-process via diffusers + PyTorch (worker thread, CUDA) | Optional `local-gen` dependency group; small GPU makes it slow/unreliable on the reference host |
+| `HyperFramesVideoProvider` | Video | Local pinned Node package, explicit infographic route | Uses only bounded typed templates; separate from profile provider order |
+| `ManimVideoProvider` | Video | Local Manim renderer, explicit scientific route | Optional `graphics-manim` Python dependency group; bounded typed templates |
 | `HiggsfieldImageProvider`, `HiggsfieldVideoProvider` | Image, Video | Higgsfield cloud API (paid) | API contract, auth and pricing verified in Phase 5 |
 | `fake` | Image, Video | FFmpeg-rendered gradients | Tests |
 
 - Provider order comes from the Content Profile `generation` policy; the
   asset manager, not the adapters, implements fallback (CF-REQ-208).
+- Wan can supply video for a missing image shot as well. Its lazy loader
+  automatically caches missing official model files beneath DATA_DIR.
+  Generated files pass normal import validation with generation metadata;
+  final visual review and approval still apply.
+- HyperFrames/Manim outputs are rendered video Assets and use the existing
+  validation, FFprobe/full-decode, provenance and import lifecycle. A graphics
+  failure never falls through to Wan or another provider. The renderer's
+  internal encoding is allowed; FFmpeg authoring of a graphic is not.
 
 ### TTSProvider
 

@@ -23,8 +23,9 @@ Diagram: [diagrams/system-context.puml](diagrams/system-context.puml).
 | Container | Technology | Responsibility |
 | --- | --- | --- |
 | Web UI | React SPA (static files served by the backend) | Dashboard, Runs, Clips, analytics, assets, profile, settings |
-| Backend | Python process: FastAPI (API + SSE + static), workflow runner (LangGraph), scheduler loop, media runner (FFmpeg subprocesses), Whisper in worker thread | All application behaviour |
+| Backend | Python process: FastAPI (API + SSE + static), workflow runner (LangGraph), scheduler loop, FFmpeg final-assembly/probe runner, scoped local HyperFrames/Manim renderer subprocesses, Whisper in worker thread | All application behaviour |
 | Database | PostgreSQL 16 | Domain data, Run Events, settings, scheduled tasks, LangGraph checkpoints |
+| Operational state | Dragonfly | Rolling LLM requests-per-minute window and circuit-breaker state only |
 | Data directory | Local filesystem | Assets, Clips, work directories, OAuth token files |
 
 Diagram: [diagrams/container-diagram.puml](diagrams/container-diagram.puml).
@@ -37,8 +38,9 @@ blocking work is offloaded to subprocesses or threads (CF-NFR-012).
 
 - A single user and at most one active Run make distributed execution
   unnecessary ([ADR-009](../decisions/ADR-009-single-user-v1.md), [ADR-010](../decisions/ADR-010-simple-scheduler.md)).
-- PostgreSQL already provides durability for scheduled tasks and workflow
-  checkpoints, so no queue or cache is needed ([ADR-003](../decisions/ADR-003-postgresql.md)).
+- PostgreSQL provides durability for scheduled tasks and workflow checkpoints;
+  Dragonfly holds only disposable LLM governance state
+  ([ADR-016](../decisions/ADR-016-compose-postgresql-and-dragonfly.md)).
 - LangGraph provides stateful, resumable orchestration without a separate
   workflow server ([ADR-004](../decisions/ADR-004-langgraph-workflow.md)).
 
@@ -51,8 +53,8 @@ must not be introduced (CF-NFR-002):
 | --- | --- |
 | Microservices, service meshes, Kubernetes | One backend process |
 | Celery, RQ, Temporal, Kafka, RabbitMQ | In-process asyncio tasks + PostgreSQL-backed scheduled tasks |
-| Redis, KeyDB, Dragonfly, other caches | PostgreSQL; content-hash file caching on disk |
-| Vector databases, a second database | PostgreSQL full-text search |
+| Redis, KeyDB, general-purpose caches | PostgreSQL; content-hash file caching on disk. Dragonfly is allowed only for ADR-016's rolling LLM RPM/circuit state |
+| Vector databases, a second durable database | PostgreSQL full-text search |
 | Additional agent frameworks (beyond LangGraph for the workflow graph) | Structured LLM calls invoked by use cases |
 | JEV; OpenShorts or OpenMontage as dependencies | Own small modules; those projects are inspiration only |
 

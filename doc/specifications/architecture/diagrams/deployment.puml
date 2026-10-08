@@ -1,6 +1,6 @@
 @startuml deployment
 ' See ../deployment-architecture.md and ../../23-deployment.md
-title ClipFactory — Deployment (owner's Windows machine, WSL2, native)
+title ClipFactory — Deployment (native backend, Compose-managed dependencies)
 
 actor "Owner browser (Windows)" as browser
 cloud "Instagram / Facebook servers" as ig
@@ -8,11 +8,16 @@ cloud "Instagram / Facebook servers" as ig
 node "Windows host" {
   component "Owner reverse proxy\n(forwards /public/media/* only)" as proxy
   node "WSL2 (Ubuntu)" {
-    component "clipfactory serve\n(FastAPI + SPA + workflow + scheduler)\n1 process, 1 worker" as svc
+    component "clipfactory run\n(FastAPI + SPA + workflow + scheduler)\nnative: 1 process, 1 worker" as svc
     component "FFmpeg / FFprobe" as ffmpeg
+    component "HyperFrames\n(pinned local Node package)" as hyperframes
+    component "Manim\n(optional graphics-manim group)" as manim
     component "faster-whisper / wan_local\n(CUDA via WSL2)" as models
     component "ComfyUI (optional, local HTTP)" as comfy
-    database "PostgreSQL 16 (native)" as pg
+    node "Docker Compose" {
+      database "PostgreSQL 16\n(durable source of truth)" as pg
+      database "Dragonfly\n(LLM RPM/circuit only)" as dragonfly
+    }
     folder "Data directory (ext4)\nassets / clips / work / cache / secrets" as data
   }
 }
@@ -23,7 +28,10 @@ browser --> svc : http://localhost:8000
 ig --> proxy : HTTPS signed media URL
 proxy --> svc : /public/media/{token}
 svc --> pg
+svc --> dragonfly
 svc --> ffmpeg : subprocess
+svc --> hyperframes : scoped subprocess
+svc --> manim : scoped subprocess
 svc --> models : thread
 svc --> comfy : HTTP
 svc --> data : read/write

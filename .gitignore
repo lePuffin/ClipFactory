@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 secrets/
+database/
 
 # ClipFactory runtime data (media, work dirs, OAuth tokens, logs)
 data/

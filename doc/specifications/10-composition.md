@@ -115,3 +115,27 @@ pixel count per frame, reducing encode time, storage and upload size.
 - **Acceptance:**
   - A corrupt fixture image causes quarantine and reselection, not a Run failure, while retries remain.
 - **Related:** CF-REQ-410
+
+### CF-REQ-360 — Layered news composition contract
+
+- **Description:** The immutable CompositionSpec shall include ordered visuals, editorial Overlay Cues, subtitles, narration/music/SFX Audio Cues, motion/keyframe presets, template versions and platform-safe layout identifiers.
+- **Behaviour:** Deterministic rendering consumes this contract only; basic graphics use local fonts/assets and FFmpeg, not generation providers. Required credits/disclosures remain intact. Every output records Story Package and render revision, input hashes and composition hash; deterministic planning does not create an external overlay-provider abstraction.
+- **Acceptance:** The same saved inputs yield the same command/spec hash; missing referenced media blocks rendering; changing an overlay updates the composition hash without changing narration bytes.
+- **Related:** CF-REQ-259–262, CF-REQ-324–325, CF-REQ-350, CF-REQ-357
+
+### CF-REQ-361 — Saved-package preview and targeted rerender
+
+- **Description:** The application shall expose an in-repository use case, API and CLI for previewing and rerendering a retained Story Package without repeating unchanged research, script, TTS or transcription calls.
+- **Behaviour:** Revisions preserve immutable prior inputs, record changed fields, validate dependencies and regenerate only affected outputs. Presentation-only edits may create new visual judgments/render output but not new research or narration. Script edits invalidate narration/alignment; changed media/identity invalidates affected reviews; any material output change invalidates approval. A failed original Run remains failed; a new render is not a fabricated successful Run.
+- **Optional brand mark:** A revision may reference an active, licensed imported image Asset as a brand mark. The renderer shall preserve its aspect ratio and alpha, fit it within 112 × 112 px at 720 px output width, and place it 24 px from the top and right edges for the entire Clip. The rendered revision records the Asset hash and remains pending review; the base Clip and its output are unchanged.
+- **Card background photo:** A revision may replace the plain background of a fallback text card with an active, licensed image Asset. The card keeps its original text, the photo covers the frame with its upper part visible, and a darkening gradient keeps the text readable above the subtitles. The photo's attribution joins the revision credits. A photo of a real person must come from a source that identifies that person (CF-REQ-215, CF-REQ-260).
+- **Acceptance:** Label-only rerender makes zero research/write-script/TTS/transcription requests; corrected script produces new audio only when its text changed; previous video remains retrievable; the workflow runs without temporary driver scripts.
+- **Acceptance:** A logo-only revision with an active PNG Asset places its visible pixels within the specified top-right bounds across the full timeline, preserves transparent pixels, changes the composition hash, leaves narration unchanged, makes zero provider calls, preserves the original Clip, and returns `pending_review`.
+- **Related:** CF-REQ-152, CF-REQ-220, CF-REQ-302, CF-REQ-412
+
+### CF-REQ-362 — Platform-safe presentation variants
+
+- **Description:** A Clip may have versioned presentation variants for YouTube, Instagram, TikTok and Facebook, bound to the same grounded content and explicit platform/template settings.
+- **Behaviour:** Safe-zone/layout or supported metadata changes are not new facts. Each published file references the exact reviewed revision, layout version and hash. Platform-control masks are owner-reviewed versioned data; they are not assumed permanently correct. Variant edits invalidate affected review; quality work and storage/compute costs remain attributable to the Clip.
+- **Acceptance:** Every variant passes its configured overlay/subtitle masks at the declared resolution; publishing cannot select an unreviewed variant hash; unavailable platform capability is reported rather than emulated.
+- **Related:** CF-REQ-261, CF-REQ-360–361, CF-REQ-451

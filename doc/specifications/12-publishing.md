@@ -122,18 +122,17 @@ live APIs in this repository. See OD-009.
 ### CF-REQ-459 — Optional approval gate
 
 - **Description:** When `publishing.approval_required` is true (default
-  false) and mode is `live`, the `publish` stage shall create Publications
+  true in the quality rollout) and mode is `live`, the `publish` stage shall create Publications
   with status `awaiting_approval` instead of calling platforms, complete the
   Run with outcome `awaiting_approval`, emit `publication_awaiting_approval`,
-  and schedule an `auto_publish` task due after
-  `publishing.auto_publish_after_minutes`.
+  and hold them until an explicit owner decision. An `auto_publish` task is created only when timeout publication is explicitly enabled after the accepted quality benchmark.
 - **Behaviour:** The owner approves or rejects in the UI/API. Approve ⇒
   publish immediately (as CF-REQ-454) and cancel the task. Reject ⇒
   Publications `rejected`, outcome `not_published`, task cancelled. The Run's
   outcome is updated when the approval resolves. Approval never bypasses
   evaluation: only `approved` Clips reach this state.
 - **Acceptance:**
-  - With the gate on, no platform call happens before approval or timeout.
+  - With the rollout gate on, no platform call happens before explicit approval, even after the configured legacy timeout.
   - Approving via `POST /api/clips/{id}/approval` `{decision: "approve"}` publishes once; a second approval is a no-op.
   - Rejecting sets all Publications `rejected` and outcome `not_published`.
 - **Related:** CF-REQ-613, OD-019
@@ -141,11 +140,10 @@ live APIs in this repository. See OD-009.
 ### CF-REQ-460 — Auto-publish after timeout
 
 - **Description:** If the owner has not decided when the `auto_publish` task
-  becomes due (default 10 minutes), the system shall publish the Clip as if
-  approved and record `approved_by = auto_timeout` in the Publication.
+  becomes due, publication is allowed only when `publishing.auto_publish_enabled` is explicitly true, the quality benchmark is accepted, all required reviews pass for the exact variant hash, and the owner selected automatic operation. During human-review rollout it is false and no timeout may approve or publish.
 - **Acceptance:**
-  - With a fake clock advanced 10 minutes after the Run completes, the Clip is published and the event payload says `auto_timeout`.
-  - If the application was down when the task became due, it publishes at the next scheduler tick.
+  - Advancing a fake clock beyond ten minutes in human-review mode makes zero platform calls and leaves the owner decision pending.
+  - Opt-in automatic mode publishes once only after benchmark/review checks; downtime does not bypass those checks.
 
 ### CF-REQ-461 — Signed public media URL for URL-pull platforms
 

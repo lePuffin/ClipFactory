@@ -6,6 +6,14 @@ Diagrams: [production-workflow](diagrams/production-workflow.puml),
 [research-workflow](diagrams/research-workflow.puml),
 [evaluation-retry-flow](diagrams/evaluation-retry-flow.puml).
 
+Quality extension: [news-quality-workflow](diagrams/news-quality-workflow.puml), [ADR-017](../decisions/ADR-017-layered-news-composition.md) and [ADR-018](../decisions/ADR-018-budgeted-quality-review.md). Existing stage names remain; candidate review is a bounded operation inside `select_assets`, not an autonomous model loop. Overlay/SFX plans live in the versioned Story Package and CompositionSpec, not graph state. Pending evidence preserves work; saved-package rerender creates an auditable revision without rewriting failed Run history. Human-review rollout has no implicit timeout publication. The legacy graph below describes stage order; its approval edge is additionally constrained by version-bound quality and owner policy.
+
+Typed graphics are routed inside `select_assets` by `VisualPlan.kind`:
+infographics to local HyperFrames, scientific graphics to local Manim, and
+ordinary media to its existing acquisition/permitted-Wan route. This
+deterministic adapter choice is independent of profile provider order; graph
+state still carries IDs only. See CF-REQ-263–265 and [ADR-019](../decisions/ADR-019-local-typed-graphics-renderers.md).
+
 ## Components
 
 | Component | Responsibility |
@@ -13,6 +21,7 @@ Diagrams: [production-workflow](diagrams/production-workflow.puml),
 | `RunService` | Creates Runs (enforcing single active Run with a DB lock/partial unique index), snapshots profile/settings, starts the runner |
 | `WorkflowRunner` | Owns the compiled LangGraph graph; runs one Run as an asyncio task; applies stage timeout; converts exceptions to Run failure; resumes interrupted Runs at startup |
 | Graph nodes | One node per `Stage`; each calls exactly one use case and returns a state update |
+| `select_assets` graphics dispatch | Selects the trusted local renderer by typed VisualPlan kind; it does not add a workflow stage or an LLM call |
 | `RetryPlanner` (evaluation package) | Pure: from failed Evaluations + state → re-entry stage, Actions, or failure |
 | `Scheduler` | In-process loop over `scheduled_task` rows |
 | `RunEventPublisher` | Persists Run Events and notifies SSE subscribers in-process |
@@ -55,7 +64,9 @@ START ─► route_entry ─┬─► research ─► cluster_stories ─► sel
                      build_story_package ─► write_script ──(gate fail)──► plan_retry
                                               │
                                               ▼
-                     plan_visuals ─► select_assets ─► generate_narration ──(gate fail)──► plan_retry
+                     plan_visuals ─► select_assets
+                     (media: reuse/acquire/Wan; infographic: HyperFrames;
+                      scientific: Manim) ─► generate_narration ──(gate fail)──► plan_retry
                                               │
                                               ▼
                      transcribe_narration ─► build_captions ─► compose_clip ──(plan gate fail / asset_render_failed)──► plan_retry

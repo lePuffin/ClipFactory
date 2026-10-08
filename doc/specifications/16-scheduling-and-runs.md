@@ -22,7 +22,7 @@ Run Events, API and UI.
 | 6 | `build_story_package` | Story Package, key facts | [06](06-story-and-script.md) |
 | 7 | `write_script` | Script + social metadata text; script gate | [06](06-story-and-script.md) |
 | 8 | `plan_visuals` | Visual Plan | [08](08-visual-production.md) |
-| 9 | `select_assets` | Selected Assets (reuse / acquire / generate / card), music | [07](07-asset-management.md) |
+| 9 | `select_assets` | Selected Assets (media reuse/acquire/permitted generation; typed graphics render/reuse), music | [07](07-asset-management.md), [08](08-visual-production.md) |
 | 10 | `generate_narration` | Narration Asset; narration gates | [09](09-audio-and-tts.md) |
 | 11 | `transcribe_narration` | Word timings, WER | [09](09-audio-and-tts.md) |
 | 12 | `build_captions` | Caption Track, reconciled segment timing | [09](09-audio-and-tts.md), [08](08-visual-production.md) |
@@ -94,7 +94,9 @@ Run Events, API and UI.
   `no_suitable_story`, `insufficient_sources`, `insufficient_claims`,
   `llm_invalid_output`, `provider_unavailable`, `composition_failed`,
   `composition_defect`, `evaluation_failed_after_retries`, `stage_timeout`,
-  `interrupted`, `internal_error`, `budget_exceeded` (CF-REQ-664), `llm_budget_exhausted` (CF-REQ-668), `llm_unavailable` (CF-REQ-671), and for Manual URL Runs `url_unreachable`,
+  `graphics_render_failed`, `unsupported_graphics_template`,
+  `unsupported_statement` (blocking graphics-plan/asset-selection failures),
+  `interrupted`, `owner_stopped`, `internal_error`, `budget_exceeded` (CF-REQ-664), `llm_budget_exhausted` (CF-REQ-668), `llm_unavailable` (CF-REQ-671), and for Manual URL Runs `url_unreachable`,
   `url_not_article`, `url_blocked_source` (CF-REQ-701).
 - **Acceptance:**
   - Every failure code has a test producing it with fakes.
@@ -104,10 +106,47 @@ Run Events, API and UI.
 
 - **Description:** A stage running longer than `workflow.stage_timeout_seconds`
   shall be cancelled and the Run failed with `stage_timeout`.
+  During native Wan generation or local graphics rendering, a shared silent
+  watchdog heartbeat renews the deadline to now plus the configured timeout.
+  Heartbeats cover active loading/download, rendering and encoding, but do not
+  advance progress percentages and are not persisted Run Events. Local
+  graphics additionally have the bounded `graphics_timeout_seconds`
+  subprocess timeout. Cancellation terminates and reaps only the specific
+  owned renderer process within that bound; it does not kill unrelated child
+  processes. Other stages retain their absolute timeout.
 - **Acceptance:**
   - A fake provider sleeping beyond a 1 s timeout (test setting) fails the Run with `stage_timeout`.
+  - Generation heartbeats permit execution beyond the initial deadline;
+    stopping heartbeats restores timeout enforcement.
+- **Related:** CF-REQ-265, ADR-019
 
 ### CF-REQ-657 — Resumption after restart
+
+- **Owner stop (2026-10-07):** `POST /api/runs/{run_id}/stop` requests
+  cancellation of queued/running Runs. Stop requests are idempotent while
+  draining; status remains running with `run_stop_requested` until cleanup
+  finishes, then failed with `owner_stopped`. Only the owned Run task is
+  cancelled; the worker stays available. Native generation is aborted at the
+  next safe callback (active kernels/downloads cannot be forcibly killed in a
+  thread); pending encoding is cancelled and unfinished media may be lost.
+  Already imported Assets are retained. Publication-stage cancellation is
+  rejected to prevent unknown/duplicate uploads. Continue is possible when
+  a matching checkpoint remains, with the same continuation safeguards.
+
+- **Owner revision (2026-10-07):** The owner may explicitly continue a failed
+  Run through `POST /api/runs/{run_id}/continue`. It retains the Run ID,
+  Content Profile, completed work, accumulated cost and revision counters,
+  resumes the pending saved checkpoint, and captures current application
+  settings for remaining stages. Previously completed outputs are not
+  regenerated when settings change. The previous settings and failure are
+  retained in a `run_resumed` event. Only failed Runs with a pending checkpoint
+  matching the failed stage are eligible. Exhausted evaluation retries and
+  failures at publication are rejected; publication outcomes must be checked
+  separately to avoid duplicate uploads. Missing checkpoints return a clear
+  conflict rather than restarting research. Concurrent Runs remain forbidden.
+  The UI exposes Continue Run on failed records, confirms current-settings
+  use, and displays rejection errors. Continuation does not publish by itself;
+  all normal evaluation and approval gates remain in force.
 
 - **Description:** On startup, Runs left `running` shall be resumed from the
   last completed stage when `workflow.resume_interrupted_runs` is true;
@@ -216,30 +255,30 @@ resource (baseline assumption: 20 requests/minute, 50 requests/day; OD-021).
 All LLM requests pass through one shared wrapper in the `LLMProvider`
 adapter layer that enforces the rules below for every provider, so moving to
 another provider or model changes only configuration. State lives in
-PostgreSQL and process memory; no external store is used
-([ADR-015](decisions/ADR-015-llm-request-governance.md)).
+PostgreSQL except for the rolling RPM window and circuit state, which live
+only in Dragonfly ([ADR-016](decisions/ADR-016-compose-postgresql-and-dragonfly.md)).
 
 | # | LLM task | Stage | Replaces |
 | --- | --- | --- | --- |
 | 1 | `rank_stories` | `select_story` | clustering merge + story rating |
 | 2 | `extract_claims` | `extract_claims` | per-Source claim calls + key-fact ranking + Manual URL summary |
 | 3 | `write_script` | `write_script` | script + social metadata + visual plan draft |
-| 4 | `evaluate_clip` | `evaluate_clip` | semantic + visual evaluation (5 frames) |
+| 4 | `review_media_candidates` | `select_assets` | one bounded batched visual review of candidate previews |
+| 5 | `evaluate_clip` | `evaluate_clip` | semantic review with bounded per-shot evidence |
 
-Manual URL Runs skip task 1 (3 requests). Asset choice, music selection,
-visual planning normalisation and issue routing make no LLM request.
+Manual URL Runs skip task 1 (4 initial requests). Code makes final Asset choices after review judgments; music/SFX selection, visual-plan normalization, overlay rendering and issue routing make no LLM request. Cached valid judgments may reduce initial counts. [ADR-018](decisions/ADR-018-budgeted-quality-review.md) revises the earlier four-task design without relaxing the hard cap or money limits.
 
 ### CF-REQ-666 — LLM requests per Clip
 
 - **Description:** A Run that passes every gate and evaluation on its first
-  Attempt shall make at most `llm.target_requests_per_clip` (4) LLM requests,
+  Attempt shall make at most `llm.target_requests_per_clip` (5) LLM requests,
   one per task in the table above. Every Run shall stop making LLM requests at
   `llm.max_requests_per_run` (default 8), counting schema repairs, call
   retries and revision retries.
 - **Failure:** Reaching the per-Run cap fails the Run with `llm_budget_exhausted`
   at the current stage.
 - **Acceptance:**
-  - A fake end-to-end Run that passes first time records exactly 4 `LLMRequest` rows (3 for Manual URL).
+  - An uncached quality-mode fake Run passing first time records five outbound request rows (four for Manual URL); a valid cache hit reduces the count and is reported separately.
   - A Run whose evaluator always fails stops at 8 requests.
   - Run detail reports requests used versus target and cap.
 
@@ -248,23 +287,26 @@ visual planning normalisation and issue routing make no LLM request.
 - **Description:** LLM requests shall be paced so that no more than
   `llm.requests_per_minute` are started in any rolling 60-second window.
 - **Behaviour:** A request that would exceed the limit waits (bounded by the
-  stage timeout) instead of being sent. The window is initialised from
-  persisted `LLMRequest` rows at startup, so restarts do not reset it.
+  stage timeout) instead of being sent. Dragonfly holds the rolling-window
+  state; the window is rebuilt from persisted `LLMRequest` rows at startup,
+  so backend or Dragonfly restarts do not reset it.
+- **Failure:** If Dragonfly is unavailable, the request fails with
+  `llm_governance_unavailable` before any provider call.
 - **Acceptance:**
   - With a fake clock and limit 2, the third request in a minute starts only after the first leaves the window.
+  - With Dragonfly unavailable, no provider request is made.
 
 ### CF-REQ-668 — Daily request budget
 
 - **Description:** The system shall count LLM requests per day (day boundary
   in `llm.daily_reset_timezone`, default UTC) from persisted records and never
   start a request beyond `llm.requests_per_day`.
-- **Behaviour:** A Run (scheduled, Run Now or Manual URL) starts only if at
-  least `llm.min_daily_requests_to_start_run` requests remain; otherwise
+- **Behaviour:** A Run starts only if its trigger-specific threshold remains: `llm.min_daily_requests_to_start_run` for automatic research and `llm.min_daily_requests_to_start_manual_run` for Manual URL; otherwise
   scheduled Runs are skipped with a warning and Run Now / Manual URL return
   409 `llm_budget_exhausted`. If the budget runs out mid-Run, the Run fails
   with `llm_budget_exhausted` (artefacts kept; not resumed automatically).
 - **Acceptance:**
-  - With 47 requests used today and a minimum of 4, Run Now returns 409.
+  - With 46 requests used today and an automatic-research minimum of five, Run Now returns 409; a Manual URL run may start with four left under its separate configured threshold.
   - At 00:00 UTC the count resets and a Run can start.
 
 ### CF-REQ-669 — Persistent usage accounting
@@ -302,7 +344,8 @@ visual planning normalisation and issue routing make no LLM request.
 - **Behaviour:** A stage whose LLM request fails with `llm_unavailable` fails
   the Run with that code (evaluation never approves without its request,
   CF-REQ-405). The circuit state and reason are shown on the dashboard and in
-  the health endpoint (degraded, not down).
+  the health endpoint (degraded, not down). Circuit state is stored only in
+  Dragonfly; PostgreSQL remains authoritative for request and daily usage records.
 - **Acceptance:**
   - After 3 consecutive fake timeouts, the 4th request fails in < 10 ms without a provider call.
   - After 300 s (fake clock) a single trial request is sent; success closes the circuit.

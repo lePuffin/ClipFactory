@@ -55,8 +55,9 @@ Scheduler (05:00 daily) / Run Now / Manual URL
     plan_visuals             Visual Plan per segment
         │
         ▼
-    select_assets            reuse library Assets ─┐
-        │                    acquire / generate ───┘
+    select_assets            media: reuse/acquire/permitted Wan
+                             infographic: HyperFrames
+                             scientific: Manim
         ▼
     generate_narration       TTSProvider → narration audio
         │
@@ -93,7 +94,8 @@ Scheduler (05:00 daily) / Run Now / Manual URL
 - Claims with verbatim evidence and support levels; scripts restricted to
   accepted Claims.
 - Asset library with provenance, search-before-acquire reuse, external media
-  sources, optional image/video generation, royalty-free music.
+  sources, optional image/video generation, typed local infographic and
+  mathematical/scientific graphics, royalty-free music.
 - TTS narration, transcription-aligned captions, deterministic motion and
   transitions, FFmpeg composition.
 - Deterministic validation + semantic evaluation producing actionable issues;
@@ -110,9 +112,10 @@ Scheduler (05:00 daily) / Run Now / Manual URL
 - More than one active Content Profile at a time (the model must not prevent it later).
 - AI music generation.
 - Distributed execution: no microservices, Kubernetes, Celery, RQ, Temporal,
-  Kafka, RabbitMQ, Redis, KeyDB, Dragonfly, service meshes (see
+  Kafka, RabbitMQ, Redis, KeyDB or service meshes. Dragonfly is limited to
+  rolling LLM RPM/circuit state and does not enable distributed execution (see
   [architecture/system-architecture.md](architecture/system-architecture.md#prohibited-technology)).
-- Vector databases or more than one database.
+- Vector databases or more than one durable database.
 - Cloud object storage (the `StorageProvider` boundary allows it later).
 - A generic agent framework in the runtime pipeline. LLM steps are single
   structured-output calls orchestrated by the workflow
@@ -135,7 +138,7 @@ Scheduler (05:00 daily) / Run Now / Manual URL
 ## Technology baseline
 
 Python 3.13+, uv, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL,
-LangGraph, httpx, FFmpeg; React + TypeScript + Vite + Tailwind CSS. Tooling:
+Dragonfly, Docker Compose, LangGraph, httpx, FFmpeg; React + TypeScript + Vite + Tailwind CSS. Tooling:
 Ruff, Pyright, pytest (+asyncio, cov), pre-commit, ESLint, Prettier, Vitest,
 Playwright, GitHub Actions. Rationale lives in the ADRs
 ([decisions/README.md](decisions/README.md)).

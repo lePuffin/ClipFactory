@@ -107,10 +107,11 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
   a deterministic sequence alignment; caption text uses **Script** spelling,
   timestamps come from recognised words; unmatched Script words receive
   timestamps interpolated between neighbours. The word error rate (WER) of
-  the transcript against the Script is recorded.
+  the transcript against the Script is recorded after case/punctuation normalization and equivalent spoken numeric formatting. English cardinal/year forms and digits representing the same value are equivalent; different values, missing speech and invented words remain errors. Caption text retains Script spelling and the configured WER threshold is unchanged.
 - **Acceptance:**
   - A transcript with one misrecognised word produces captions with the correct Script word at the recognised word's timing.
   - WER is stored in the Evaluation metrics.
+  - Spoken "sixty" versus recognised `60`, and "twenty twenty-two" versus `2022`, do not produce a false mismatch; `61` versus "sixty" and an omitted sentence still increase WER.
 - **Related:** CF-REQ-404
 
 ## Captions
@@ -214,3 +215,25 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
   - Re-importing the same manifest creates no duplicate Assets.
   - A track with `attribution_required = true` adds its attribution text to the Clip description (CF-REQ-161).
 - **Related:** CF-REQ-216, OD-013
+
+### CF-REQ-323 — Licensed sound-effect library
+
+- **Description:** Local sound effects shall be reusable `sfx` Assets with mandatory provenance, measured duration, descriptive cue tags and platform restrictions, imported from an owner-supplied manifest under `${DATA_DIR}/sfx/`.
+- **Behaviour:** Import validates licence, file content, decodeability, size and attribution, reuses identical content and reports invalid entries individually. Sound files are not committed to Git. No scraping or unknown-licence cue is allowed; required credits flow to social metadata.
+- **Acceptance:** An unlicensed cue is rejected; reimport creates no duplicate Asset; a platform-restricted cue is excluded from an incompatible publication variant.
+- **Related:** CF-REQ-201–203, CF-REQ-210, CF-REQ-216, CF-REQ-322
+
+### CF-REQ-324 — Timed Audio Cues and restrained sound design
+
+- **Description:** The Story Package shall support Audio Cues for licensed SFX/music, anchored to Narrative Beats, Visual Segment boundaries or aligned words, with start/end, gain and fades.
+- **Behaviour:** Selection and timing are deterministic after editorial intent is provided by the writing draft or owner. No separate LLM call is made per sound cue. Use sound to support emphasis, not on every transition. Sensitivity policy suppresses playful cues in serious reporting. Synthetic explosions, gunshots, sirens or ambience shall never be presented as recordings of the reported event. Missing optional cues produce a visible warning; they do not fabricate provenance.
+- **Failure:** Missing required media, invalid times or incompatible licences block the audio plan; optional missing cues are omitted with their reason recorded.
+- **Acceptance:** A transition cue follows the reconciled boundary after timing changes; a sensitive-story fixture contains no celebratory cue; every selected SFX has a licence and actual Asset reference.
+- **Related:** CF-REQ-163, CF-REQ-256, CF-REQ-323
+
+### CF-REQ-325 — Intelligible final audio mix
+
+- **Description:** Narration, music and sound effects shall mix into one final stereo AAC stream with the existing output loudness and true-peak limits.
+- **Behaviour:** Apply bounded gain automation, fade ramps and narration-priority ducking to music/SFX; final mixed output, not only isolated narration, is measured. Overlapping cues must not mask speech. Music/SFX timing and mixing stay reproducible from the saved plan. Source-clip audio is muted unless separately licensed, intentionally selected and reviewed. Missing optional music is visible and permitted by CF-REQ-320.
+- **Acceptance:** A fixture with narration, music and overlapping SFX has one stereo output stream, stays within loudness/peak gates and passes an intelligibility listening review; changed subtitles do not alter the audio plan; identical inputs produce identical filter arguments.
+- **Related:** CF-REQ-321, CF-REQ-324, CF-REQ-351, CF-REQ-356

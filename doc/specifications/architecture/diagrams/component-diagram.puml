@@ -20,7 +20,8 @@ package "infrastructure" as infra {
   component "settings / logging"
   component "db (SQLAlchemy, Alembic, repositories)"
   component "storage (LocalStorageProvider)"
-  component "media runner (FFmpeg)"
+  component "media runner (FFmpeg final assembly / FFprobe)"
+  component "local graphics adapters\n(HyperFrames / Manim)"
   component "safe HTTP client"
   component "providers/* (adapters + fakes)"
 }

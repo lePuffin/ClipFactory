@@ -77,3 +77,10 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
 - **Acceptance:**
   - Editing duration limits mid-Run does not change that Run's validation limits.
 - **Related:** CF-REQ-653
+
+### CF-REQ-556 — Versioned news style and quality policy
+
+- **Description:** A Content Profile snapshot shall reference its news-style template/version, platform presentation targets, sensitivity policy and quality/review settings.
+- **Behaviour:** Style controls beat/shot intent, overlay hierarchy, motion restraint, sound policy and optional invitations, not factual truth. Changes affect subsequent Runs/revisions only. All four platforms are design targets; publication requires explicitly enabled platforms, credentials and approved exact files. Default duration/resolution and financial limits are unchanged. Branding assets require owner approval; use the provisional neutral template until then.
+- **Acceptance:** A template change cannot alter an in-progress snapshot; disabled invitations/SFX do not remove mandatory attribution; style selection never silently enables publication platforms.
+- **Related:** CF-REQ-163–165, CF-REQ-261–262, CF-REQ-324, CF-REQ-555

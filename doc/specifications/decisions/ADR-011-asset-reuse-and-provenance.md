@@ -14,8 +14,7 @@ obligations (attribution) must be honoured.
   (description, tags, subjects, quality, usage) and mandatory `Provenance`
   (origin, provider, licence, source URL, author, attribution, generation info).
 - `select_assets` searches the library first (PostgreSQL full-text + tags,
-  deterministic match score), then external providers, then generation, then a
-  deterministic title card.
+  deterministic match score), then external providers, then permitted generation. Owner revision (2026-10-07, CF-REQ-209): unavailable suitable media enters bounded reselection and owner review, not an automatic plain-colour title card. Explicit saved-content revisions may still render photo-backed cards; original outputs remain immutable.
 - Successful external/generated Assets are stored reusable; content-addressed
   by SHA-256 to deduplicate.
 - Assets without a known licence are never used.

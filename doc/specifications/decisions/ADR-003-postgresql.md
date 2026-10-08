@@ -1,4 +1,4 @@
-# ADR-003 — PostgreSQL as the only database
+# ADR-003 — PostgreSQL as the only durable database
 
 - **Status:** Proposed
 
@@ -10,7 +10,7 @@ search the Asset library by text and tags.
 
 ## Decision
 
-Use PostgreSQL (≥ 16) as the single database, accessed through SQLAlchemy 2
+Use PostgreSQL (≥ 16) as the single durable database, accessed through SQLAlchemy 2
 with Alembic migrations. PostgreSQL also provides: full-text search for Asset
 matching (no vector DB), `FOR UPDATE SKIP LOCKED` for scheduled tasks (no
 queue), partial unique indexes for the single-active-Run rule, JSONB for
@@ -19,7 +19,8 @@ value-object lists, and storage for LangGraph checkpoints.
 ## Consequences
 
 - Tests need PostgreSQL (CI service container; local compose).
-- No second store (Redis, vector DB) — CF-NFR-002.
+- No second durable store (Redis, vector DB) — CF-NFR-002. ADR-016 permits
+  disposable Dragonfly state for the rolling LLM RPM window and circuit only.
 - Secrets are not stored in the database (CF-NFR-106).
 
 ## Alternatives considered

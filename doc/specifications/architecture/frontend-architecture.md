@@ -35,8 +35,11 @@ frontend/src/
 - `useRunEvents(runId)` wraps `EventSource` on
   `/api/runs/{id}/events/stream` (same-origin cookie auth), tracks the last
   `sequence`, and relies on the browser's `Last-Event-ID` reconnection.
-- The stage stepper derives stage states from events using the canonical
-  stage list shipped in the generated API types (enum).
+- Run detail embeds a stage-based progress bar in Execution, with the current
+  stage bubble at its fill edge. Stage order follows the canonical workflow
+  and trigger; states and Attempts derive from chronological events.
+- The Event Stream renders a descending-sequence copy of those events,
+  preserving chronological data for progress and SSE reconnection.
 
 ## Rules
 

@@ -35,15 +35,21 @@ leakage through logs, API or repository; accidental public exposure of the UI.
 
 ### CF-NFR-102 — Safe process execution
 
-- **Description:** External processes (FFmpeg, FFprobe) shall be run only via
-  the media runner with argument lists, no shell, an absolute or validated
-  binary path, a timeout, `-protocol_whitelist file,pipe` (or equivalent)
-  and no user-controlled option names. Filter graph values are built only
-  from validated numbers, enums and escaped paths.
+- **Description:** External processes (FFmpeg, FFprobe, HyperFrames and Manim)
+  shall be run only via the infrastructure media/graphics process runners
+  with argument lists, no shell, an absolute or validated binary path, a
+  timeout, and no user-controlled option names. FFmpeg inputs retain
+  `-protocol_whitelist file,pipe` (or equivalent); filter graph values are
+  built only from validated numbers, enums and escaped paths. Graphics
+  arguments come only from validated typed template data and application-owned
+  paths, never executable model output or VisualDraft paths.
 - **Acceptance:**
-  - Architecture test: `subprocess`/`asyncio.create_subprocess_*` used only in the media runner; `shell=True` absent.
+  - Architecture test: `subprocess`/`asyncio.create_subprocess_*` is confined
+    to the approved infrastructure runners; `shell=True` is absent.
   - A file path containing `;rm -rf ~` or `'` is passed safely (unit test on escaping).
-- **Related:** CF-REQ-353
+  - A hostile typed-graphics fixture cannot add process options, choose an
+    executable, escape its work directory or terminate an unrelated child.
+- **Related:** CF-REQ-265, CF-REQ-353, ADR-019
 
 ### CF-NFR-103 — SSRF-safe outbound HTTP
 
@@ -126,14 +132,15 @@ leakage through logs, API or repository; accidental public exposure of the UI.
 - **Description:** Provider adapters shall convert all third-party exceptions
   into `ProviderError(transient: bool, code, message)` with secret-free
   messages. The API never returns raw provider errors or stack traces.
+- **Behaviour:** To keep failures actionable (CF-REQ-655), a message may include the HTTP status, endpoint host, model, a remediation hint and the provider's structured error message (`error.message` only, credentials redacted, whitespace-collapsed, truncated to 300 characters). Unstructured response bodies are never included.
 - **Acceptance:**
   - An adapter test with an HTTP 401 containing the API key in the body yields a `ProviderError` whose message excludes the key.
 
 ### CF-NFR-112 — Dependency integrity
 
 - **Description:** Dependencies shall be locked (`uv.lock`,
-  `frontend/package-lock.json`) and CI shall install with locked modes
-  (`uv sync --locked`, `npm ci`).
+  `frontend/package-lock.json`, and the local HyperFrames package lock) and CI
+  shall install with locked modes (`uv sync --locked`, `npm ci`).
 - **Acceptance:**
   - CI fails when the lockfile is out of date.
 

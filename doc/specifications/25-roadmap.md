@@ -1,8 +1,20 @@
 # 25 — Implementation Roadmap
 
-Plan for the **future** one-shot implementation session. It is not executed
-in the documentation session. The orchestrating agent is
+The original phases below remain a baseline checklist, not a claim that the partial application is complete. The owner authorized the following quality rollout on 2026-10-06. The orchestrating agent is
 [`clipfactory`](../../.github/agents/clipfactory.agent.md).
+
+## News-explainer quality rollout
+
+1. **Quality baseline:** Revise topic requirements, canonical defaults, domain/glossary, ADR-017/018, acceptance and traceability. Validate documentation and obtain baseline review; new capabilities stay `Not started` until tagged code tests pass.
+2. **Foundations:** Implement request/cost accounting, selective daily-limit handling and fail-closed governance before paid production; add durable saved-package preview/rerender and version-bound publication hold.
+3. **Editorial planning:** Extend the existing writing schema with grounded Narrative Beats, Shot Intent and overlay/audio suggestions; normalize/gate them deterministically. Do not add a model call per effect.
+4. **Licensed relevance:** Implement bounded previews, one batched candidate review, evidence/identity bindings and hash/version caches, with explicit pending/manual review on overflow or quota failure.
+5. **Graphics and sound:** In parallel where independent, implement separate overlay/audio tracks, mobile-safe person/place/source labels, deterministic motion/transitions, licensed SFX/music imports and intelligible final mixing.
+6. **Owner workflow:** Versioned storyboard/contact-sheet and full playback, targeted edits and cache-aware rerender, exact-hash Approve/Reject and visible pending/budget reasons; no timeout approval during rollout.
+7. **Benchmark and automation:** Repository-only reference renders with adversarial media/identity/layout/audio/quota cases, full measurements and owner review; automation is opt-in only after accepted benchmark evidence.
+8. **Engagement reporting:** Platform capability/definition metadata and creative-version comparisons, showing nulls, sample sizes and confounders; no fabricated conversion, guaranteed growth or automatic outrage optimization.
+
+All phases reuse the existing native architecture, provider boundaries and financial limits. Ordinary tests use fakes/mocked HTTP; live integrations are opt-in and reported separately. A successful render does not prove overall completion. Do not commit or create branches unless the owner explicitly requests it.
 
 ## Rules for every phase
 
@@ -10,7 +22,7 @@ in the documentation session. The orchestrating agent is
   [26-open-decisions-and-conflicts.md](26-open-decisions-and-conflicts.md) before code.
 - Tests first or alongside code, tagged with requirement IDs.
 - End each phase with the quality gate (CF-NFR-153) for the parts that exist,
-  update [traceability.md](traceability.md) status, and commit.
+  update [traceability.md](traceability.md) status and report actual results. Commit only when explicitly requested by the owner.
 - Continue to the next phase automatically unless genuinely blocked
   (missing decision that has no provisional choice, failing external
   prerequisite). Never declare completion without running validation.
@@ -27,10 +39,10 @@ in the documentation session. The orchestrating agent is
 ## Phase 1 — Repository foundation
 
 - **Objective:** Buildable, testable skeleton with quality gates.
-- **Requirements:** CF-NFR-001–003, CF-NFR-020–022, CF-NFR-150–157, CF-REQ-750–751, CF-REQ-856.
+- **Requirements:** CF-NFR-001–003, CF-NFR-020–022, CF-NFR-150–157, CF-REQ-750–751, CF-REQ-755–757, CF-REQ-856.
 - **Dependencies:** Phase 0.
 - **Outputs:** `backend/` uv project (Ruff, Pyright, pytest config, coverage), package skeleton for packages that receive code in this phase, settings loading, structured logging, composition root, health endpoint, architecture tests, `frontend/` Vite + React + TS + Tailwind + ESLint + Prettier + Vitest + Playwright, `Makefile`, `.pre-commit-config.yaml`, `.env.example`, `scripts/check_traceability.py`, CI jobs active.
-- **Tests:** Architecture tests; settings validation; health endpoint; frontend smoke test.
+- **Tests:** Architecture tests; settings validation; setup idempotence; doctor read-only/failure cases; native run dependency checks; health endpoint; frontend smoke test.
 - **Acceptance:** `make check` and CI green.
 
 ## Phase 2 — Domain and persistence
@@ -74,7 +86,7 @@ in the documentation session. The orchestrating agent is
 - **Objective:** Clip rendering, validation, semantic evaluation, targeted retry.
 - **Requirements:** CF-REQ-252, CF-REQ-254–257, CF-REQ-350–359, CF-REQ-400–415, CF-REQ-656–657, CF-NFR-012, CF-NFR-023, CF-NFR-102.
 - **Dependencies:** Phase 5.
-- **Outputs:** Composition spec + command builder, media runner, validators, frame sampling, semantic evaluator (metadata + 5 frames, vision fallback), routing table, retry planner, resume behaviour.
+- **Outputs:** Composition spec/command builder, media runner, validators, bounded per-shot quality evidence with explicit pending coverage, semantic evaluator, routing table, retry planner and resume behavior. Quality mode does not approve unseen visuals through metadata-only fallback.
 - **Tests:** Command-builder unit tests; real-FFmpeg integration; retry scenarios; resume after kill.
 - **Acceptance:** CF-AC-008, CF-AC-009, CF-AC-012.
 

@@ -10,6 +10,21 @@ Durations are seconds as decimals. Fields marked `?` are nullable. Field names
 here are the canonical names for code, database columns and API schemas
 unless an API document says otherwise.
 
+## News-explainer value-object extension
+
+These objects have concrete consumers in planning, review, composition and publication. No second durable database or runtime agent framework is introduced; implementation/storage schemas must preserve the existing dependency rules.
+
+| Owner | Object | Required Contract |
+| --- | --- | --- |
+| Story Package | Narrative Beat | Stable ID, function, segment/accepted Claim references, emphasis and sensitivity |
+| Visual Segment | Shot Intent | Beat/evidence, requested shot type, current/archive/illustrative/graphic status and timing anchors |
+| Visual Plan | Overlay Cue / Shot Anchor | Kind/text/evidence, shot/identity binding, normalized region or reserved position, timing, style version, layer and animation |
+| Story Package | Audio Cue | Licensed Asset ID, beat/word/boundary anchor, times, gain, fades and platform eligibility |
+| Clip | Render Revision / Quality Review | Input/output hashes, changed fields/dependencies, template/platform version, evidence coverage/status, actor/model/policy and time |
+| Publication / Metric Snapshot | Creative version references | Exact render/template/hook plus metric definitions, capability and denominator metadata |
+
+Structures are embedded value objects unless lifecycle requires identity. Review/identity evidence and revisions remain durable and auditable. Unsupported factual bindings, out-of-span cues, stale approvals and invalidated dependency reuse are prohibited. Offline rendering never relabels a failed Run successful. Concrete schemas follow consumers rather than empty placeholder tables.
+
 ## Modelling rules
 
 - The domain layer contains no I/O, no framework imports (FastAPI,
@@ -252,6 +267,49 @@ Previous versions of Script and Visual Plan are retained (audit of revisions).
 
 `{version, segments: list[VisualSegment]}`
 
+**VisualDraft** is the typed, structured `write_script` response for one
+planned visual: `{kind: enum(media|infographic|scientific), payload:
+MediaDraft|InfographicDraft|ScientificDraft}`. For legacy drafts, absent
+`kind` is interpreted as `media`. `MediaDraft` retains the existing
+`AssetRequirement`, motion and transition fields. `InfographicDraft` and
+`ScientificDraft` contain only the typed fields of the finite template
+catalogue in CF-REQ-263; they cannot carry source code, markup, arbitrary
+formula strings or remote URLs. Factual displayed strings/scalars reference
+accepted Claim IDs. Static template labels and values computed from a
+code-defined mathematical function are not evidence claims; they must not be
+misrepresented as real-world observations.
+
+Media drafts may additionally carry `search_queries: list[str]` (at most two
+distinct concise refined queries) and `fallback_graphics_spec` (optional typed
+graphics payload). These alternatives belong to the same Shot Intent and
+accepted Claims, and are selected only under CF-REQ-266. The fallback template
+determines infographic/scientific routing; no executable content is accepted.
+Absent fields preserve compatibility with saved drafts. Normalized media
+requirements retain these fields so Retry/Continue can use the same alternatives.
+
+Typed graphics payloads:
+
+- `InfographicDraft`: `statistic {label, value, unit?, claim_ids}`,
+  `comparison {items: [{label, value, claim_ids}]}` (2–6 items),
+  `timeline {events: [{date, label, claim_ids}]}` (2–8 events), or a
+  conditional `map {geometry_asset_id, geometry_version, claim_ids}`.
+  A map payload is accepted only with verified geometry provenance.
+- `ScientificDraft`: `function_plot {function_key: enum(linear|quadratic|sine|cosine),
+  coefficients: {a,b,c}, x_min, x_max}` with only the coefficients required
+  by the selected function, finite coefficients bounded to magnitude 1000,
+  and a finite domain contained in `[-100, 100]`. Code samples the fixed
+  function at 256 evenly spaced points. `relationship_diagram {nodes:
+  [{id,label,claim_ids}], edges: [{from,to,label,claim_ids}]}` has 2–12 unique
+  nodes and at most 20 edges whose endpoints reference those nodes.
+  Infographic and scientific numeric values are finite and bounded to
+  magnitude `10^15`. Claim-backed nodes, edges and factual observations cite
+  accepted Claim IDs. Function plots describe the selected mathematical
+  function, not measured science data.
+
+Factual display text and values are checked against normalized accepted
+Claim/evidence text (including exact names, dates and numbers). Template
+static labels and pure mathematical output are separately identified as such.
+
 **VisualSegment**
 
 | Field | Type | Notes |
@@ -261,14 +319,24 @@ Previous versions of Script and Visual Plan are retained (audit of revisions).
 | narration_text | str | |
 | objective | str | What the viewer should understand/see |
 | requirement | `AssetRequirement` | |
+| kind | enum `media|infographic|scientific` | Defaults to `media` for legacy drafts |
+| graphics_spec? | typed `InfographicDraft|ScientificDraft` | Present only for the matching graphics kind |
 | planned_duration_seconds | float | Estimated; replaced by timing from word timestamps |
 | start_seconds?, end_seconds? | float | Set after transcription |
 | motion | enum `Motion` | `none`, `zoom_in`, `zoom_out`, `pan_left`, `pan_right`, `pan_up`, `pan_down`, `ken_burns` |
 | transition_in | enum `Transition` | `cut`, `crossfade`, `fade_black`, `slide_left`, `slide_up` |
 | selected_asset_id | UUID? | |
-| selection_reason | str? | `reused`, `acquired`, `generated`, `fallback_card` |
+| selection_reason | str? | `reused`, `acquired`, `generated`, `rendered`, `fallback_card` (explicit retained-content revision only) |
 
 **AssetRequirement** `{media_type: enum(image|video|any), category: AssetCategory, description, subjects: list[str], tags: list[str], strategy: enum(reuse_first|acquire_only|generate_allowed)}`.
+
+Graphics produce video Assets. `infographic` routes to the trusted
+HyperFrames adapter and `scientific` to the trusted Manim adapter; ordinary
+`media` keeps the existing acquisition/Wan route. A renderer-produced Asset
+uses `Provenance.origin = rendered`, its named renderer as `provider`, and
+`GenerationInfo` to retain the renderer/template version and normalized
+structured input. The normal media validation/import and reusable-Asset
+invariants apply.
 
 ### SocialMetadata
 
@@ -313,12 +381,13 @@ Canonical requirements: [07-asset-management.md](07-asset-management.md).
 | author | str? | |
 | license | str | SPDX id or provider licence name; never empty |
 | license_url | str? | |
+| allowed_platforms | list[Platform]? | Null means no platform restriction; applies to music/SFX and other licensed media |
 | attribution_text | str? | Required when the licence requires attribution |
 | attribution_required | bool | |
 | generation | `GenerationInfo`? | Required when `origin = generated` |
 | acquired_at | datetime | |
 
-**GenerationInfo** `{provider, model, prompt, negative_prompt?, parameters: JSON, seed?}`.
+**GenerationInfo** `{provider, model, prompt, negative_prompt?, parameters: JSON, seed?}`. A graphics Asset with `origin = rendered` also carries `GenerationInfo`; other rendered Assets retain their existing provenance rules. For rendered graphics, `model` records the renderer/template version, `prompt` is a deterministic template identifier/description (not model-authored executable text), and `parameters` records the normalized typed specification and Claim references; renderer inputs are never executable code.
 
 **MusicInfo** `{title, artist, genre, mood: list[str], energy: enum(low|medium|high), bpm?: int, loopable: bool, allowed_platforms: list[Platform] | null}` —
 `allowed_platforms = null` means no platform restriction; source, source URL,

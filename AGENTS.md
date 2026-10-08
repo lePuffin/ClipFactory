@@ -40,8 +40,11 @@ update the appropriate specification or ADR (or ask the owner), then implement.
 
 ## Architecture principles
 
-- Simplicity: one backend process, one PostgreSQL database, FFmpeg, local
-  filesystem. Every dependency needs a concrete requirement.
+- Simplicity: one native backend process, PostgreSQL as the durable source of
+  truth, narrowly scoped Dragonfly operational state, FFmpeg for final media
+  assembly/probing, and local filesystem. HyperFrames and Manim are limited to
+  the typed graphics authoring requirement (CF-REQ-263–265). Every dependency
+  needs a concrete requirement.
 - Layers: `domain` (pure) ← `ports` ← feature packages (use cases) ←
   `workflow` / `api`; `infrastructure` implements ports. Rules:
   [application-architecture.md](doc/specifications/architecture/application-architecture.md#dependency-rules).
@@ -59,10 +62,11 @@ update the appropriate specification or ADR (or ask the owner), then implement.
 ## Prohibited unless a new approved ADR justifies it
 
 Microservices, Kubernetes, service meshes, Celery, RQ, Temporal, Kafka,
-RabbitMQ, Redis, KeyDB, Dragonfly, vector databases, a second database,
+RabbitMQ, Redis, KeyDB, vector databases, a second durable database,
 additional agent frameworks, JEV, OpenShorts or OpenMontage as dependencies,
 Black/isort/Flake8, abstractions without a current consumer, empty
-directories created to match a diagram.
+directories created to match a diagram. Dragonfly is permitted only for the
+rolling LLM RPM/circuit state approved by ADR-016.
 
 ## Implementation discipline
 
