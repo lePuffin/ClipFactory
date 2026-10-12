@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import io
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,6 +35,44 @@ class EditorialGraphic:
     height: int
     x: int
     y: int
+
+
+def render_brand_mark(source: Path, maximum_dimension: int, opacity: float = 1) -> tuple[bytes, int, int]:
+    if maximum_dimension < 1 or not 0 < opacity <= 1:
+        raise ValueError("Brand mark size and opacity are invalid")
+    with Image.open(source) as original:
+        image = original.convert("RGBA")
+        bounds = image.getchannel("A").getbbox()
+        if bounds is None:
+            raise ValueError("Brand mark has no visible pixels")
+        image = image.crop(bounds)
+        image.thumbnail((maximum_dimension, maximum_dimension), Image.Resampling.LANCZOS)
+        image.putalpha(image.getchannel("A").point([round(value * opacity) for value in range(256)]))
+        output = io.BytesIO()
+        image.save(output, format="PNG", optimize=True)
+        return output.getvalue(), image.width, image.height
+
+
+def render_news_date(timestamp: datetime, timezone: str, font_file: Path, width: int) -> tuple[str, EditorialGraphic]:
+    if timestamp.tzinfo is None:
+        raise ValueError("Source publication timestamp must be timezone-aware")
+    local = timestamp.astimezone(ZoneInfo(timezone))
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    text = f"{local.day} {months[local.month - 1]} {local.year}"
+    scale = width / 720
+    font = ImageFont.truetype(str(font_file), max(1, round(22 * scale)))
+    padding = max(1, round(8 * scale))
+    box = font.getbbox(text)
+    image = Image.new("RGBA", (round(font.getlength(text)) + 2 * padding, round(box[3] - box[1]) + 2 * padding))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=padding, fill=(13, 17, 22, 180))
+    draw.text((padding, padding - box[1]), text, font=font, fill=(231, 236, 232, 235))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    content = output.getvalue()
+    return text, EditorialGraphic(
+        content, hashlib.sha256(content).hexdigest(), image.width, image.height, round(44 * scale), round(32 * scale)
+    )
 
 
 def render_editorial_graphic(

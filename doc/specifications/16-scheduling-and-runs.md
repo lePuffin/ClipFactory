@@ -140,12 +140,19 @@ Run Events, API and UI.
   settings for remaining stages. Previously completed outputs are not
   regenerated when settings change. The previous settings and failure are
   retained in a `run_resumed` event. Only failed Runs with a pending checkpoint
-  matching the failed stage are eligible. Exhausted evaluation retries and
-  failures at publication are rejected; publication outcomes must be checked
+  matching the failed stage are eligible. Revision retries are counted per
+  Run (`revision_retries_used`) and never shared between Runs; each new Run
+  starts at 0. A Run that failed with `evaluation_failed_after_retries` may be
+  continued only when the current `workflow.max_revision_retries` exceeds that
+  Run's `revision_retries_used`; it then resumes `plan_retry` and receives only
+  the additional retries. Otherwise exhausted retries, and failures at
+  publication, are rejected; publication outcomes must be checked
   separately to avoid duplicate uploads. Missing checkpoints return a clear
   conflict rather than restarting research. Concurrent Runs remain forbidden.
-  The UI exposes Continue Run on failed records, confirms current-settings
-  use, and displays rejection errors. Continuation does not publish by itself;
+  The UI exposes single-click Continue Run on failed records without a
+  confirmation panel, explains current-settings use in its button title,
+  disables pending actions and displays rejection errors. Stop likewise
+  acts without confirmation. Continuation does not publish by itself;
   all normal evaluation and approval gates remain in force.
 
 - **Description:** On startup, Runs left `running` shall be resumed from the
@@ -290,11 +297,29 @@ Manual URL Runs skip task 1 (4 initial requests). Code makes final Asset choices
   stage timeout) instead of being sent. Dragonfly holds the rolling-window
   state; the window is rebuilt from persisted `LLMRequest` rows at startup,
   so backend or Dragonfly restarts do not reset it.
+  Within that account-wide ceiling, pace each endpoint/model separately.
+  Start at `60 / requests_per_minute` seconds between starts. On a transient
+  429, double that model's interval up to the greater of the baseline interval
+  and `providers.call_retry_max_delay_seconds`, and establish a cooldown:
+  positive `Retry-After` capped by that setting, otherwise the full configured
+  cooldown. Successful responses reduce the learned interval by 10%, never
+  below the baseline. Different model roles share pacing when their actual
+  endpoint/model is the same; changing models does not reset account limits.
+  Adaptive state is operational RPM state in Dragonfly, retained for 24 hours
+  after activity, not a durable usage source. Backend restart preserves it
+  while Dragonfly retains it; after Dragonfly loss, rebuild recent starts
+  from PostgreSQL and reset learned intervals conservatively to the baseline.
 - **Failure:** If Dragonfly is unavailable, the request fails with
   `llm_governance_unavailable` before any provider call.
 - **Acceptance:**
   - With a fake clock and limit 2, the third request in a minute starts only after the first leaves the window.
   - With Dragonfly unavailable, no provider request is made.
+  - With limit 20, repeated starts of one model are separated by at least 3 s.
+    A generic 429 produces at least a configured 60 s cooldown and doubles
+    its learned interval to 6 s; another model keeps its baseline cadence
+    subject to the shared rolling account limit and circuit.
+  - Success reduces a learned 6 s interval to 5.4 s; repeated successes never
+    reduce it below 3 s. A restarted backend uses the retained model state.
 
 ### CF-REQ-668 — Daily request budget
 
@@ -323,15 +348,50 @@ Manual URL Runs skip task 1 (4 initial requests). Code makes final Asset choices
 
 - **Description:** LLM retries shall be selective and bounded: retry only
   network errors, timeouts, HTTP 408/5xx and HTTP 429 that indicates a
-  per-minute limit; never retry 400/401/403/404, context-length or
+  per-minute limit; never retry ordinary 400/401/403/404, context-length or
   content-policy errors, or 429 indicating the daily/credit limit. Retries use
   exponential backoff with jitter (`providers.call_retry_*`), honour
   `Retry-After` up to the cap, re-check the RPM limiter and daily budget
   before each attempt, and count against all limits.
+  A transient 429 without a positive `Retry-After` waits the configured
+  `providers.call_retry_max_delay_seconds` rather than retrying within a few
+  seconds. Emit progress with the cooldown, error code and retry number.
+  This bounded cooldown does not bypass daily quotas or an open circuit.
+  Owner-approved compatibility exception (2026-10-08): OpenRouter's HTTP 400
+  wrapper `Provider returned error`, naming AtlasCloud and containing only
+  an upstream JSON object with `code: 400`, `msg: "bad request"` and an
+  optional request ID, is classified as `upstream_bad_request`.
+  Isolated live probes demonstrated this opaque rejection interleaved with
+  a successful identical full evaluation; its underlying cause remains unknown.
+  It permits at most one call retry across the entire logical request,
+  including schema repairs, and only when `providers.max_call_retries > 0`.
+  Backoff, governance, cancellation and circuit accounting still apply.
+  Explicit schema/context/content-policy errors, other providers and raw
+  errors with additional fields are not eligible. No model/output-mode
+  downgrade is performed. Safe upstream `msg` details are surfaced without
+  the raw payload or credentials.
+  When the configured model is the free router `openrouter/free`, any HTTP
+  400 whose message is exactly `Provider returned error` is also classified
+  as `free_router_upstream_rejection`, because the router selects a model per
+  request and the rejection is tied to the routed upstream rather than the
+  request (live Runs 80453d2d, 9cc18f98 and e948e2bf). It may be retried up to
+  `providers.max_call_retries`; each retry remains subject to normal backoff,
+  governance, budget, cancellation and circuit accounting. Other opaque
+  `upstream_bad_request` errors retain the one-retry bound. Explicit 400
+  messages remain non-retryable.
 - **Acceptance:**
-  - A 400 response makes exactly 1 request.
+  - An ordinary 400 response makes exactly 1 request. The narrowly matched
+    AtlasCloud opaque upstream rejection makes at most 2 calls across schema
+    repairs. The free-router opaque rejection makes at most
+    `1 + providers.max_call_retries` calls for one logical request, without
+    exceeding the configured bound. Disabling retries sends exactly 1 call.
+    Each attempt is accounted and visible.
   - A per-minute 429 with `Retry-After: 5` is retried after ≥ 5 s (fake clock) and both attempts are recorded.
   - A daily-limit 429 is not retried and opens the circuit until the daily reset (CF-REQ-671).
+  - A generic transient 429 with no retry hint waits 60 s by default before
+    retrying; a saved 120 s maximum waits 120 s. All outbound attempts still
+    pass through governance and count against the Run and daily budgets.
+  - Cancelling during the cooldown sends no further request.
 
 ### CF-REQ-671 — Circuit breaker and exhaustion handling
 
@@ -341,6 +401,21 @@ Manual URL Runs skip task 1 (4 initial requests). Code makes final Asset choices
   daily reset). While open, requests fail immediately with
   `ProviderError(code = llm_unavailable)` without contacting the provider;
   after the open period one trial request is allowed (half-open).
+- **Scope:** Account-level signals (`rate_limited`, `timeout`,
+  `network_error`) and the daily-limit circuit are shared by every model of
+  the endpoint, because the request window is account-wide. Failures that
+  identify one routed model (`http_500`, `http_502`, `http_503`,
+  `free_router_upstream_rejection`) are counted and
+  open the circuit only for that endpoint/model pair, so a failing evaluation
+  or vision model cannot block the default model or a configured evaluation
+  fallback (live Run f0481f43: one 502 and two opaque 400s from the vision
+  model opened the shared circuit and blocked the CF-REQ-405 fallback).
+  An opaque `upstream_bad_request` is input-specific content rejection
+  (moderated news imagery), not an outage signal: it is bounded by its single
+  same-request retry (CF-REQ-758) and the request caps, and it neither opens
+  nor resets any circuit (live Run 5a3c271a: two moderated candidate-review
+  requests opened the vision model's circuit and failed `select_assets`).
+  A success resets the shared counter and that model's counter.
 - **Behaviour:** A stage whose LLM request fails with `llm_unavailable` fails
   the Run with that code (evaluation never approves without its request,
   CF-REQ-405). The circuit state and reason are shown on the dashboard and in
@@ -349,3 +424,4 @@ Manual URL Runs skip task 1 (4 initial requests). Code makes final Asset choices
 - **Acceptance:**
   - After 3 consecutive fake timeouts, the 4th request fails in < 10 ms without a provider call.
   - After 300 s (fake clock) a single trial request is sent; success closes the circuit.
+  - Three consecutive 502s from model A open A's circuit; model B is still dispatched. Three rate-limit failures still block model B. Any number of opaque upstream rejections opens no circuit.

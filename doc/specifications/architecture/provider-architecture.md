@@ -41,12 +41,20 @@ class LLMProvider(Protocol):          # the "LLM client" interface used by use c
 
 - Initial adapter: `OpenAICompatibleLLMProvider` (base URL, API key, model via
   configuration) — works with OpenRouter, OpenAI and local OpenAI-compatible
-  servers. Uses JSON-schema response format when supported, otherwise JSON
-  mode plus schema validation. Images are sent as OpenAI-style `image_url`
+  servers. Independently configured main/evaluation output modes use strict
+  JSON-schema response format (default), JSON-object mode with schema
+  instructions, or prompt-only JSON without `response_format`. Every mode
+  retains local Pydantic validation and bounded shared schema repair
+  (CF-REQ-758); no automatic HTTP-error downgrade or extra adapter calls.
+  On OpenRouter, requests with a `response_format` also set
+  `provider.require_parameters: true` so routing skips endpoints that ignore
+  the output contract.
+  Images are sent as OpenAI-style `image_url`
   content parts (base64 data URLs).
 - Initial model: a specific free vision-capable OpenRouter model
-  (`google/gemma-4-31b-it:free`, OD-001); never the `openrouter/free` router,
-  so runs are reproducible. Future providers or models (OpenAI, Luna, Terra,
+  (`google/gemma-4-31b-it:free`, OD-001) by default, so runs are
+  reproducible. The `openrouter/free` router is an owner opt-in; the model
+  that answered each call is recorded in the Run Event. Future providers or models (OpenAI, Luna, Terra,
   local) are new adapters or configuration only; no use case references a
   vendor or model.
 - A shared governance wrapper (applies to every adapter) implements schema

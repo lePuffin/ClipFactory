@@ -161,18 +161,19 @@ describe("ClipFactory operational frontend", () => {
     const rendering = { ...runEvent(1, "select_assets", "progress"), message: "Rendering planned graphic",
       payload: { provider, generation_phase: "rendering", segment_index: 2, segment_count: 11, template: "comparison" } };
     renderRun({ events: [rendering] });
+    await act(async () => {});
     const panel = await screen.findByRole("status", { name: "Media generation" });
     expect(panel).toHaveTextContent(provider);
     expect(panel).toHaveTextContent("Visual 3");
     expect(panel).toHaveTextContent("Comparison");
     expect(within(panel).queryByRole("progressbar")).not.toBeInTheDocument();
     expect(panel).not.toHaveTextContent("model weights");
-    act(() => RunEventSource.current.emit({ ...rendering, sequence: 2, payload: { ...rendering.payload, progress_fraction: 0.5 } }));
+    await act(async () => RunEventSource.current.emit({ ...rendering, sequence: 2, payload: { ...rendering.payload, progress_fraction: 0.5 } }));
     expect(within(panel).getByRole("progressbar", { name: "Graphics rendering" })).toHaveAttribute("value", "0.5");
     expect(panel).toHaveTextContent("50% rendered");
-    act(() => RunEventSource.current.emit({ ...rendering, sequence: 3, payload: { ...rendering.payload, step: 15, total_steps: 30 } }));
+    await act(async () => RunEventSource.current.emit({ ...rendering, sequence: 3, payload: { ...rendering.payload, step: 15, total_steps: 30 } }));
     expect(panel).toHaveTextContent("Frame 15 / 30");
-    act(() => RunEventSource.current.emit({ ...rendering, sequence: 4, message: "Renderer unavailable", payload: { ...rendering.payload, generation_phase: "failed" } }));
+    await act(async () => RunEventSource.current.emit({ ...rendering, sequence: 4, message: "Renderer unavailable", payload: { ...rendering.payload, generation_phase: "failed" } }));
     expect(panel).toHaveTextContent("Renderer unavailable");
   });
 
@@ -200,12 +201,12 @@ describe("ClipFactory operational frontend", () => {
     expect(screen.getAllByText("n/a")).toHaveLength(4);
   });
 
-  it("CF-REQ-657 confirms continuation and reloads the same Run without stale failed progress", async () => {
+  it("CF-REQ-657 continues immediately and reloads the same Run without stale failed progress", async () => {
     const user = userEvent.setup();
     renderRun({ status: "failed", failure_code: "stage_timeout", events: [runEvent(1, "select_assets", "run_failed")] });
-    await user.click(await screen.findByRole("button", { name: "Continue Run" }));
-    expect(screen.getByRole("button", { name: "Continue Run" }).closest(".section-head")).toHaveTextContent("EXECUTION");
-    expect(screen.getByText(/current application settings/)).toBeInTheDocument();
+    const button = await screen.findByRole("button", { name: "Continue Run" });
+    expect(button.closest(".section-head")).toHaveTextContent("EXECUTION");
+    expect(button).toHaveAttribute("title", expect.stringContaining("current application settings"));
     const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") return new Response(JSON.stringify({ run_id: "run-1" }), { status: 202 });
       return new Response(JSON.stringify({
@@ -216,7 +217,8 @@ describe("ClipFactory operational frontend", () => {
       }));
     });
     vi.stubGlobal("fetch", fetch);
-    await user.click(screen.getByRole("button", { name: "Confirm Continue" }));
+    await user.click(button);
+    expect(screen.queryByRole("button", { name: "Confirm Continue" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Continue Run" })).not.toBeInTheDocument());
     expect(fetch).toHaveBeenCalledWith("/api/runs/run-1/continue", expect.objectContaining({ method: "POST" }));
     await waitFor(() => expect(screen.getByRole("progressbar", { name: "Run progress" }).parentElement).not.toHaveClass("failed"));
@@ -225,24 +227,52 @@ describe("ClipFactory operational frontend", () => {
   it("CF-REQ-657 displays an actionable continuation rejection", async () => {
     const user = userEvent.setup();
     renderRun({ status: "failed" });
-    await user.click(await screen.findByRole("button", { name: "Continue Run" }));
+    const button = await screen.findByRole("button", { name: "Continue Run" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "No matching checkpoint" } }), { status: 409 })));
-    await user.click(screen.getByRole("button", { name: "Confirm Continue" }));
+    await user.click(button);
     expect(await screen.findByText("No matching checkpoint")).toBeInTheDocument();
   });
 
-  it("CF-REQ-657 confirms immediate Stop beside status and shows stopping until terminal event", async () => {
+  it("CF-REQ-657 stops immediately beside status and shows stopping until terminal event", async () => {
     const user = userEvent.setup();
     renderRun();
     const stop = await screen.findByRole("button", { name: "Stop" });
     expect(stop.closest(".section-head")).toHaveTextContent("running");
-    await user.click(stop);
-    expect(screen.getByText(/Unfinished generation may be lost/)).toBeInTheDocument();
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ run_id: "run-1" }), { status: 202 }));
+    expect(stop).toHaveAttribute("title", expect.stringContaining("Unfinished generation may be lost"));
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ run_id: "run-1" }), { status: 202 });
+      return new Response(JSON.stringify({
+        run_id: "run-1", trigger: "run_now", status: "failed", attempt: 1,
+        revision_retries_used: 0, cost_total: "0", created_at: "2026-10-07T10:00:00Z",
+        profile_snapshot: {}, settings_snapshot: {}, evaluations: [],
+        failure_code: "owner_stopped", events: [runEvent(1, "select_assets", "run_failed")],
+      }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetch);
-    await user.click(screen.getByRole("button", { name: "Confirm Stop" }));
+    await user.click(stop);
+    expect(screen.queryByRole("button", { name: "Confirm Stop" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Stopping…" })).toBeDisabled();
     expect(fetch).toHaveBeenCalledWith("/api/runs/run-1/stop", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    act(() => RunEventSource.current.emit({ ...runEvent(1, "select_assets", "run_failed"), payload: { failure_code: "owner_stopped" } }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stopping…" })).not.toBeInTheDocument());
+    expect(await screen.findByRole("button", { name: "Continue Run" })).toBeEnabled();
+  });
+
+  it.each(["continue", "stop"])("CF-REQ-657 disables pending %s and displays rejected requests without confirmation", async (action) => {
+    const user = userEvent.setup();
+    renderRun({ status: action === "continue" ? "failed" : "running" });
+    const button = await screen.findByRole("button", { name: action === "continue" ? "Continue Run" : "Stop" });
+    let finish!: (response: Response) => void;
+    const fetch = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    vi.stubGlobal("fetch", fetch);
+    await user.dblClick(button);
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent(action === "continue" ? "Continuing…" : "Stopping…");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await act(async () => finish(new Response(JSON.stringify({ error: { message: "Run action rejected" } }), { status: 409 })));
+    expect(await screen.findByText("Run action rejected")).toBeInTheDocument();
+    expect(button).toBeEnabled();
   });
 
   it("CF-REQ-602 CF-REQ-604 embeds live progress in Execution and shows newest events first", async () => {
@@ -322,8 +352,10 @@ describe("ClipFactory operational frontend", () => {
     );
     render(<MemoryRouter><App /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "Production desk" })).toBeInTheDocument();
-    expect(await screen.findByText("All systems nominal")).toBeInTheDocument();
-    expect(await screen.findByText("No Runs recorded yet")).toBeInTheDocument();
+    expect(screen.queryByText("SYSTEM HEALTH")).not.toBeInTheDocument();
+    expect(screen.queryByText("PUBLISHING GATE")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent Runs" })).not.toBeInTheDocument();
+    await screen.findByText("12,500");
     expect(screen.getByText("12,500")).toBeInTheDocument();
     expect(screen.getByText("Estimated revenue")).toBeInTheDocument();
     expect(screen.getByText("EUR 8.40")).toBeInTheDocument();
@@ -357,7 +389,7 @@ describe("ClipFactory operational frontend", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<MemoryRouter><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/clips/approval"]}><App /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Pending approval" })).toBeInTheDocument();
     expect(screen.getByText("Solar breakthrough")).toBeInTheDocument();
@@ -370,7 +402,7 @@ describe("ClipFactory operational frontend", () => {
   it("CF-REQ-856 explains when the API is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("Internal Server Error", { status: 500 })));
     render(<MemoryRouter><App /></MemoryRouter>);
-    expect(await screen.findAllByText("ClipFactory API is unavailable. Start the backend and retry.")).toHaveLength(6);
+    expect(await screen.findAllByText("ClipFactory API is unavailable. Start the backend and retry.")).toHaveLength(3);
   });
 
   it("CF-REQ-605 retires an Asset and filters it by status", async () => {

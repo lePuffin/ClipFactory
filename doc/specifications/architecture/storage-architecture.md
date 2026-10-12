@@ -42,7 +42,8 @@ Root: `DATA_DIR`.
 
 ```text
 ${DATA_DIR}/
-├── assets/<sha256[0:2]>/<sha256>.<ext>      # reusable and non-reusable Asset files
+├── assets/<sha256[0:2]>/<sha256>.<ext>      # saved generated/rendered/imported Asset files
+├── assets/external-runs/<run_id>/<sha256>.<ext> # Run-scoped external provider inputs
 ├── clips/<clip_id>.mp4                      # rendered Clip candidates
 ├── work/<run_id>/                           # intermediates, LLM audit JSON, logs excerpts
 │   ├── attempt-<n>/segments/<spec_hash>.mp4
@@ -57,7 +58,11 @@ ${DATA_DIR}/
 ```
 
 Storage keys are the relative paths above and satisfy CF-NFR-105. Asset
-files are written once (content-addressed) and never modified.
+files are content-addressed and never modified in place. External input keys
+include their owning Run so cleanup cannot remove another Run’s or legacy
+files. A fresh download of retired external content keeps the hash-deduplicated
+metadata row and points it at the new Run-scoped file; provenance and usage
+history remain unchanged. Legacy file paths are not automatically deleted.
 
 ## StorageProvider
 
@@ -71,4 +76,8 @@ Implemented by the `retention_cleanup` scheduled task (CF-REQ-214):
 `work/<run_id>` after `retention.work_dir_retention_days`; rejected Clip files
 after `retention.rejected_clip_retention_days`; TTS cache entries unused for
 the work-dir retention period. Reusable Assets, approved Clips and database
-rows are never deleted automatically.
+rows are never deleted automatically. Owner revision (2026-10-11): external
+provider inputs are removed and their metadata retired at production approval
+or Run completion/failure, independently of working-directory retention.
+Generated/rendered and owner-imported Assets remain saved; all Asset metadata
+rows remain for attribution and stock history (CF-REQ-200/211/214).

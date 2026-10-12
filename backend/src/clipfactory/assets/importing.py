@@ -9,11 +9,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import UUID
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
 
-from clipfactory.domain.models import Asset, AssetOrigin, Provenance
+from clipfactory.domain.models import Asset, AssetOrigin, AssetStatus, Provenance
 from clipfactory.ports.media import MediaInspector
 from clipfactory.ports.storage import MediaStorage
 
@@ -83,6 +84,7 @@ async def import_asset_file(
     min_video_height_px: int = 0,
     media_inspector: MediaInspector | None = None,
     expected_media_type: str | None = None,
+    run_id: UUID | None = None,
 ) -> AssetImportResult:
     if not provenance.license.strip():
         raise AssetImportError("missing_license", "Imported Assets require a licence")
@@ -128,10 +130,22 @@ async def import_asset_file(
             raise AssetImportError("invalid_media", "Downloaded video cannot be decoded") from exc
 
     existing = await asyncio.to_thread(assets.by_hash, detected.sha256)
-    if existing is not None and await storage.exists(existing.storage_key):
+    prefix = f"assets/external-runs/{run_id}/" if run_id and provenance.origin == AssetOrigin.EXTERNAL else None
+    if (
+        existing is not None
+        and existing.status == AssetStatus.ACTIVE
+        and (
+            prefix is None
+            or existing.storage_key.startswith(prefix)
+            or existing.provenance.origin != AssetOrigin.EXTERNAL
+        )
+        and await storage.exists(existing.storage_key)
+    ):
         return AssetImportResult(existing, True)
 
     key = f"assets/{detected.sha256[:2]}/{detected.sha256}.{detected.extension}"
+    if prefix is not None:
+        key = f"{prefix}{detected.sha256}.{detected.extension}"
     stored_hash = await storage.put_file(source, key)
     if stored_hash != detected.sha256:
         raise AssetImportError("file_changed", "File content changed during import")
@@ -149,7 +163,7 @@ async def import_asset_file(
         tags=sorted({tag.strip().casefold() for tag in tags if tag.strip()}),
         subjects=[subject.strip() for subject in subjects if subject.strip()],
         provenance=asset_provenance,
-        reusable=True,
+        reusable=provenance.origin != AssetOrigin.EXTERNAL,
         created_at=now,
     )
     saved = await asyncio.to_thread(assets.save, asset)

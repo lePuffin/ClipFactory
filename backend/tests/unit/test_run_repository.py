@@ -39,6 +39,14 @@ def test_run_repository_creates_run_with_profile_snapshot_and_ordered_events(rep
 
 
 @pytest.mark.unit
+@pytest.mark.req("CF-REQ-701")
+def test_run_detail_exposes_the_manual_url_for_url_ingestion(repository) -> None:
+    created = repository.create(RunTrigger.MANUAL_URL, manual_url="https://news.example/story", settings_snapshot={})
+    detail = repository.get(UUID(created["run_id"]))
+    assert detail["manual_url"] == "https://news.example/story"
+
+
+@pytest.mark.unit
 @pytest.mark.req("CF-REQ-652")
 def test_run_repository_rejects_a_second_active_run(repository) -> None:
     repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})

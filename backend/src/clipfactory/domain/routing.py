@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from clipfactory.domain.models import ActionType, Stage
 
@@ -23,6 +24,13 @@ ISSUE_ROUTES: dict[str, Route] = {
             "segment_ungrounded",
             "unknown_claim",
             "missing_attribution",
+            "repeated_attribution",
+            "repeated_sentence",
+            "spoken_call_to_action",
+            "filler_padding",
+            "stage_direction",
+            "headline_fragment",
+            "unsupported_commentary",
             "script_too_short",
             "script_too_long",
             "forbidden_content",
@@ -36,6 +44,7 @@ ISSUE_ROUTES: dict[str, Route] = {
         )
     },
     "narration_too_short": Route(Stage.WRITE_SCRIPT, ActionType.REVISE_SCRIPT),
+    "unsourceable_visual": Route(Stage.WRITE_SCRIPT, ActionType.REVISE_SCRIPT),
     "narration_too_long": Route(Stage.WRITE_SCRIPT, ActionType.REVISE_SCRIPT),
     "narration_invalid": Route(Stage.GENERATE_NARRATION, ActionType.REGENERATE_NARRATION),
     "narration_mismatch": Route(Stage.GENERATE_NARRATION, ActionType.REGENERATE_NARRATION),
@@ -82,3 +91,9 @@ _STAGE_ORDER = {stage: index for index, stage in enumerate(Stage)}
 def earliest_reentry(routes: list[Route]) -> Stage | None:
     targets = [route.target_stage for route in routes if route.target_stage is not None]
     return min(targets, key=_STAGE_ORDER.__getitem__) if targets else None
+
+
+def revision_limit_raised(revision_retries_used: int, settings_snapshot: dict[str, Any]) -> bool:
+    """True when the given settings allow a Run more revision retries than it has already used."""
+    maximum = int(settings_snapshot.get("workflow", {}).get("max_revision_retries", 3))
+    return maximum > revision_retries_used

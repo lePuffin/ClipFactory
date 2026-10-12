@@ -23,6 +23,7 @@ class VisualInput:
     motion: Motion = "none"
     transition_in: Transition = "cut"
     source_label: Literal["ARCHIVE", "ILLUSTRATIVE", "FILE"] | None = None
+    source_offset_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,7 @@ class OverlayInput:
     width: int
     height: int
     fade_seconds: float = 0.2
+    sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +77,8 @@ class CompositionSpec:
     fonts_dir: Path | None = None
     overlays: tuple[OverlayInput, ...] = ()
     sound_effects: tuple[AudioInput, ...] = ()
+    end_card_path: Path | None = None
+    end_card_sha256: str | None = None
 
     @property
     def duration_seconds(self) -> float:

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import UTC, datetime
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -18,6 +21,7 @@ from clipfactory.assets.candidate_review import SegmentCandidates
 from clipfactory.assets.generation import generate_video_asset
 from clipfactory.assets.graphics import graphics_provider
 from clipfactory.assets.music import select_music
+from clipfactory.assets.retention import retire_run_external_assets
 from clipfactory.assets.selection import (
     AssetRequirement,
     choose_reusable_asset,
@@ -25,18 +29,21 @@ from clipfactory.assets.selection import (
     refined_media_queries,
 )
 from clipfactory.assets.vision_review import review_media_candidates
-from clipfactory.composition.render import render_clip
+from clipfactory.composition.render import freeze_end_card, render_clip
 from clipfactory.composition.spec import AudioInput, CompositionSpec, OverlayInput, VisualInput
 from clipfactory.domain.graphics import (
     GraphicsError,
     GraphicsSpec,
     graphics_kind,
+    reusable_render_duration,
     validate_graphics_claims,
     validate_graphics_kind,
 )
 from clipfactory.domain.models import (
+    ActionType,
     Asset,
     AssetOrigin,
+    AssetStatus,
     ClipStatus,
     ContentProfile,
     Evaluation,
@@ -56,20 +63,32 @@ from clipfactory.evaluation.validation import (
     validate_media,
 )
 from clipfactory.planning.motion import ShotMedia, choose_shot_motions
+from clipfactory.planning.people import expand_bare_names, name_candidates
 from clipfactory.planning.script import (
+    BuzzLineDraft,
+    EditorialDraft,
     GeneratedScript,
+    PersonDraft,
     ScriptGateError,
     ScriptSegment,
     SocialMetadataDraft,
     VisualDraft,
+    WriteScriptResult,
     generate_script,
+    normalize_people,
 )
-from clipfactory.planning.visuals import build_visual_plan, contains_named_person, serialize_visual_plan
+from clipfactory.planning.visuals import (
+    build_visual_plan,
+    contains_named_person,
+    distinct_media_searches,
+    serialize_visual_plan,
+    with_date_cards,
+)
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.generation import VideoGenerationRequest, VideoProvider
-from clipfactory.ports.llm import ImageInput
+from clipfactory.ports.llm import EVALUATION_FALLBACK_ERRORS, ImageInput, LLMModelRole
 from clipfactory.ports.media import MediaProcessError
-from clipfactory.ports.media_sources import MediaCandidate, MediaSourceProvider
+from clipfactory.ports.media_sources import MediaCandidate, MediaSourceProvider, PersonPortraits, PersonPortraitSource
 from clipfactory.production.alignment import AlignedWord, AlignmentResult
 from clipfactory.production.audio_captions import (
     NarrationDurationGateError,
@@ -77,10 +96,17 @@ from clipfactory.production.audio_captions import (
     generate_narration,
     transcribe_narration,
 )
-from clipfactory.production.editorial import EditorialCue, render_editorial_graphic
-from clipfactory.production.timing import reconcile_visual_timing
+from clipfactory.production.editorial import (
+    EditorialCue,
+    render_brand_mark,
+    render_editorial_graphic,
+    render_news_date,
+)
+from clipfactory.production.timing import prefer_covering_footage, reconcile_visual_timing, short_footage
 from clipfactory.workflow.executor import EvaluationStatusReader, StageFailure, StageUseCase
 from clipfactory.workflow.graph import WorkflowState, renew_generation_watchdog
+
+logger = logging.getLogger(__name__)
 
 
 class ProductionStageUseCase:
@@ -108,6 +134,9 @@ class PersistedEvaluationStatus(EvaluationStatusReader):
         return evaluation.passed
 
 
+_CONTEXT_KINDS = frozenset({"headline", "place", "number", "quote"})
+
+
 class ProductionStageService:
     def __init__(
         self,
@@ -126,6 +155,7 @@ class ProductionStageService:
         video_providers: Sequence[VideoProvider] = (),
         graphics_providers: Sequence[VideoProvider] = (),
         candidate_preview: Callable[[MediaCandidate], Awaitable[ImageInput | None]] | None = None,
+        person_portraits: PersonPortraitSource | None = None,
     ) -> None:
         self.production = production
         self.runs = runs
@@ -141,6 +171,7 @@ class ProductionStageService:
         self.video_providers = tuple(video_providers)
         self.graphics_providers = tuple(graphics_providers)
         self.candidate_preview = candidate_preview
+        self.person_portraits = person_portraits
 
     async def build_story_package(self, state: WorkflowState) -> dict[str, Any]:
         return await asyncio.to_thread(self.production.create_story_package, UUID(state["run_id"]), self.clock())
@@ -152,7 +183,13 @@ class ProductionStageService:
         configured = detail["settings_snapshot"].get("script", {})
         composition = detail["settings_snapshot"].get("composition", {})
         previous_script = None
+        rejected_draft = None
+        rejected_codes: list[str] = []
         if state.get("pending_actions"):
+            retained = await asyncio.to_thread(self.production.latest_artifact, run_id, Stage.WRITE_SCRIPT.value)
+            if retained and retained.get("story_package_id") == str(package_id) and not retained.get("passed", False):
+                rejected_draft = WriteScriptResult.model_validate(retained["draft"])
+                rejected_codes = retained["codes"]
             try:
                 previous_script = await asyncio.to_thread(self.production.current_script, package_id)
             except LookupError:
@@ -182,8 +219,23 @@ class ProductionStageService:
                 source_attributions=context.get("source_attributions", []),
                 claim_publishers=context.get("claim_publishers", {}),
                 previous_script=previous_script,
+                rejected_draft=rejected_draft,
+                rejected_codes=rejected_codes,
             )
         except ScriptGateError as exc:
+            if exc.draft is not None:
+                await asyncio.to_thread(
+                    self.production.save_artifact,
+                    run_id,
+                    attempt,
+                    Stage.WRITE_SCRIPT.value,
+                    {
+                        "story_package_id": str(package_id),
+                        "passed": False,
+                        "codes": list(exc.codes),
+                        "draft": exc.draft.model_dump(mode="json"),
+                    },
+                )
             evaluation = self._gate_evaluation(
                 run_id, attempt, Stage.WRITE_SCRIPT, list(exc.codes), instructions=exc.detail or None
             )
@@ -195,6 +247,13 @@ class ProductionStageService:
         except GraphicsError as exc:
             raise StageFailure(exc.code, str(exc)) from exc
         version = await asyncio.to_thread(self.production.save_script, package_id, script, self.clock())
+        await asyncio.to_thread(
+            self.production.save_artifact,
+            run_id,
+            attempt,
+            Stage.WRITE_SCRIPT.value,
+            {"story_package_id": str(package_id), "passed": True},
+        )
         evaluation = self._gate_evaluation(run_id, attempt, Stage.WRITE_SCRIPT, [])
         result = await self._persist_evaluation(evaluation)
         result["story_package_version"] = version
@@ -207,6 +266,12 @@ class ProductionStageService:
         detail = await asyncio.to_thread(self.runs.get, UUID(state["run_id"]))
         profile = ContentProfile.model_validate(detail["profile_snapshot"])
         maximum = float(detail["settings_snapshot"].get("visual", {}).get("max_segment_seconds", 8.0))
+        portrait_minimum = int(detail["settings_snapshot"].get("assets", {}).get("min_portrait_short_side_px", 480))
+        script = await self._with_undeclared_people(script, package_id, portrait_minimum)
+        context = await asyncio.to_thread(self.production.package_context, package_id)
+        script = with_date_cards(
+            script, context["claims"], allow_generated_media=profile.visual_style.allow_generated_media
+        )
         plan = build_visual_plan(
             script, allow_generated_media=profile.visual_style.allow_generated_media, max_segment_seconds=maximum
         )
@@ -214,15 +279,59 @@ class ProductionStageService:
         await asyncio.to_thread(self.production.save_visual_plan, package_id, script_value["version"], value)
         return {"story_package_version": script_value["version"]}
 
+    async def _with_undeclared_people(
+        self, script: GeneratedScript, package_id: UUID, portrait_minimum: int = 480
+    ) -> GeneratedScript:
+        """Add verified humans named in narration but omitted from the writing response (CF-REQ-268)."""
+        source = self.person_portraits
+        if source is None:
+            return script
+        context = await asyncio.to_thread(self.production.package_context, package_id)
+        evidence = [claim.text for claim in context["claims"]] + [
+            item.excerpt for claim in context["claims"] for item in claim.evidence
+        ]
+        expanded = expand_bare_names(script.people, evidence)
+        if expanded != tuple(script.people):
+            script = replace(script, people=normalize_people(expanded, script.segments))
+        if len(script.people) >= 8:
+            return script
+        candidates = name_candidates(
+            [segment.text for segment in script.segments],
+            [claim.text for claim in context["claims"]],
+            script.people,
+        )
+        found: list[PersonDraft] = []
+        for name in candidates:
+            try:
+                resolved = await source.find_person(name, min_short_side_px=portrait_minimum)
+            except ProviderError as exc:
+                logger.warning("Person lookup for %r skipped: %s", name, exc.code)
+                continue
+            if resolved is not None and resolved.candidates:
+                found.append(PersonDraft(name=name))
+        if not found:
+            return script
+        people = normalize_people([*script.people, *found], script.segments)
+        return replace(script, people=people)
+
     async def select_assets(self, state: WorkflowState) -> dict[str, Any]:
         run_id, attempt, detail, profile = await self._run_context(state)
         package_id = _required_uuid(state, "story_package_id")
         plan = await asyncio.to_thread(self.production.current_visual_plan, package_id)
-        available = await asyncio.to_thread(self.assets.list, limit=500)
+        distinct_media_searches(
+            [(segment["requirement"], str(segment.get("narration_text", ""))) for segment in plan["segments"]]
+        )
+        available = await asyncio.to_thread(self.assets.list, status=AssetStatus.ACTIVE, limit=500)
         available = [asset for asset in available if asset.category != "title_card"]
         configured = detail["settings_snapshot"].get("assets", {})
         affected = set(state.get("affected_segments", []))
-        used: set[str] = set()
+        used: set[str] = {
+            str(action["refs"]["rejected_asset_id"])
+            for action in state.get("pending_actions", [])
+            if action.get("type") == ActionType.RESELECT_ASSET.value and action.get("refs", {}).get("rejected_asset_id")
+        }
+        tail_seconds = float(detail["settings_snapshot"].get("composition", {}).get("tail_seconds", 1.0))
+        last_index = max((int(item["index"]) for item in plan["segments"]), default=0)
 
         async def progress(message: str, payload: dict[str, object]) -> None:
             await asyncio.to_thread(
@@ -242,13 +351,23 @@ class ProductionStageService:
             "retry_max_delay_seconds": float(policy.get("call_retry_max_delay_seconds", 60)),
         }
         pending: list[tuple[dict[str, Any], AssetRequirement, list[tuple[MediaCandidate, Any]]]] = []
-        searched: dict[tuple[str, str], list[tuple[MediaCandidate, Any]]] = {}
+        searched: dict[tuple[str, str, tuple[str, ...], tuple[str, ...]], list[tuple[MediaCandidate, Any]]] = {}
         review_limit = int(configured.get("candidates_per_review_segment", 10))
+        people: dict[str, PersonPortraits | None] = {}
+        person_occurrences: dict[str, int] = {}
         for segment in plan["segments"]:
             if segment.get("selected_asset_id") and (affected and int(segment["index"]) not in affected):
                 used.add(str(segment["selected_asset_id"]))
                 continue
             requirement = segment["requirement"]
+            if isinstance(requirement.get("person"), dict):
+                if await self._select_person(
+                    segment, configured, available, used, progress, people, person_occurrences, retry_policy, run_id
+                ):
+                    continue
+                # CF-REQ-268: without a verified licensed portrait, keep the writer's original visual intent.
+                segment["requirement"] = requirement = dict(requirement["person"]["fallback"])
+                segment.pop("identity", None)
             if requirement.get("kind", "media") != "media":
                 try:
                     await self._select_graphic(
@@ -294,7 +413,12 @@ class ProductionStageService:
                 ]
                 if match is not None
             ]
-            key = (asset_requirement.media_type, asset_requirement.description)
+            key = (
+                asset_requirement.media_type,
+                asset_requirement.description,
+                asset_requirement.subjects,
+                asset_requirement.tags,
+            )
             if key not in searched:
                 searched[key] = await search_media_candidates(
                     asset_requirement,
@@ -324,6 +448,8 @@ class ProductionStageService:
                     ],
                     story_title=str(context["title"]),
                     preview=self.candidate_preview,
+                    max_images_per_request=int(configured.get("max_review_images_per_request", 10)),
+                    fallback=_has_evaluation_fallback(detail),
                 )
                 await self._event(
                     run_id,
@@ -351,6 +477,13 @@ class ProductionStageService:
             else:
                 by_candidate = {id(candidate): (candidate, source) for candidate, source in options}
                 ordered = [by_candidate[id(item)] for item in reviewed.get(int(segment["index"]), [])]
+            if asset_requirement.media_type == "video":
+                ordered = prefer_covering_footage(
+                    ordered,
+                    float(segment["planned_duration_seconds"])
+                    + 2.0
+                    + (tail_seconds if int(segment["index"]) == last_index else 0.0),
+                )
             selected, reason = None, ""
             for candidate, source in ordered:
                 if isinstance(source, Asset):
@@ -363,6 +496,7 @@ class ProductionStageService:
                     providers=self.media_sources,
                     storage=self.storage,
                     assets=self.assets,
+                    run_id=run_id,
                     media=self.media,
                     now=self.clock(),
                     progress=progress,
@@ -387,6 +521,12 @@ class ProductionStageService:
                 and profile.visual_style.allow_generated_media
                 and segment["requirement"].get("strategy") in {"generate_allowed", "reuse_first"}
                 and not contains_named_person(list(asset_requirement.subjects))
+                and asset_requirement.category not in {"map", "chart", "graphic", "text_card", "diagram"}
+                and not re.search(
+                    r"\b(?:maps?|charts?|diagrams?|infographics?)\b",
+                    " ".join((asset_requirement.description, *asset_requirement.tags)),
+                    re.IGNORECASE,
+                )
             ):
                 by_name = {provider.name: provider for provider in self.video_providers}
 
@@ -420,8 +560,12 @@ class ProductionStageService:
                 selected = await generate_video_asset(
                     VideoGenerationRequest(
                         prompt=(
-                            "Illustrative background, not real event footage. No people, faces, lettering or logos. "
-                            + asset_requirement.description
+                            segment["requirement"].get("generation_prompt")
+                            or (
+                                asset_requirement.description
+                                + ". Naturalistic cinematic footage with continuous believable subject motion, "
+                                "realistic textures, natural lighting and a steady camera."
+                            )
                         ),
                         negative_prompt="people, faces, text, logos, watermarks, low quality, blurry",
                         width=profile.output.width,
@@ -503,23 +647,43 @@ class ProductionStageService:
             if selected is None:
                 alternatives: list[tuple[MediaCandidate, Any]] = []
                 seen_urls = {candidate.url for candidate, _ in options}
-                for query in refined_media_queries(asset_requirement, segment["requirement"].get("search_queries", [])):
+                for query in refined_media_queries(
+                    asset_requirement,
+                    segment["requirement"].get("search_queries", []),
+                    narration=str(segment.get("narration_text", "")),
+                    rotation=attempt - 1,
+                ):
                     await progress(
                         f"Visual {segment['index']}: refined search for {query}",
                         {"segment_index": segment["index"], "fallback_choice": "refined_search", "search_query": query},
                     )
-                    found = await search_media_candidates(
-                        replace(asset_requirement, description=query),
-                        providers=self.media_sources,
-                        candidates_per_search=int(configured.get("candidates_per_search", 10)),
-                        progress=progress,
-                        **retry_policy,
+                    # On a revision Attempt a video Visual also searches stills: free video catalogues are
+                    # sparse and the composer always moves stills (CF-REQ-266).
+                    media_types = (
+                        ("video", "image") if attempt > 1 and asset_requirement.media_type == "video" else (None,)
                     )
-                    eligible = rank_media_candidates(asset_requirement, [candidate for candidate, _ in found])
-                    for candidate, source in found:
-                        if candidate in eligible and candidate.url not in seen_urls:
-                            alternatives.append((candidate, source))
-                            seen_urls.add(candidate.url)
+                    per_type: list[list[tuple[MediaCandidate, Any]]] = []
+                    for media_type in media_types:
+                        searched_requirement = replace(
+                            asset_requirement, description=query, media_type=media_type or asset_requirement.media_type
+                        )
+                        found = await search_media_candidates(
+                            searched_requirement,
+                            providers=self.media_sources,
+                            candidates_per_search=int(configured.get("candidates_per_search", 10)),
+                            progress=progress,
+                            **retry_policy,
+                        )
+                        eligible = rank_media_candidates(
+                            replace(asset_requirement, media_type=searched_requirement.media_type),
+                            [candidate for candidate, _ in found],
+                        )
+                        per_type.append([(candidate, source) for candidate, source in found if candidate in eligible])
+                    for group in zip_longest(*per_type):
+                        for item in group:
+                            if item is not None and item[0].url not in seen_urls:
+                                alternatives.append(item)
+                                seen_urls.add(item[0].url)
                 fallback_pending.append((segment, asset_requirement, alternatives[:review_limit]))
                 continue
             segment["selected_asset_id"] = str(selected.id)
@@ -548,10 +712,18 @@ class ProductionStageService:
                     ],
                     story_title=str(context["title"]),
                     preview=self.candidate_preview,
+                    max_images_per_request=int(configured.get("max_review_images_per_request", 10)),
+                    fallback=_has_evaluation_fallback(detail),
                 )
             except ProviderError as exc:
                 raise StageFailure(exc.code, str(exc)) from exc
         missing_issues: list[Issue] = []
+        reselected_segments = {
+            int(action["refs"]["segment_index"])
+            for action in state.get("pending_actions", [])
+            if action.get("type") == ActionType.RESELECT_ASSET.value
+            and isinstance(action.get("refs", {}).get("segment_index"), int)
+        }
         for segment, asset_requirement, options in fallback_pending:
             accepted = fallback_reviewed.get(int(segment["index"]), [])
             selected = await acquire_asset(
@@ -559,6 +731,7 @@ class ProductionStageService:
                 providers=self.media_sources,
                 storage=self.storage,
                 assets=self.assets,
+                run_id=run_id,
                 media=self.media,
                 now=self.clock(),
                 progress=progress,
@@ -593,17 +766,30 @@ class ProductionStageService:
                 continue
             segment.pop("selected_asset_id", None)
             segment["selection_reason"] = "missing_reviewed_media"
-            message = (
-                f"Visual {segment['index']} has no suitable reviewed licensed media; "
-                "reselect relevant media or supply an owner-reviewed photo. Plain-colour cards are not permitted."
-            )
+            if int(segment["index"]) in reselected_segments:
+                script_index = int(segment.get("script_segment_index", segment["index"]))
+                message = (
+                    f"Visual for script segment {script_index} ({segment.get('description', '')!r}) could not be "
+                    "found in free stock media after a reselection; rewrite only that segment's media visual as an "
+                    "ordinary photographable scene (place, crowd, building, object or activity) with new "
+                    "search_queries, no on-screen text, tables or numbers. Keep all narration text unchanged."
+                )
+                code = "unsourceable_visual"
+                refs = {"segment_index": int(segment["index"]), "script_segment_index": script_index}
+            else:
+                message = (
+                    f"Visual {segment['index']} has no suitable reviewed licensed media; "
+                    "reselect relevant media or supply an owner-reviewed photo. Plain-colour cards are not permitted."
+                )
+                code = "missing_asset"
+                refs = {"segment_index": int(segment["index"])}
             missing_issues.append(
                 Issue(
-                    code="missing_asset",
+                    code=code,
                     severity=IssueSeverity.BLOCKING,
                     stage=Stage.SELECT_ASSETS,
                     message=message,
-                    refs={"segment_index": int(segment["index"])},
+                    refs=refs,
                 )
             )
             await progress(message, {"segment_index": segment["index"], "selection_reason": "missing_reviewed_media"})
@@ -624,6 +810,118 @@ class ProductionStageService:
         if profile.music.enabled and music is None:
             await self._event(run_id, "no_music_available", "No eligible local music Asset; composing without music")
         return await self._persist_evaluation(self._gate_evaluation(run_id, attempt, Stage.SELECT_ASSETS, []))
+
+    async def _select_person(
+        self,
+        segment: dict[str, Any],
+        configured: dict[str, Any],
+        available: list[Asset],
+        used: set[str],
+        progress: Callable[[str, dict[str, object]], Awaitable[None]],
+        people: dict[str, PersonPortraits | None],
+        occurrences: dict[str, int],
+        retry_policy: dict[str, Any],
+        run_id: UUID,
+    ) -> bool:
+        """Show a mentioned public figure through a Wikidata-bound licensed portrait (CF-REQ-268)."""
+        source = self.person_portraits
+        name = str(segment["requirement"]["person"]["name"])
+        if source is None:
+            return False
+        key = name.casefold()
+        if key not in people:
+            try:
+                people[key] = await source.find_person(
+                    name, min_short_side_px=int(configured.get("min_portrait_short_side_px", 480))
+                )
+            except ProviderError as exc:
+                await progress(
+                    f"Visual {segment['index']}: could not verify {name} ({exc.code}); keeping the original shot",
+                    {"segment_index": segment["index"], "error_code": exc.code},
+                )
+                people[key] = None
+        resolved = people[key]
+        if resolved is None or not resolved.candidates:
+            await progress(
+                f"Visual {segment['index']}: no verified licensed portrait of {name}; keeping the original shot",
+                {"segment_index": segment["index"], "person": name},
+            )
+            return False
+        occurrence = occurrences.get(key, 0)
+        occurrences[key] = occurrence + 1
+        count = len(resolved.candidates)
+        ordered = [resolved.candidates[(occurrence + offset) % count] for offset in range(count)]
+        requirement = AssetRequirement(
+            media_type="image",
+            category="person",
+            description=f"Portrait photograph of {resolved.name}",
+            subjects=(resolved.name,),
+            tags=(resolved.name, "person", resolved.identity_ref),
+            min_width=int(configured.get("min_portrait_short_side_px", 480)),
+            min_height=int(configured.get("min_portrait_short_side_px", 480)),
+        )
+        selected: Asset | None = None
+        for candidate in ordered:
+            # Portraits may repeat within a Run and ignore reuse cooldown: identity, not variety, is the point.
+            selected = next(
+                (
+                    asset
+                    for asset in available
+                    if asset.provenance.source_url == candidate.url
+                    and asset.status.value == "active"
+                    and (
+                        asset.provenance.origin != AssetOrigin.EXTERNAL
+                        or asset.storage_key.startswith(f"assets/external-runs/{run_id}/")
+                    )
+                ),
+                None,
+            )
+            if selected is not None and not await self.storage.exists(selected.storage_key):
+                selected = None
+            if selected is None:
+                selected = await acquire_asset(
+                    requirement,
+                    providers=(source,),
+                    storage=self.storage,
+                    assets=self.assets,
+                    run_id=run_id,
+                    media=self.media,
+                    now=self.clock(),
+                    progress=progress,
+                    max_image_bytes=int(configured.get("max_image_bytes", 20000000)),
+                    candidates=[(candidate, source)],
+                    **retry_policy,
+                )
+                if selected is not None and all(asset.id != selected.id for asset in available):
+                    available.append(selected)
+            if selected is not None:
+                break
+        if selected is None:
+            await progress(
+                f"Visual {segment['index']}: portrait of {name} could not be imported; keeping the original shot",
+                {"segment_index": segment["index"], "person": name},
+            )
+            return False
+        segment["selected_asset_id"] = str(selected.id)
+        segment["selection_reason"] = "person_portrait"
+        segment["generated"] = False
+        segment["identity"] = {
+            "name": resolved.name,
+            "ref": resolved.identity_ref,
+            "url": resolved.identity_url,
+            "source_url": selected.provenance.source_url,
+        }
+        used.add(str(selected.id))
+        await progress(
+            f"Visual {segment['index']}: showing {resolved.name} ({resolved.identity_ref})",
+            {
+                "segment_index": segment["index"],
+                "asset_id": str(selected.id),
+                "selection_reason": "person_portrait",
+                "identity_ref": resolved.identity_ref,
+            },
+        )
+        return True
 
     async def _select_graphic(
         self,
@@ -664,9 +962,14 @@ class ProductionStageService:
             and asset.width == profile.output.width
             and asset.height == profile.output.height
             and asset.duration_seconds is not None
-            and abs(asset.duration_seconds - float(segment["planned_duration_seconds"]))
-            <= 1 / int(configured.get("graphics_fps", 30)) + 0.001
+            and reusable_render_duration(
+                spec,
+                asset.duration_seconds,
+                float(segment["planned_duration_seconds"]),
+                1 / int(configured.get("graphics_fps", 30)),
+            )
         ]
+        eligible.sort(key=lambda asset: asset.duration_seconds or 0.0)
         match = choose_reusable_asset(
             AssetRequirement(
                 media_type="video",
@@ -785,7 +1088,8 @@ class ProductionStageService:
                         f"{previous_words}",
                         " words; target about ",
                         f"{target_words}",
-                        " words.",
+                        " words. Change the length only by adding or removing accepted facts or necessary "
+                        "context, never with filler adverbs (notably, remarkably, impressively, truly).",
                     ]
                 ),
                 refs={"target_word_count": target_words, "previous_word_count": previous_words},
@@ -898,9 +1202,11 @@ class ProductionStageService:
             lead_in_seconds=float(composition.get("lead_in_seconds", 0.3)),
             tail_seconds=float(composition.get("tail_seconds", 1.0)),
             max_segment_seconds=float(detail["settings_snapshot"].get("visual", {}).get("max_segment_seconds", 8.0)),
+            min_segment_seconds=float(detail["settings_snapshot"].get("visual", {}).get("min_segment_seconds", 1.5)),
         )
         selected: list[tuple[dict[str, Any], Asset]] = []
         issues: list[str] = []
+        short_assets: dict[int, str] = {}
         for segment in plan["segments"]:
             asset_id = segment.get("selected_asset_id")
             asset = await asyncio.to_thread(self.assets.get, UUID(asset_id)) if asset_id else None
@@ -918,8 +1224,33 @@ class ProductionStageService:
                 issues.append("segment_too_short")
             if duration > float(visual.get("max_segment_seconds", 8.0)):
                 issues.append("segment_too_long")
+            if asset.media_type == "video" and short_footage(
+                asset.duration_seconds,
+                offset_seconds=float(segment.get("source_offset_seconds", 0.0)),
+                shown_seconds=duration,
+            ):
+                short_assets.setdefault(int(segment.get("plan_segment_index", segment["index"])), str(asset.id))
             selected.append((segment, asset))
         gate = self._gate_evaluation(run_id, attempt, Stage.COMPOSE_CLIP, list(dict.fromkeys(issues)))
+        if gate.passed and short_assets:
+            gate = build_evaluation(
+                EvaluationContext(run_id, None, attempt),
+                issues=[
+                    Issue(
+                        code="asset_too_short",
+                        severity=IssueSeverity.BLOCKING,
+                        stage=Stage.COMPOSE_CLIP,
+                        message=(
+                            f"Visual {index + 1} footage is too short to fill its segment without replaying it; "
+                            "select a different, longer clip for this segment."
+                        ),
+                        refs={"segment_index": index, "rejected_asset_id": asset_id},
+                    )
+                    for index, asset_id in sorted(short_assets.items())
+                ],
+                evaluator="deterministic_gate",
+                layer=EvaluationLayer.STAGE_GATE,
+            )
         if not gate.passed:
             return await self._persist_evaluation(gate)
         motions = choose_shot_motions(
@@ -955,9 +1286,34 @@ class ProductionStageService:
             + float(composition.get("tail_seconds", 1.0))
         )
         overlays, overlay_metadata = await self._editorial_overlays(
-            run_id, attempt, package_id, script_value, plan["segments"], font_file, profile, clip_duration
+            run_id,
+            attempt,
+            package_id,
+            script_value,
+            plan["segments"],
+            font_file,
+            profile,
+            clip_duration - 3 if composition.get("end_card_file") else clip_duration,
         )
         sound_effects = await self._sound_cues(overlays, clip_duration)
+        identity_overlays, identity_metadata = await self._identity_overlays(
+            run_id, attempt, package_id, script_value, font_file, profile, clip_duration, composition
+        )
+        overlays.extend(identity_overlays)
+        end_card_path = None
+        end_card_sha256 = None
+        if composition.get("end_card_file"):
+            try:
+                end_card_path, end_card_sha256 = await freeze_end_card(
+                    Path(str(composition["end_card_file"])),
+                    storage=self.storage,
+                    runner=self.media,
+                    key=f"work/{run_id}/attempt-{attempt}/end-card.mp4",
+                )
+            except (OSError, ValueError, MediaProcessError) as exc:
+                raise StageFailure(
+                    "composition_failed", f"Configured end card is unavailable or invalid: {exc}"
+                ) from exc
         spec = CompositionSpec(
             segments=tuple(
                 (
@@ -970,6 +1326,9 @@ class ProductionStageService:
                         segment["motion"],
                         segment["transition_in"],
                         source_label=segment.get("source_label"),
+                        source_offset_seconds=(
+                            float(segment.get("source_offset_seconds", 0.0)) if asset.media_type == "video" else 0.0
+                        ),
                     )
                     for segment, asset in selected
                 )
@@ -1000,6 +1359,8 @@ class ProductionStageService:
             fonts_dir=font_file.parent,
             overlays=tuple(overlays),
             sound_effects=sound_effects,
+            end_card_path=end_card_path,
+            end_card_sha256=end_card_sha256,
         )
         try:
             rendered = await render_clip(
@@ -1007,6 +1368,11 @@ class ProductionStageService:
             )
         except MediaProcessError as exc:
             raise StageFailure("composition_failed", exc.stderr_tail or str(exc)) from exc
+        caption_package = await asyncio.to_thread(
+            self.production.package_context, _required_uuid(state, "story_package_id")
+        )
+        package_summary = caption_package.get("summary")
+        package_attributions = caption_package.get("source_attributions", [])
         metadata = {
             "narration": narration,
             "word_timings": transcription["words"],
@@ -1015,9 +1381,26 @@ class ProductionStageService:
             "music_asset_id": str(music.id) if music else None,
             "visual_segments": plan["segments"],
             "editorial_overlays": overlay_metadata,
+            "identity_overlays": identity_metadata,
+            "end_card": (
+                {"path": str(end_card_path), "sha256": end_card_sha256, "duration_seconds": 3}
+                if end_card_path is not None
+                else None
+            ),
             "sound_effects": [asdict(cue) | {"path": str(cue.path)} for cue in sound_effects],
             "social_metadata": {
                 **script_value["social_metadata"],
+                "description": _descriptive_caption(
+                    str(script_value["social_metadata"].get("description", "")), str(package_summary or "")
+                ),
+                "source_attributions": list(package_attributions),
+                "asset_attributions": list(
+                    dict.fromkeys(
+                        asset.provenance.attribution_text
+                        for _, asset in selected
+                        if asset.provenance.attribution_required and asset.provenance.attribution_text
+                    )
+                ),
                 "contains_synthetic_media": any(
                     asset.provenance.origin == AssetOrigin.GENERATED for _, asset in selected
                 ),
@@ -1128,16 +1511,64 @@ class ProductionStageService:
                 "wer": clip["metadata"]["wer"],
                 "frames": [item.metadata for item in frames],
             }
-            try:
-                evaluation = await evaluate_semantics(
-                    self.llm, context, production_data=production_data, frames=frames or None
+            environment = detail["settings_snapshot"].get("environment", {})
+            primary_model = environment.get("llm_model_evaluation") or environment.get("llm_model")
+            fallback_model = environment.get("llm_model_evaluation_fallback")
+            model_role: LLMModelRole = "evaluation"
+            while True:
+                try:
+                    evaluation = await evaluate_semantics(
+                        self.llm,
+                        context,
+                        production_data=production_data,
+                        frames=frames or None,
+                        model_role=model_role,
+                    )
+                    break
+                except ProviderError as exc:
+                    if (
+                        exc.code in EVALUATION_FALLBACK_ERRORS
+                        and model_role == "evaluation"
+                        and fallback_model
+                        and fallback_model != primary_model
+                    ):
+                        # Free providers moderate news imagery with an opaque, input-deterministic 400 (CF-REQ-405).
+                        model_role = "evaluation_fallback"
+                        await self._event(
+                            run_id,
+                            "evaluation_model_fallback",
+                            f"Evaluation model {primary_model} failed the request ({exc.code}); "
+                            f"retrying once with {fallback_model}",
+                        )
+                        continue
+                    if exc.code != "image_limit" or len(frames) <= 1:
+                        raise StageFailure("llm_unavailable", str(exc)) from exc
+                # The routed free vision model accepts fewer images per prompt; keep evenly spaced frames.
+                frames = _fewer_frames(frames)
+                production_data["frames"] = [item.metadata for item in frames]
+                await self._event(
+                    run_id,
+                    "evaluation_image_limit",
+                    f"Evaluation model accepts fewer images; retrying with {len(frames)}",
                 )
-            except ProviderError as exc:
-                raise StageFailure("llm_unavailable", str(exc)) from exc
         await asyncio.to_thread(
             self.production.set_clip_status, clip_id, ClipStatus.APPROVED if evaluation.passed else ClipStatus.REJECTED
         )
-        return await self._persist_evaluation(evaluation)
+        result = await self._persist_evaluation(evaluation)
+        if evaluation.passed:
+            await self.cleanup_run(run_id)
+        return result
+
+    async def cleanup_run(self, run_id: UUID) -> None:
+        try:
+            await retire_run_external_assets(run_id, assets=self.assets, storage=self.storage)
+        except OSError:
+            logger.exception("External input cleanup failed for Run %s", run_id)
+            await self._event(
+                run_id,
+                "asset_cleanup_failed",
+                "External inputs were retired but file deletion failed; check server logs",
+            )
 
     async def plan_retry(self, state: WorkflowState) -> dict[str, Any]:
         run_id = UUID(state["run_id"])
@@ -1218,6 +1649,105 @@ class ProductionStageService:
         await asyncio.to_thread(self.evaluations.save, evaluation)
         return {"last_evaluation_ids": [str(evaluation.id)]}
 
+    async def _identity_overlays(
+        self,
+        run_id: UUID,
+        attempt: int,
+        package_id: UUID,
+        script: dict[str, Any],
+        font_file: Path,
+        profile: ContentProfile,
+        duration: float,
+        settings: dict[str, Any],
+    ) -> tuple[list[OverlayInput], list[dict[str, Any]]]:
+        scale = profile.output.width / 720
+        margin = round(24 * scale)
+        logo = Path(str(settings.get("logo_file", "logo_letters.png")))
+        opacity = float(settings.get("logo_opacity", 0.7))
+        try:
+            content, width, height = await asyncio.to_thread(render_brand_mark, logo, round(112 * scale), opacity)
+        except (OSError, ValueError) as exc:
+            raise StageFailure(
+                "composition_failed", f"Configured logo is unavailable or invalid: {logo}: {exc}"
+            ) from exc
+        if width + 2 * margin > profile.output.width or height + 2 * margin > profile.output.height:
+            raise StageFailure("composition_failed", "Configured logo cannot fit within the output frame")
+        key = f"work/{run_id}/attempt-{attempt}/identity-logo.png"
+        await self.storage.put_bytes(key, content)
+        overlays = [
+            OverlayInput(
+                self.storage.local_path(key),
+                0,
+                duration,
+                profile.output.width - margin - width,
+                margin,
+                width,
+                height,
+                0,
+                hashlib.sha256(content).hexdigest(),
+            )
+        ]
+        recorded: list[dict[str, Any]] = [
+            asdict(overlays[0])
+            | {"path": str(overlays[0].path), "kind": "logo", "sha256": hashlib.sha256(content).hexdigest()}
+        ]
+        context = await asyncio.to_thread(self.production.package_context, package_id)
+        cited_claims = {UUID(str(value)) for segment in script["segments"] for value in segment["claim_ids"]}
+        sources = {
+            evidence.source_id
+            for claim in context["claims"]
+            if claim.id in cited_claims
+            for evidence in claim.evidence
+            if evidence.verified
+        }
+        dated = {
+            source: timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp
+            for source, timestamp in context.get("source_publications", {}).items()
+            if source in sources and timestamp is not None
+        }
+        if not dated:
+            await self._event(
+                run_id, "warning", "News date omitted: cited verified Sources have no known publication timestamp"
+            )
+            return overlays, recorded
+        latest = max(dated.values())
+        try:
+            text, graphic = await asyncio.to_thread(
+                render_news_date, latest, profile.schedule.timezone, font_file, profile.output.width
+            )
+        except (OSError, ValueError) as exc:
+            raise StageFailure("composition_failed", f"News-date label could not be rendered: {exc}") from exc
+        if graphic.x + graphic.width >= overlays[0].x or graphic.y + graphic.height > round(
+            112 * profile.output.height / 1280
+        ):
+            raise StageFailure("composition_failed", "News-date label cannot fit outside the logo and editorial region")
+        key = f"work/{run_id}/attempt-{attempt}/identity-date.png"
+        await self.storage.put_bytes(key, graphic.png_bytes)
+        overlay = OverlayInput(
+            self.storage.local_path(key),
+            0,
+            duration,
+            graphic.x,
+            graphic.y,
+            graphic.width,
+            graphic.height,
+            0,
+            graphic.sha256,
+        )
+        overlays.append(overlay)
+        recorded.append(
+            asdict(overlay)
+            | {
+                "path": str(overlay.path),
+                "kind": "news_date",
+                "text": text,
+                "published_at": latest.isoformat(),
+                "source_ids": sorted(str(source) for source, timestamp in dated.items() if timestamp == latest),
+                "sha256": graphic.sha256,
+            }
+        )
+        return overlays, recorded
+
     async def _editorial_overlays(
         self,
         run_id: UUID,
@@ -1227,11 +1757,27 @@ class ProductionStageService:
         segments: list[dict[str, Any]],
         font_file: Path,
         profile: ContentProfile,
-        clip_duration: float,
+        story_end: float,
     ) -> tuple[list[OverlayInput], list[dict[str, Any]]]:
-        """Render the script's grounded labels at their segment times; unsafe or unreadable labels are skipped."""
-        drafts = script_value.get("editorial_overlays", [])
-        if not drafts:
+        """Keep one grounded context summary in the top panel from Clip start to story end (CF-REQ-259/269)."""
+        chosen: dict[int, dict[str, Any]] = {}
+        for draft in script_value.get("editorial_overlays", []):
+            if draft.get("kind") in _CONTEXT_KINDS:
+                chosen.setdefault(int(draft["segment_index"]), draft)
+        for item in script_value.get("buzz_lines", []):
+            line = BuzzLineDraft.model_validate(item)
+            chosen.setdefault(
+                line.segment_index,
+                {"kind": "headline", "text": line.text, "claim_ids": [str(value) for value in line.claim_ids]},
+            )
+        starts: dict[int, float] = {}
+        for segment in segments:
+            if segment.get("script_segment_index") is None or segment.get("start_seconds") is None:
+                continue
+            index = int(segment["script_segment_index"])
+            starts[index] = min(starts.get(index, float("inf")), float(segment["start_seconds"]))
+        timeline = sorted((starts[index], index, draft) for index, draft in chosen.items() if index in starts)
+        if not timeline:
             return [], []
         context = await asyncio.to_thread(self.production.package_context, package_id)
         sources_by_claim = {
@@ -1241,19 +1787,18 @@ class ProductionStageService:
         known_sources = frozenset(source for sources in sources_by_claim.values() for source in sources)
         overlays: list[OverlayInput] = []
         recorded: list[dict[str, Any]] = []
-        previous_end = 0.0
-        for number, draft in enumerate(drafts):
-            group = [item for item in segments if int(item["script_segment_index"]) == int(draft["segment_index"])]
-            if not group:
+        carried_start: float | None = 0.0
+        for number, (segment_start, _index, draft) in enumerate(timeline):
+            start = round(carried_start if carried_start is not None else segment_start, 3)
+            end = round(min(timeline[number + 1][0] if number + 1 < len(timeline) else story_end, story_end), 3)
+            if end <= start:
                 continue
-            start = max(float(group[0]["start_seconds"]) + 0.4, previous_end + 0.3)
-            end = min(float(group[-1]["end_seconds"]) - 0.3, start + 5.0, clip_duration - 0.1)
             claim_ids = tuple(UUID(str(value)) for value in draft["claim_ids"])
             cue = EditorialCue(
                 draft["kind"],
                 draft["text"],
                 start,
-                max(end, start + 0.01),
+                end,
                 claim_ids,
                 tuple(dict.fromkeys(source for claim in claim_ids for source in sources_by_claim.get(claim, ()))),
                 secondary=draft.get("secondary", ""),
@@ -1270,7 +1815,11 @@ class ProductionStageService:
                 )
             except (ValueError, OSError) as exc:
                 await self._event(run_id, "progress", f"Editorial label {number} skipped: {exc}")
+                if overlays:
+                    overlays[-1] = replace(overlays[-1], end_seconds=end)
+                    recorded[-1]["end_seconds"] = end
                 continue
+            carried_start = None
             key = f"work/{run_id}/attempt-{attempt}/overlay-{number}.png"
             await self.storage.put_bytes(key, graphic.png_bytes)
             overlays.append(
@@ -1296,14 +1845,13 @@ class ProductionStageService:
                     "sha256": graphic.sha256,
                 }
             )
-            previous_end = cue.end_seconds
         return overlays, recorded
 
     async def _sound_cues(self, overlays: list[OverlayInput], clip_duration: float) -> tuple[AudioInput, ...]:
         """A quiet licensed information cue under each label; no cue when the library has none."""
         if not overlays:
             return ()
-        library = await asyncio.to_thread(self.assets.list, limit=500)
+        library = await asyncio.to_thread(self.assets.list, status=AssetStatus.ACTIVE, limit=500)
         cue_asset = next(
             (
                 asset
@@ -1364,6 +1912,7 @@ def _library_candidate(asset: Asset) -> MediaCandidate:
         width=asset.width or 0,
         height=asset.height or 0,
         description=asset.description or "",
+        duration_seconds=asset.duration_seconds,
     )
 
 
@@ -1385,4 +1934,32 @@ def _script_from_value(value: dict[str, Any]) -> GeneratedScript:
         social_metadata=SocialMetadataDraft.model_validate(value["social_metadata"]),
         visuals=tuple(VisualDraft.model_validate(item) for item in value["visual_draft"]),
         model=value["llm_model"],
+        editorial_overlays=tuple(EditorialDraft.model_validate(item) for item in value.get("editorial_overlays", ())),
+        people=tuple(PersonDraft.model_validate(item) for item in value.get("people", ())),
+        buzz_lines=tuple(BuzzLineDraft.model_validate(item) for item in value.get("buzz_lines", ())),
     )
+
+
+def _fewer_frames(frames: list[ImageInput]) -> list[ImageInput]:
+    """Halve the evaluation frames while keeping the first and last views of the Clip."""
+    keep = max(1, len(frames) // 2)
+    if keep == 1:
+        return frames[len(frames) // 2 : len(frames) // 2 + 1]
+    step = (len(frames) - 1) / (keep - 1)
+    return [frames[round(index * step)] for index in range(keep)]
+
+
+def _descriptive_caption(description: str, summary: str, minimum: int = 120) -> str:
+    description = " ".join(description.split())
+    summary = " ".join(summary.split())
+    if len(description) >= minimum or not summary or summary in description:
+        return description
+    if description and description[-1] not in ".!?":
+        description += "."
+    return f"{description} {summary}".strip()[:2000]
+
+
+def _has_evaluation_fallback(detail: dict[str, Any]) -> bool:
+    environment = detail["settings_snapshot"].get("environment", {})
+    fallback = environment.get("llm_model_evaluation_fallback")
+    return bool(fallback) and fallback != (environment.get("llm_model_evaluation") or environment.get("llm_model"))

@@ -5,7 +5,7 @@ import random
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TypeVar
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from clipfactory.assets.importing import AssetImportError, AssetWriter, ImportProvenance, import_asset_file
 from clipfactory.assets.selection import AssetRequirement, rank_media_candidates
@@ -106,6 +106,7 @@ async def acquire_asset(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     excluded_asset_ids: frozenset[str] = frozenset(),
     candidates: Pool | None = None,
+    run_id: UUID | None = None,
 ) -> Asset | None:
     """Import the first usable candidate; reviewed `candidates` keep their order and skip search."""
 
@@ -149,33 +150,47 @@ async def acquire_asset(
                     candidate, destination, size_limit
                 )
             )
-            result = await import_asset_file(
-                storage.local_path(downloaded.storage_key),
-                category=requirement.category,
-                provenance=ImportProvenance(
-                    license=chosen.license,
-                    author=chosen.author,
-                    source_url=chosen.url,
-                    license_url=chosen.license_url,
-                    attribution_required=chosen.attribution_required,
-                    attribution_text=chosen.attribution_text,
-                    origin=AssetOrigin.EXTERNAL,
-                    provider=chosen.source,
-                    download_url=chosen.download_url,
-                ),
-                storage=storage,
-                assets=assets,
-                now=now,
-                description=chosen.description or requirement.description,
-                tags=requirement.tags,
-                subjects=requirement.subjects,
-                max_image_bytes=max_image_bytes,
-                max_video_bytes=max_video_bytes,
-                min_image_short_side_px=requirement.min_width,
-                min_video_height_px=requirement.min_height,
-                media_inspector=media,
-                expected_media_type=chosen.media_type,
+            import_task = asyncio.create_task(
+                import_asset_file(
+                    storage.local_path(downloaded.storage_key),
+                    category=requirement.category,
+                    provenance=ImportProvenance(
+                        license=chosen.license,
+                        author=chosen.author,
+                        source_url=chosen.url,
+                        license_url=chosen.license_url,
+                        attribution_required=chosen.attribution_required,
+                        attribution_text=chosen.attribution_text,
+                        origin=AssetOrigin.EXTERNAL,
+                        provider=chosen.source,
+                        download_url=chosen.download_url,
+                    ),
+                    storage=storage,
+                    assets=assets,
+                    now=now,
+                    description=chosen.description or requirement.description,
+                    tags=requirement.tags,
+                    subjects=requirement.subjects,
+                    max_image_bytes=max_image_bytes,
+                    max_video_bytes=max_video_bytes,
+                    min_image_short_side_px=requirement.min_width,
+                    min_video_height_px=requirement.min_height,
+                    media_inspector=media,
+                    expected_media_type=chosen.media_type,
+                    run_id=run_id,
+                )
             )
+            try:
+                result = await asyncio.shield(import_task)
+            except asyncio.CancelledError:
+                # Register the input before terminal cleanup can query its owning Run.
+                while not import_task.done():
+                    try:
+                        await asyncio.shield(import_task)
+                    except asyncio.CancelledError:
+                        continue
+                import_task.result()
+                raise
             if str(result.asset.id) in excluded_asset_ids:
                 await report("Downloaded content is already used in this Clip", asset_id=str(result.asset.id))
                 continue

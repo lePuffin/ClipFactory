@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -83,4 +84,64 @@ async def test_research_continues_when_one_news_source_fails() -> None:
     result = await research_articles([FailingSource([]), FakeNewsSource([article])], safe, _policy(), now=now)
 
     assert len(result.articles) == 1
-    assert result.provider_warnings == ("broken: RuntimeError",)
+    assert result.provider_warnings == ("broken: RuntimeError (provider outage)",)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-100")
+@pytest.mark.asyncio
+async def test_each_feed_is_queried_separately_and_failures_name_the_feed() -> None:
+    now = datetime(2026, 9, 30, tzinfo=UTC)
+    shared = ArticleRef("https://high.example/a", "Science update", "High", now)
+
+    class PerFeedSource(FakeNewsSource):
+        async def latest(self, query: Any) -> list[ArticleRef]:
+            feeds = query.feeds
+            assert len(feeds) == 1
+            if feeds[0][0] == "Down":
+                raise OSError("network unreachable")
+            return [shared]
+
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, content=b"<article><title>Science update</title><p>Ok.</p></article>")
+    )
+    safe = SafeHTTPClient(resolver=lambda _host, _port: ["93.184.216.34"], transport=transport)
+    policy = ResearchPolicy(
+        max_candidate_articles=5,
+        max_article_age_hours=24,
+        max_article_bytes=100_000,
+        feeds=[("Up", "https://up.example/f"), ("Down", "https://down.example/f"), ("Mirror", "https://m.example/f")],
+        publisher_quality={},
+        blocked_publishers=[],
+    )
+    result = await research_articles([PerFeedSource([])], safe, policy, now=now)
+
+    assert result.references_seen == 1
+    assert len(result.articles) == 1
+    assert result.provider_warnings == ("fake_news/Down: OSError (network unreachable)",)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-109")
+@pytest.mark.asyncio
+async def test_covered_evidence_urls_do_not_consume_the_fetch_budget() -> None:
+    now = datetime(2026, 9, 30, tzinfo=UTC)
+    covered = ArticleRef("https://high.example/covered?at_medium=rss", "Science update", "High", now)
+    fresh = ArticleRef("https://standard.example/fresh", "Other report", "Standard", now - timedelta(hours=2))
+    request_urls: list[str] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        request_urls.append(str(request.url))
+        return httpx.Response(200, content=b"<article><title>Other report</title><p>Verified report.</p></article>")
+
+    safe = SafeHTTPClient(resolver=lambda _host, _port: ["93.184.216.34"], transport=httpx.MockTransport(response))
+    result = await research_articles(
+        [FakeNewsSource([covered, fresh])],
+        safe,
+        _policy(),
+        now=now,
+        excluded_urls={"https://high.example/covered/"},
+    )
+
+    assert request_urls == ["https://standard.example/fresh"]
+    assert [article.title for article in result.articles] == ["Other report"]

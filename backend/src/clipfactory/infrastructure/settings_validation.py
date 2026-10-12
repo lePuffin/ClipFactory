@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from clipfactory.infrastructure.settings import EnvironmentSettings
+from clipfactory.infrastructure.settings import EnvironmentSettings, LLMOutputMode
 
 
 class EnvironmentRuntimeSettings(BaseModel):
@@ -16,12 +16,22 @@ class EnvironmentRuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     llm_model: str = Field(min_length=1, max_length=200)
     llm_model_evaluation: str | None = Field(default=None, max_length=200)
+    llm_model_evaluation_fallback: str | None = Field(default=None, max_length=200)
+    llm_output_mode: LLMOutputMode = "json_schema"
+    llm_output_mode_evaluation: LLMOutputMode = "json_schema"
+    llm_output_mode_evaluation_fallback: LLMOutputMode = "prompt_json"
     llm_request_timeout_seconds: int = Field(ge=1, le=600)
     whisper_model: str = Field(min_length=1, max_length=200)
     whisper_device: Literal["auto", "cpu", "cuda"]
     whisper_compute_type: str = Field(min_length=1, max_length=50)
     wan_fps: int = Field(ge=1, le=60)
     wan_inference_steps: int = Field(ge=1, le=100)
+    wan_guidance_scale: float = Field(default=5, gt=0, le=20, allow_inf_nan=False)
+    wan_flow_shift: float = Field(default=3, gt=0, le=20, allow_inf_nan=False)
+    wan_max_long_side: int = Field(default=832, ge=64, le=832, multiple_of=16)
+    wan_max_short_side: int = Field(default=480, ge=64, le=480, multiple_of=16)
+    wan_encoding_crf: int = Field(default=10, ge=0, le=51)
+    wan_negative_prompt: str = Field(min_length=1, max_length=2000)
     wan_max_generations_per_run: int = Field(default=2, ge=0, le=100, strict=True)
     graphics_fps: int = Field(default=30, ge=1, le=60)
     graphics_timeout_seconds: int = Field(default=180, ge=1, le=3600)
@@ -33,7 +43,7 @@ class EnvironmentRuntimeSettings(BaseModel):
             raise ValueError("must not be empty")
         return value.strip()
 
-    @field_validator("llm_model_evaluation")
+    @field_validator("llm_model_evaluation", "llm_model_evaluation_fallback")
     @classmethod
     def blank_means_default_model(cls, value: str | None) -> str | None:
         return (value.strip() or None) if value is not None else None
@@ -74,7 +84,24 @@ class PublishingSettings(BaseModel):
     approval_required: bool = True
     auto_publish_enabled: bool = False
     auto_publish_after_minutes: int = Field(default=10, ge=1, le=10080)
+    discovery_hashtags: list[Annotated[str, Field(pattern=r"^#?\w+$", max_length=60)]] = Field(
+        default_factory=lambda: ["News", "BreakingNews", "WorldNews"], max_length=5
+    )
     public_media_url_ttl_minutes: int = Field(default=60, ge=5, le=1440)
+
+
+class CompositionSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    logo_file: str = Field(default="logo_letters.png", min_length=1)
+    logo_opacity: float = Field(default=0.7, gt=0, le=1, allow_inf_nan=False)
+    end_card_file: str | None = Field(default=None, min_length=1)
+    tail_seconds: float = Field(default=1, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def end_card_fits_tail(self) -> CompositionSettings:
+        if self.end_card_file and self.tail_seconds < 3:
+            raise ValueError("An enabled end card requires at least three tail seconds")
+        return self
 
 
 class AnalyticsSettings(BaseModel):
@@ -107,6 +134,7 @@ _EDITABLE_MODELS: dict[str, type[BaseModel]] = {
     "providers": ProviderCallSettings,
     "workflow": WorkflowSettings,
     "publishing": PublishingSettings,
+    "composition": CompositionSettings,
     "analytics": AnalyticsSettings,
 }
 
@@ -115,9 +143,10 @@ def validate_settings_section(section: str, value: dict[str, Any], defaults: dic
     if section not in defaults or not isinstance(defaults[section], dict):
         raise ValueError(f"Unknown settings section: {section}")
     model = _EDITABLE_MODELS.get(section)
-    if model is None:
+    if model is None or section == "composition":
         unknown = set(value) - set(defaults[section])
         if unknown:
             raise ValueError(f"Unknown settings keys: {', '.join(sorted(unknown))}")
-        return value
+        if model is None:
+            return value
     return model.model_validate({**defaults[section], **value}).model_dump(mode="json")

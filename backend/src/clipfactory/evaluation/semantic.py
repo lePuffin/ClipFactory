@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clipfactory.domain.models import Evaluation, EvaluationLayer, Issue, IssueSeverity, Stage
 from clipfactory.evaluation.validation import EvaluationContext, build_evaluation
-from clipfactory.ports.llm import ImageInput, LLMMessage, LLMProvider
+from clipfactory.ports.llm import ImageInput, LLMMessage, LLMModelRole, LLMProvider
 
 SemanticIssueCode = Literal[
     "claim_not_supported",
@@ -79,6 +79,7 @@ async def evaluate_semantics(
     *,
     production_data: dict[str, Any],
     frames: list[ImageInput] | None = None,
+    model_role: LLMModelRole = "evaluation",
 ) -> Evaluation:
     messages = [
         LLMMessage(
@@ -97,7 +98,7 @@ async def evaluate_semantics(
         "evaluate_clip",
         messages,
         SemanticEvaluationResult,
-        model_role="evaluation",
+        model_role=model_role,
         images=frames,
     )
     issues: list[Issue] = []

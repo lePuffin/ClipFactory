@@ -25,6 +25,13 @@ class GoogleTTSProvider:
         self.settings = settings
         self.client = client
 
+    def _client(self) -> SpeechClient:
+        # The configured file must be used explicitly; .env values are not exported to google-auth's ADC lookup.
+        path = self.settings.google_application_credentials
+        if path is not None:
+            return texttospeech.TextToSpeechClient.from_service_account_file(str(path))
+        return texttospeech.TextToSpeechClient()
+
     async def synthesize(self, request: SpeechRequest) -> SynthesizedSpeech:
         if not request.segments or not any(segment.strip() for segment in request.segments):
             raise ValueError("speech request must contain non-empty text")
@@ -40,7 +47,7 @@ class GoogleTTSProvider:
         )
 
     def _synthesize_chunks(self, request: SpeechRequest, chunks: list[str]) -> bytes:
-        client = self.client or texttospeech.TextToSpeechClient()
+        client = self.client or self._client()
         language = request.language
         voice_parts = request.voice_id.split("-", maxsplit=2)
         if "-" not in language and len(voice_parts) == 3 and voice_parts[0].casefold() == language.casefold():

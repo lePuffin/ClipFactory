@@ -35,14 +35,14 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-106](05-research-and-source-grounding.md) | Independent source counting | `research` | Unit, Integration | CF-AC-002 | Not started |
 | [CF-REQ-107](05-research-and-source-grounding.md) | Story scoring and selection | `research` | Unit, Integration | CF-AC-002 | Not started |
 | [CF-REQ-108](05-research-and-source-grounding.md) | Profile filters on Stories | `research` | Unit, Integration | CF-AC-002 | Not started |
-| [CF-REQ-109](05-research-and-source-grounding.md) | Story novelty [Derived] | `research` | Unit, Integration | CF-AC-002 | Not started |
+| [CF-REQ-109](05-research-and-source-grounding.md) | Story novelty [Derived] | `research` | Unit, Integration | CF-AC-002 | Implemented; tagged unit tests (URL rule, completed-only 48 h window, prompt instruction) and SQLite repository test; live hosted Runs pending |
 | [CF-REQ-110](05-research-and-source-grounding.md) | Additional source gathering | `research` | Unit, Integration | CF-AC-003 | Not started |
 | [CF-REQ-111](05-research-and-source-grounding.md) | Minimum source requirement | `research` | Unit, Integration | CF-AC-002 | Not started |
 | [CF-REQ-112](05-research-and-source-grounding.md) | Claim extraction with evidence | `research` | Unit, Integration | CF-AC-003 | Not started |
 | [CF-REQ-113](05-research-and-source-grounding.md) | Deterministic evidence verification | `research` | Unit, Integration | CF-AC-003 | Not started |
 | [CF-REQ-114](05-research-and-source-grounding.md) | Support level | `research` | Unit, Integration | CF-AC-003 | Not started |
 | [CF-REQ-115](05-research-and-source-grounding.md) | Claim acceptance | `research` | Unit, Integration | CF-AC-003 | Not started |
-| [CF-REQ-116](05-research-and-source-grounding.md) | Attribution of single-source claims | `research` | Unit, Integration | CF-AC-003 | Not started |
+| [CF-REQ-116](05-research-and-source-grounding.md) | Per-segment attribution with at most one spoken mention per publisher | `research`, `planning` | Unit, Integration | CF-AC-003, CF-AC-004 | In progress |
 | [CF-REQ-117](05-research-and-source-grounding.md) | Minimum grounded content | `research` | Unit, Integration | CF-AC-003 | Not started |
 | [CF-REQ-118](05-research-and-source-grounding.md) | Research persistence | `research` | Unit, Integration | CF-AC-001 | Not started |
 | [CF-REQ-150](06-story-and-script.md) | Story Package creation | `planning` | Unit, Integration | CF-AC-004 | Not started |
@@ -53,29 +53,29 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-155](06-story-and-script.md) | Duration budget | `planning` | Unit, Integration | CF-AC-004 | Not started |
 | [CF-REQ-156](06-story-and-script.md) | Segment structure | `planning` | Unit, Integration | CF-AC-004 | Not started |
 | [CF-REQ-157](06-story-and-script.md) | Hook | `planning` | Unit, Integration | CF-AC-004 | Not started |
-| [CF-REQ-158](06-story-and-script.md) | Script gate | `planning` | Unit, Integration | CF-AC-004 | Not started |
-| [CF-REQ-159](06-story-and-script.md) | Targeted script revision | `planning` | Unit, Integration | CF-AC-004 | Not started |
-| [CF-REQ-160](06-story-and-script.md) | Social metadata | `planning` | Unit, Integration | CF-AC-004 | Not started |
-| [CF-REQ-161](06-story-and-script.md) | Attribution in metadata [Derived] | `planning` | Unit, Integration | CF-AC-004 | Not started |
+| [CF-REQ-158](06-story-and-script.md) | Script gate, including repeated spoken attribution, paraphrased restatements, spoken calls to action, filler padding and headline fragments | `planning` | Unit, Integration | CF-AC-004 | In progress |
+| [CF-REQ-159](06-story-and-script.md) | Targeted script revision with retained rejected drafts and narration-only corrections | `planning`, `workflow` | Unit, Integration | CF-AC-004 | In progress |
+| [CF-REQ-160](06-story-and-script.md) | Social metadata | `planning` | Unit, Integration | CF-AC-004 | Implemented (live pending) |
+| [CF-REQ-161](06-story-and-script.md) | Attribution in metadata [Derived] | `planning` | Unit, Integration | CF-AC-004 | Implemented (live pending) |
 | [CF-REQ-162](06-story-and-script.md) | Synthetic media disclosure flags [Derived] | `planning` | Unit, Integration | CF-AC-004 | Not started |
 | [CF-REQ-163](06-story-and-script.md) | Narrative beats and editorial intent | `planning`, `evaluation` | Unit, Integration | CF-AC-026 | Not started |
 | [CF-REQ-164](06-story-and-script.md) | Evidence-bound engagement | `planning`, `evaluation` | Unit, Review | CF-AC-026 | Not started |
 | [CF-REQ-165](06-story-and-script.md) | Optional audience invitation | `planning` | Unit, Integration | CF-AC-026 | Not started |
-| [CF-REQ-200](07-asset-management.md) | Asset library | `assets`, `infrastructure.storage` | Unit, Integration | CF-AC-006 | Not started |
+| [CF-REQ-200](07-asset-management.md) | Saved Asset library and paginated listing | `assets`, `infrastructure.storage`, `api` | Unit, Integration | CF-AC-006 | In progress |
 | [CF-REQ-201](07-asset-management.md) | Mandatory provenance | `assets` | Unit, Integration | CF-AC-006, CF-AC-033 | Not started |
 | [CF-REQ-202](07-asset-management.md) | Content-addressed storage | `assets`, `infrastructure.storage` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-203](07-asset-management.md) | Attribution capture | `assets` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-204](07-asset-management.md) | Reuse first | `assets` | Unit, Integration | CF-AC-005 | Not started |
-| [CF-REQ-205](07-asset-management.md) | Library matching | `assets` | Unit, Integration | CF-AC-005 | Not started |
+| [CF-REQ-205](07-asset-management.md) | Library matching | `assets` | Unit, Integration | CF-AC-005 | In progress |
 | [CF-REQ-206](07-asset-management.md) | Reuse variety [Derived] | `assets` | Unit, Integration | CF-AC-005 | Not started |
 | [CF-REQ-207](07-asset-management.md) | External media acquisition | `assets`, `infrastructure.providers.media` | Unit, Contract, Integration | CF-AC-006 | Not started |
 | [CF-REQ-208](07-asset-management.md) | Media generation; cancellation-safe import, retained output, Wan fallback and cached model download | `assets`, `infrastructure.providers.media` | Unit, Contract, Integration | CF-AC-006 | In progress |
 | [CF-REQ-209](07-asset-management.md) | Deterministic fallback card | `assets`, `workflow`, `evaluation`, `infrastructure.media` | Unit, Integration | CF-AC-006 | Implemented |
 | [CF-REQ-210](07-asset-management.md) | Downloaded media validation | `assets`, `infrastructure.media` | Unit, Contract, Integration | CF-AC-006 | Not started |
-| [CF-REQ-211](07-asset-management.md) | Store for future reuse | `assets` | Unit, Integration | CF-AC-005 | Not started |
+| [CF-REQ-211](07-asset-management.md) | Store generated media for future reuse | `assets` | Unit, Integration | CF-AC-005 | In progress |
 | [CF-REQ-212](07-asset-management.md) | Usage tracking | `assets` | Unit, Integration | CF-AC-005 | Not started |
 | [CF-REQ-213](07-asset-management.md) | Asset status management | `assets` | Unit, Integration | CF-AC-005 | Not started |
-| [CF-REQ-214](07-asset-management.md) | Retention of working files | `workflow.scheduler`, `infrastructure.storage` | Unit, Integration | CF-AC-006 | Not started |
+| [CF-REQ-214](07-asset-management.md) | Run-scoped external inputs and working-file retention | `assets.retention`, `workflow.runner`, `workflow.production_stages`, `infrastructure.storage` | Unit, Integration | CF-AC-006 | In progress |
 | [CF-REQ-215](07-asset-management.md) | Real people and generated media [Derived] | `assets`, `planning`, `evaluation` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-216](07-asset-management.md) | Manual asset import | `assets` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-217](07-asset-management.md) | ComfyUI workflow generation | `infrastructure.providers.generation` | Unit (mocked HTTP), Contract | CF-AC-006 | Not started |
@@ -83,22 +83,25 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-219](07-asset-management.md) | Batched visual-candidate review | `assets`, `ports`, `evaluation` | Unit, Contract, Integration | CF-AC-029 | Not started |
 | [CF-REQ-220](07-asset-management.md) | Versioned reusable media judgments | `assets`, `infrastructure` | Unit, Integration | CF-AC-029 | Not started |
 | [CF-REQ-250](08-visual-production.md) | Visual Plan generation | `planning` | Unit | CF-AC-005 | Not started |
-| [CF-REQ-251](08-visual-production.md) | Asset requirements | `planning` | Unit | CF-AC-005, CF-AC-033 | Not started |
+| [CF-REQ-251](08-visual-production.md) | Asset requirements, including deterministic key_date conversion of calendar shots | `planning` | Unit | CF-AC-005, CF-AC-033 | Not started |
 | [CF-REQ-252](08-visual-production.md) | Deterministic motion | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-253](08-visual-production.md) | Motion defaults | `planning` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-254](08-visual-production.md) | Transitions | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-255](08-visual-production.md) | Frame fitting | `composition` | Unit | CF-AC-005 | Not started |
-| [CF-REQ-256](08-visual-production.md) | Timing reconciliation | `production` | Unit | CF-AC-005 | Not started |
+| [CF-REQ-256](08-visual-production.md) | Timing reconciliation | `production` | Unit | CF-AC-005 | Implemented (`test_audio_captions.py`, `test_footage_continuation.py`, `test_production_block.py`) |
 | [CF-REQ-257](08-visual-production.md) | Plan gate | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-258](08-visual-production.md) | Beat-aware Shot Intent | `planning`, `production` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-259](08-visual-production.md) | Grounded Editorial Overlays | `planning`, `composition` | Unit, Integration | CF-AC-027 | In progress |
 | [CF-REQ-260](08-visual-production.md) | Verified identity and Shot Anchors | `assets`, `evaluation`, `composition` | Unit, Review | CF-AC-027 | In progress |
 | [CF-REQ-261](08-visual-production.md) | Overlay layout and readable animation | `composition`, `evaluation` | Unit, Integration, Manual | CF-AC-027 | In progress |
 | [CF-REQ-262](08-visual-production.md) | Purposeful deterministic motion and transitions | `planning`, `composition` | Unit, Integration | CF-AC-028 | Not started |
-| [CF-REQ-263](08-visual-production.md) | Typed, grounded graphics drafts | `planning` | Unit, Integration | CF-AC-033 | Not started |
+| [CF-REQ-263](08-visual-production.md) | Typed, grounded graphics drafts (statistic, comparison, timeline, key_date, function_plot, relationship_diagram) | `planning` | Unit, Integration | CF-AC-033 | Not started |
 | [CF-REQ-264](08-visual-production.md) | Explicit graphics renderer routing | `assets`, `infrastructure.providers.generation` | Unit, Integration | CF-AC-033 | Not started |
 | [CF-REQ-265](08-visual-production.md) | Safe local graphics render lifecycle | `assets`, `infrastructure`, `workflow`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-033 | Not started |
 | [CF-REQ-266](08-visual-production.md) | Per-Run Wan limit and grounded graphics/refined-search alternatives | `planning`, `assets`, `workflow`, `infrastructure`, `frontend` | Unit, Integration | CF-AC-034 | Implemented; fakes/SQLite/UI verified, live providers/PostgreSQL concurrency unverified |
+| [CF-REQ-267](08-visual-production.md) | Native Wan reference recipe and isolated manual test | `planning`, `workflow`, `infrastructure`, `cli` | Unit, Integration, Manual | CF-AC-035 | Implemented; tagged tests, dry-run and production portrait import with mocked inference/real encoding verified; owner accepted live landscape reference at 25 steps (2026-10-08); live portrait quality unverified |
+| [CF-REQ-268](08-visual-production.md) | Mentioned public figures shown on screen | `planning`, `assets`, `infrastructure`, `workflow` | Unit, Integration | CF-AC-036 | Implemented; tagged fake-provider tests plus live Wikidata portraits (Donald Trump, Karen Bass) attached to mention segments in hosted Run 95b4b7b4 |
+| [CF-REQ-269](08-visual-production.md) | Persistent Claim-grounded buzz line (shown in the top context panel) | `planning`, `workflow` | Unit, Integration | CF-AC-036 | Implemented; banner superseded by top-panel display per owner request; buzz-line repair added; tagged tests, live verification pending |
 | [CF-REQ-300](09-audio-and-tts.md) | Narration synthesis | `production`, `infrastructure.providers.tts` | Unit, Contract | CF-AC-007 | Not started |
 | [CF-REQ-301](09-audio-and-tts.md) | Narration as Asset | `production` | Unit, Integration | CF-AC-007 | Not started |
 | [CF-REQ-302](09-audio-and-tts.md) | Narration cache | `production` | Unit, Integration | CF-AC-007 | Not started |
@@ -126,7 +129,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-357](10-composition.md) | Reproducibility | `composition` | Unit, Integration | CF-AC-012 | Not started |
 | [CF-REQ-358](10-composition.md) | Atomic output | `composition`, `infrastructure.media` | Unit, Integration | CF-AC-012 | Not started |
 | [CF-REQ-359](10-composition.md) | Composition failures | `composition`, `infrastructure.media` | Unit, Integration | CF-AC-012 | Not started |
-| [CF-REQ-360](10-composition.md) | Layered news composition contract | `composition` | Unit, Integration | CF-AC-028 | In progress |
+| [CF-REQ-360](10-composition.md) | Layered composition with cited-news date, wordmark and optional frozen three-second branded ending | `composition`, `production`, `workflow` | Unit, Integration | CF-AC-028, CF-AC-030 | In progress |
 | [CF-REQ-361](10-composition.md) | Saved-package preview and targeted rerender | `composition`, `assets`, `api`, `cli` | Unit, Integration, E2E | CF-AC-030 | In progress |
 | [CF-REQ-362](10-composition.md) | Platform-safe presentation variants | `composition`, `publishing` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-400](11-evaluation-and-retry.md) | Evaluation result structure | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Not started |
@@ -134,7 +137,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-402](11-evaluation-and-retry.md) | Technical media validation | `evaluation` | Unit, Integration, E2E | CF-AC-012 | Not started |
 | [CF-REQ-403](11-evaluation-and-retry.md) | Asset and metadata validation | `evaluation` | Unit, Integration, E2E | CF-AC-012 | Not started |
 | [CF-REQ-404](11-evaluation-and-retry.md) | Narration and timing validation | `evaluation` | Unit, Integration, E2E | CF-AC-012 | Not started |
-| [CF-REQ-405](11-evaluation-and-retry.md) | Semantic evaluation | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Not started |
+| [CF-REQ-405](11-evaluation-and-retry.md) | Semantic evaluation | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Implemented (opaque-rejection fallback unit-tested; live pending) |
 | [CF-REQ-406](11-evaluation-and-retry.md) | Factual grounding evaluation | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Not started |
 | [CF-REQ-407](11-evaluation-and-retry.md) | Deterministic issue routing | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Not started |
 | [CF-REQ-408](11-evaluation-and-retry.md) | Scores are not the decision | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Not started |
@@ -159,7 +162,8 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-458](12-publishing.md) | Metric collection scheduling | `publishing`, `analytics` | Unit, Integration | CF-AC-011 | Implemented |
 | [CF-REQ-459](12-publishing.md) | Optional approval gate | `publishing`, `api` | Unit, Integration, E2E | CF-AC-010 | Implemented |
 | [CF-REQ-460](12-publishing.md) | Auto-publish after timeout | `publishing`, `workflow.scheduler` | Unit, Integration | CF-AC-010 | Implemented |
-| [CF-REQ-461](12-publishing.md) | Signed public media URL for URL-pull platforms | `publishing`, `api`, `infrastructure.providers.publishers` | Unit, Integration | CF-AC-010 | Not started |
+| [CF-REQ-461](12-publishing.md) | Signed public media URL for URL-pull platforms, incl. static share delivery | `publishing`, `api`, `infrastructure.providers.publishers` | Unit, Integration | CF-AC-010 | Implemented |
+| [CF-REQ-462](12-publishing.md) | Manual publication retry | `publishing`, `api`, `infrastructure.db`, `frontend` | Unit, Component | CF-AC-010 | Implemented |
 | [CF-REQ-500](13-analytics.md) | Metric collection | `analytics` | Unit, Integration | CF-AC-011 | Implemented |
 | [CF-REQ-501](13-analytics.md) | Snapshot schedule | `analytics`, `workflow.scheduler` | Unit, Integration | CF-AC-011 | Not started |
 | [CF-REQ-502](13-analytics.md) | Missing metrics are null | `analytics` | Unit, Integration | CF-AC-011 | Implemented |
@@ -169,7 +173,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-506](13-analytics.md) | Snapshot immutability | `analytics` | Unit, Integration | CF-AC-011 | Not started |
 | [CF-REQ-507](13-analytics.md) | Capability-aware engagement metrics | `analytics`, `publishing`, `frontend` | Unit, Contract, Vitest | CF-AC-032 | Not started |
 | [CF-REQ-508](13-analytics.md) | Versioned creative comparisons | `analytics`, `frontend` | Unit, Integration | CF-AC-032 | Not started |
-| [CF-REQ-550](14-content-profiles.md) | Single active profile | `domain`, `api` | Unit, Integration | CF-AC-014 | Not started |
+| [CF-REQ-550](14-content-profiles.md) | Named profiles with single active profile | `domain`, `api`, `infrastructure.db` | Unit, Integration | CF-AC-014 | Implemented |
 | [CF-REQ-551](14-content-profiles.md) | Profile validation | `domain`, `api` | Unit, Integration | CF-AC-014 | Implemented |
 | [CF-REQ-552](14-content-profiles.md) | Configurable duration policy | `domain`, `planning`, `production`, `evaluation` | Unit, Review | CF-AC-014 | Not started |
 | [CF-REQ-553](14-content-profiles.md) | Supported categories | `domain`, `api` | Unit, Integration | CF-AC-014 | Not started |
@@ -177,19 +181,19 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-555](14-content-profiles.md) | Profile snapshot per Run | `domain`, `workflow` | Unit, Integration | CF-AC-014 | Not started |
 | [CF-REQ-556](14-content-profiles.md) | Versioned news style and quality policy | `domain`, `planning`, `api` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-600](15-ui-and-dashboard.md) | Visual design | `frontend` | Vitest, Playwright | CF-AC-013 | Not started |
-| [CF-REQ-601](15-ui-and-dashboard.md) | Dashboard | `frontend` | Vitest, Playwright | CF-AC-013 | Not started |
+| [CF-REQ-601](15-ui-and-dashboard.md) | Overview with full-width Current Run and mood-bearing agent Personas | `frontend` | Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-602](15-ui-and-dashboard.md) | Live Run progress (Execution bar and stage bubble) | `frontend` | Vitest, Playwright | CF-AC-013, CF-AC-017 | In progress |
 | [CF-REQ-603](15-ui-and-dashboard.md) | Analytics page | `frontend` | Vitest, Playwright | CF-AC-011 | Not started |
 | [CF-REQ-604](15-ui-and-dashboard.md) | Run detail (elapsed time, Visual counts, LLM models, generation milestones, newest-first events without watchdog noise) | `frontend`, `api` | Vitest, Playwright | CF-AC-017 | In progress |
-| [CF-REQ-605](15-ui-and-dashboard.md) | Asset library with inline media previews and storage locations | `frontend`, `api` | Vitest, Playwright | CF-AC-005 | In progress |
-| [CF-REQ-606](15-ui-and-dashboard.md) | Settings | `frontend` | Vitest, Playwright | CF-AC-014 | Not started |
-| [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor | `frontend` | Vitest, Playwright | CF-AC-014 | Not started |
+| [CF-REQ-605](15-ui-and-dashboard.md) | Asset library with inline media previews, storage locations and 20-per-page pagination | `frontend`, `api` | Vitest, Playwright | CF-AC-005 | In progress |
+| [CF-REQ-606](15-ui-and-dashboard.md) | Settings (collapsible groups, readable fixed-choice dropdowns, open-ended inputs, credential presence) | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
+| [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with saved-profile select, save-as-new, edit, activate and delete | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
 | [CF-REQ-608](15-ui-and-dashboard.md) | Run Now | `frontend` | Vitest, Playwright | CF-AC-013 | Not started |
 | [CF-REQ-609](15-ui-and-dashboard.md) | Manual URL input | `frontend` | Vitest, Playwright | CF-AC-015 | Not started |
-| [CF-REQ-610](15-ui-and-dashboard.md) | Clips page | `frontend`, `api` | Vitest, Playwright | CF-AC-013 | Not started |
+| [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (All/Published/Failed tabs, 20 per page, green Published badge) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-611](15-ui-and-dashboard.md) | Safe rendering of external text | `frontend` | Vitest, Playwright | CF-AC-018 | Not started |
 | [CF-REQ-612](15-ui-and-dashboard.md) | Cost display (Overview budget uses two decimal places) | `frontend` | Vitest, Playwright | CF-AC-023 | In progress |
-| [CF-REQ-613](15-ui-and-dashboard.md) | Approval of pending Clips | `frontend` | Vitest, Playwright | CF-AC-010 | Not started |
+| [CF-REQ-613](15-ui-and-dashboard.md) | Approval of pending Clips, one-per-row Review Board and paginated queue API | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-010 | In progress |
 | [CF-REQ-614](15-ui-and-dashboard.md) | Storyboard and version-bound quality review UI | `frontend`, `api` | Vitest, Playwright, Integration | CF-AC-030–031 | In progress |
 | [CF-REQ-650](16-scheduling-and-runs.md) | Run triggers | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-651](16-scheduling-and-runs.md) | Daily schedule | `workflow.scheduler` | Unit, Integration, E2E | CF-AC-016 | Not started |
@@ -198,7 +202,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-654](16-scheduling-and-runs.md) | Stage execution | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-655](16-scheduling-and-runs.md) | Run failure | `workflow` | Unit, Integration, E2E | CF-AC-009, CF-AC-033 | Not started |
 | [CF-REQ-656](16-scheduling-and-runs.md) | Stage timeout with internal generation watchdog renewal | `workflow`, `infrastructure.graphics` | Unit, Integration, E2E | CF-AC-016, CF-AC-033 | In progress |
-| [CF-REQ-657](16-scheduling-and-runs.md) | Resumption, owner continuation and explicit Stop | `workflow`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | In progress |
+| [CF-REQ-657](16-scheduling-and-runs.md) | Resumption, single-click owner continuation and explicit Stop without confirmations | `workflow`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | In progress |
 | [CF-REQ-658](16-scheduling-and-runs.md) | Lean workflow state | `workflow` | Unit | CF-AC-016 | Not started |
 | [CF-REQ-659](16-scheduling-and-runs.md) | Run APIs | `api`, `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-660](16-scheduling-and-runs.md) | Scheduler can be disabled | `workflow.scheduler` | Unit, Integration | CF-AC-016 | Not started |
@@ -208,10 +212,10 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-664](16-scheduling-and-runs.md) | Degrade before failing | `assets`, `workflow` | Unit, Integration, E2E | CF-AC-023 | Not started |
 | [CF-REQ-665](16-scheduling-and-runs.md) | Cost visibility API | `api` | Integration | CF-AC-023 | Not started |
 | [CF-REQ-666](16-scheduling-and-runs.md) | LLM requests per Clip | `workflow`, LLM governance wrapper | Unit, Integration, E2E | CF-AC-024 | Not started |
-| [CF-REQ-667](16-scheduling-and-runs.md) | Requests-per-minute limiter | LLM governance wrapper | Unit, Integration | CF-AC-024 | Not started |
+| [CF-REQ-667](16-scheduling-and-runs.md) | Requests-per-minute limiter | LLM governance wrapper | Unit, Integration | CF-AC-024 | Implemented; tagged fake-clock/accounting tests and isolated live Dragonfly Lua tests verify rolling account ceiling, adaptive endpoint/model pacing, restart state and fail-closed behaviour; no live LLM calls |
 | [CF-REQ-668](16-scheduling-and-runs.md) | Daily request budget | LLM governance wrapper, `workflow`, `api` | Unit, Integration | CF-AC-024 | Not started |
 | [CF-REQ-669](16-scheduling-and-runs.md) | Persistent usage accounting | LLM governance wrapper, `infrastructure.db`, `api` | Integration | CF-AC-024 | Not started |
-| [CF-REQ-670](16-scheduling-and-runs.md) | Bounded, non-blind LLM retries | LLM governance wrapper | Unit | CF-AC-024 | Not started |
+| [CF-REQ-670](16-scheduling-and-runs.md) | Bounded, non-blind LLM retries | LLM governance wrapper | Unit, isolated live probes | CF-AC-024 | Implemented; tagged tests verify cooldowns, cancellation, governance, permanent-error rejection, AtlasCloud's single opaque retry and the free router's configured retry bound; live Runs confirm unpredictable upstream failures remain possible |
 | [CF-REQ-671](16-scheduling-and-runs.md) | Circuit breaker and exhaustion handling | LLM governance wrapper, `api` | Unit, Integration | CF-AC-024 | Not started |
 | [CF-REQ-700](17-manual-input.md) | Manual URL submission | `api`, `infrastructure.http` | Unit, Integration, E2E | CF-AC-015 | Not started |
 | [CF-REQ-701](17-manual-input.md) | URL ingestion | `research` (`ingest_url`) | Unit, Integration, E2E | CF-AC-015 | Implemented |
@@ -225,8 +229,8 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-755](18-configuration.md) | Local dependency setup [Derived] | `cli`, Docker Compose | Integration, Manual | CF-AC-025 | Not started |
 | [CF-REQ-756](18-configuration.md) | Operational diagnostics with optional public-storage warnings [Derived] | `cli`, `infrastructure` | Unit, Integration | CF-AC-025, CF-AC-033 | In progress |
 | [CF-REQ-757](18-configuration.md) | Root native launch with Wan/Manim; optional public storage [Derived] | `cli`, `bootstrap` | Unit, Integration, Manual | CF-AC-025 | In progress |
-| [CF-REQ-758](18-configuration.md) | Structured LLM output validation | `infrastructure.providers` (LLM wrapper) | Unit, Integration | CF-AC-003 | Not started |
-| [CF-REQ-759](18-configuration.md) | Environment values, including Wan FPS/steps, editable for new/continued Runs | `api`, `infrastructure.settings_validation`, `workflow.runner` | Unit | — | Implemented |
+| [CF-REQ-758](18-configuration.md) | Structured LLM output validation with independent role transports | `infrastructure.providers`, `workflow.llm_activity` | Unit, mocked HTTP; synthetic live Dots evaluations validated, actual payload intermittently rejected or invalid JSON | CF-AC-003, CF-AC-024 | Implemented; non-strict whole-response JSON fences validated in tests, not verified on a live fenced answer |
+| [CF-REQ-759](18-configuration.md) | Environment values, including output modes and Wan FPS/steps, editable for new/continued Runs | `api`, `infrastructure.settings_validation`, `workflow.runner` | Unit, UI | CF-AC-024 | Implemented |
 | [CF-REQ-760](18-configuration.md) | Local graphics renderer runtime settings | `api`, `infrastructure.settings_validation`, `workflow.runner` | Unit, Integration | CF-AC-033 | Not started |
 | [CF-REQ-850](20-observability.md) | Persisted Run Events | `workflow`, `infrastructure.db` | Unit, Integration | CF-AC-017 | Not started |
 | [CF-REQ-851](20-observability.md) | Structured logs | `infrastructure.logging` | Unit, Integration | CF-AC-017 | Not started |

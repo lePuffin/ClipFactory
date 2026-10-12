@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from clipfactory.composition.ffmpeg_commands import build_ffmpeg_command
@@ -31,6 +32,20 @@ class RenderedClip:
     sha256: str
     probe: dict[str, Any]
     size_bytes: int
+
+
+async def freeze_end_card(source: Path, *, storage: MediaStorage, runner: MediaExecutor, key: str) -> tuple[Path, str]:
+    digest = await storage.put_file(source, key)
+    path = storage.local_path(key)
+    probe = await runner.probe(path)
+    streams = probe.get("streams", [])
+    video = [stream for stream in streams if stream.get("codec_type") == "video"]
+    audio = [stream for stream in streams if stream.get("codec_type") == "audio"]
+    duration = float(probe.get("format", {}).get("duration", 0))
+    if len(video) != 1 or len(audio) != 1 or abs(duration - 3) > 1 / 30:
+        raise ValueError("End card must contain one video and one audio stream lasting three seconds")
+    await runner.decode(path)
+    return path, digest
 
 
 async def render_clip(

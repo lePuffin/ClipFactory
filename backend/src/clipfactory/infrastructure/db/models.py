@@ -64,7 +64,9 @@ class RunRow(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     trigger: Mapped[str] = mapped_column(String(24), nullable=False)
     manual_url: Mapped[str | None] = mapped_column(Text)
-    profile_id: Mapped[UUID] = mapped_column(ForeignKey("content_profile.id"), nullable=False)
+    profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("content_profile.id", ondelete="SET NULL"), nullable=True
+    )
     profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
     settings_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")

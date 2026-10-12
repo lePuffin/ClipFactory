@@ -25,7 +25,8 @@ def build_ffmpeg_command(spec: CompositionSpec) -> list[str]:
                 ]
             )
         else:
-            arguments.extend(["-t", _seconds(_render_duration(spec, index)), "-i", str(segment.path)])
+            seek = ["-ss", _seconds(segment.source_offset_seconds)] if segment.source_offset_seconds > 0 else []
+            arguments.extend([*seek, "-t", _seconds(_render_duration(spec, index)), "-i", str(segment.path)])
     narration_index = len(spec.segments)
     arguments.extend(["-i", str(spec.narration_path)])
     music_index = narration_index + 1
@@ -37,6 +38,9 @@ def build_ffmpeg_command(spec: CompositionSpec) -> list[str]:
     sound_offset = overlay_offset + len(spec.overlays)
     for cue in spec.sound_effects:
         arguments.extend(["-i", str(cue.path)])
+    end_card_index = sound_offset + len(spec.sound_effects)
+    if spec.end_card_path is not None:
+        arguments.extend(["-i", str(spec.end_card_path)])
     filters = [_visual_filter(index, segment, spec) for index, segment in enumerate(spec.segments)]
     video_label = _transition_filter(spec, filters)
     for index, overlay in enumerate(spec.overlays):
@@ -44,10 +48,15 @@ def build_ffmpeg_command(spec: CompositionSpec) -> list[str]:
         fade = min(overlay.fade_seconds, duration / 2)
         cue_label = f"overlaycue{index}"
         output_label = f"editorial{index}"
+        fade_filter = (
+            f"fade=t=in:st=0:d={_seconds(fade)}:alpha=1,"
+            f"fade=t=out:st={_seconds(duration - fade)}:d={_seconds(fade)}:alpha=1,"
+            if fade > 0
+            else ""
+        )
         filters.append(
             f"[{overlay_offset + index}:v]format=rgba,trim=duration={_seconds(duration)},"
-            f"setpts=PTS-STARTPTS,fade=t=in:st=0:d={_seconds(fade)}:alpha=1,"
-            f"fade=t=out:st={_seconds(duration - fade)}:d={_seconds(fade)}:alpha=1,"
+            f"setpts=PTS-STARTPTS,{fade_filter}"
             f"setpts=PTS+{_seconds(overlay.start_seconds)}/TB[{cue_label}]"
         )
         filters.append(
@@ -68,9 +77,29 @@ def build_ffmpeg_command(spec: CompositionSpec) -> list[str]:
             "[vout]",
         ]
     )
+    if spec.end_card_path is not None:
+        video_filter = video_filter.removesuffix("[vout]") + "[storyvideo]"
     filters.append(video_filter)
     audio_filter = _audio_filter(spec, narration_index, music_index, sound_offset)
+    if spec.end_card_path is not None:
+        audio_filter = audio_filter.removesuffix("[aout]") + "[storyaudio]"
     filters.append(audio_filter)
+    if spec.end_card_path is not None:
+        start = _seconds(spec.duration_seconds - 3)
+        filters.extend(
+            [
+                f"[storyvideo]trim=duration={start},setpts=PTS-STARTPTS[bodyvideo]",
+                f"[storyaudio]atrim=duration={start},asetpts=PTS-STARTPTS,"
+                f"aresample={spec.audio_sample_rate},aformat=channel_layouts=stereo[bodyaudio]",
+                f"[{end_card_index}:v]trim=duration=3,setpts=PTS-STARTPTS,"
+                f"scale={spec.width}:{spec.height},setsar=1,fps={spec.fps},format=yuv420p[cardvideo]",
+                f"[{end_card_index}:a]atrim=duration=3,asetpts=PTS-STARTPTS,"
+                f"aresample={spec.audio_sample_rate},aformat=channel_layouts=stereo,"
+                "alimiter=limit=0.8:level=false[cardaudio]",
+                "[bodyvideo][cardvideo]concat=n=2:v=1:a=0[vout]",
+                "[bodyaudio][cardaudio]concat=n=2:v=0:a=1[aout]",
+            ]
+        )
     arguments.extend(
         [
             "-filter_complex",
@@ -118,8 +147,12 @@ def _validate_spec(spec: CompositionSpec) -> None:
         raise ValueError("composition frame rate must be between 24 and 60")
     if spec.narration_duration_seconds <= 0 or spec.lead_in_seconds < 0 or spec.tail_seconds < 0:
         raise ValueError("composition durations are invalid")
+    if spec.end_card_path is not None and spec.tail_seconds < 3:
+        raise ValueError("end card requires at least three tail seconds")
     if any(segment.duration_seconds <= 0 or segment.width <= 0 or segment.height <= 0 for segment in spec.segments):
         raise ValueError("visual segment dimensions and durations must be positive")
+    if any(segment.source_offset_seconds < 0 for segment in spec.segments):
+        raise ValueError("visual segment source offsets must not be negative")
     if abs(sum(segment.duration_seconds for segment in spec.segments) - spec.duration_seconds) > 1 / spec.fps:
         raise ValueError("visual segments must cover Clip duration within one frame")
     for overlay in spec.overlays:

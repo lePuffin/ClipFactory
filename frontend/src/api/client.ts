@@ -45,7 +45,7 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   return (await response.json()) as T;
 }
 
-async function apiMutation<T>(method: "POST" | "PUT", path: string, body?: unknown): Promise<T> {
+async function apiMutation<T>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -65,6 +65,7 @@ async function apiMutation<T>(method: "POST" | "PUT", path: string, body?: unkno
     }
     throw new ApiError(message, response.status, details);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -98,6 +99,10 @@ export function updateContentProfile(value: JsonObject): Promise<unknown> {
 
 export function decideApproval(clipId: string, request: ApprovalRequest): Promise<unknown> {
   return apiMutation("POST", `/api/clips/${encodeURIComponent(clipId)}/approval`, request);
+}
+
+export function retryPublications(clipId: string): Promise<unknown> {
+  return apiMutation("POST", `/api/clips/${encodeURIComponent(clipId)}/publications/retry`);
 }
 
 export function getHealth(signal?: AbortSignal): Promise<Health> {
@@ -145,4 +150,18 @@ function isApiErrorPayload(value: unknown): value is { error: { message: string;
   if (typeof value !== "object" || value === null || !("error" in value)) return false;
   const error = value.error;
   return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string";
+}
+export type ContentProfileItem = components["schemas"]["ContentProfileItemResponse"];
+export type ContentProfileList = components["schemas"]["ContentProfileListResponse"];
+export function createContentProfile(request: components["schemas"]["ContentProfileCreateRequest"]): Promise<ContentProfileItem> {
+  return apiMutation("POST", "/api/content-profiles", request);
+}
+export function saveContentProfile(id: string, request: components["schemas"]["ContentProfileUpdateRequest"]): Promise<ContentProfileItem> {
+  return apiMutation("PUT", `/api/content-profiles/${encodeURIComponent(id)}`, request);
+}
+export function activateContentProfile(id: string): Promise<ContentProfileItem> {
+  return apiMutation("POST", `/api/content-profiles/${encodeURIComponent(id)}/activate`);
+}
+export function deleteContentProfile(id: string): Promise<void> {
+  return apiMutation("DELETE", `/api/content-profiles/${encodeURIComponent(id)}`);
 }

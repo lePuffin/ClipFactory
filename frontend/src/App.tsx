@@ -1,4 +1,4 @@
-import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, Clock3, FileVideo2, Images, Play, RefreshCw, Send, Settings2, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, Clock3, FileVideo2, Images, Play, RefreshCw, Send, Settings2, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import { NavLink, Route, Routes, useParams } from "react-router-dom";
 
@@ -6,12 +6,13 @@ import type { components } from "./api/schema";
 import { continueRun, patchAsset, startManualURL, startRunNow, stopRun } from "./api/client";
 import { useResource } from "./hooks/useResource";
 import { useRunEvents } from "./hooks/useRunEvents";
-import { AnalyticsPage, ApprovalPage, ClipDetailPage, ClipsPage, PendingApprovals, ProfilePage, SettingsPage } from "./ProductionPages";
+import { AnalyticsPage, ApprovalPage, ClipDetailPage, ClipsPage, ProfilePage, PublishesPage, SettingsPage } from "./ProductionPages";
+import { AgentPersonas } from "./AgentPersonas";
+import { Pagination } from "./Pagination";
 import { QualityReviewPage } from "./QualityReview";
 
 type RunSummary = components["schemas"]["RunSummaryResponse"];
 type RunDetail = components["schemas"]["RunDetailResponse"];
-type Health = components["schemas"]["HealthResponse"];
 type Asset = components["schemas"]["AssetResponse"];
 type AssetStatus = components["schemas"]["AssetStatus"];
 type BudgetSummary = components["schemas"]["BudgetSummaryResponse"];
@@ -21,6 +22,7 @@ const navigation = [
   { to: "/", label: "Overview", icon: Activity, end: true },
   { to: "/runs", label: "Runs", icon: Clock3, end: false },
   { to: "/clips", label: "Clips", icon: FileVideo2, end: false },
+  { to: "/publishes", label: "Review Board", icon: Send, end: false },
   { to: "/analytics", label: "Analytics", icon: BarChart3, end: false },
   { to: "/assets", label: "Assets", icon: Images, end: false },
   { to: "/profile", label: "Profile", icon: SlidersHorizontal, end: false },
@@ -64,6 +66,7 @@ export default function App() {
           <Route path="/clips/approval" element={<ApprovalPage />} />
           <Route path="/clips/:clipId/approval" element={<ApprovalPage />} />
           <Route path="/clips/:clipId" element={<ClipDetailPage />} />
+          <Route path="/publishes" element={<PublishesPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/assets" element={<AssetsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
@@ -77,18 +80,14 @@ export default function App() {
 }
 
 function Dashboard() {
-  const [health, reloadHealth] = useResource<Health>("/api/health");
   const [activeRun, reloadActive] = useResource<RunSummary | null>("/api/runs/active", { intervalMs: 2000 });
-  const [runs, reloadRuns] = useResource<{ items: RunSummary[] }>("/api/runs?limit=10", { intervalMs: 5000 });
   const [summary, reloadSummary] = useResource<DashboardSummary>("/api/dashboard/summary");
   const [budget, reloadBudget] = useResource<BudgetSummary>("/api/budget");
   const [manualUrl, setManualUrl] = useState("");
   const [starting, setStarting] = useState<"run" | "url" | null>(null);
   const [startMessage, setStartMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const refresh = () => {
-    reloadHealth();
     reloadActive();
-    reloadRuns();
     reloadSummary();
     reloadBudget();
   };
@@ -101,8 +100,7 @@ function Dashboard() {
       setStartMessage({ kind: "success", text: `Run ${shortId(created.run_id)} queued` });
       if (kind === "url") setManualUrl("");
       reloadActive();
-      reloadRuns();
-    } catch (error: unknown) {
+      } catch (error: unknown) {
       setStartMessage({ kind: "error", text: error instanceof Error ? error.message : "Run could not be started" });
     } finally {
       setStarting(null);
@@ -115,7 +113,7 @@ function Dashboard() {
         <div>
           <div className="eyebrow">OPERATIONS / 01</div>
           <h1>Production desk</h1>
-          <p className="page-lede">Daily signal, execution state, and recent work.</p>
+          <p className="page-lede">Daily signal, execution state, and your production team.</p>
         </div>
         <button className="icon-button" onClick={refresh} title="Refresh dashboard" aria-label="Refresh dashboard">
           <RefreshCw size={17} />
@@ -139,10 +137,6 @@ function Dashboard() {
           <div className="section-head"><span className="eyebrow">CURRENT RUN</span><span className="section-index">01—A</span></div>
           {activeRun.status === "loading" ? <LoadingLine /> : activeRun.status === "error" ? <InlineError message={activeRun.message} /> : activeRun.data ? <ActiveRun key={activeRun.data.run_id} run={activeRun.data} /> : <IdleState />}
         </section>
-        <section className="section-block system-health">
-          <div className="section-head"><span className="eyebrow">SYSTEM HEALTH</span><span className="section-index">01—B</span></div>
-          {health.status === "loading" ? <LoadingLine /> : health.status === "error" ? <InlineError message={health.message} /> : <HealthReadout status={health.data.status} checks={health.data.checks} />}
-        </section>
       </div>
 
       <section className="dashboard-data-grid" aria-label="Seven day performance and budget">
@@ -156,12 +150,6 @@ function Dashboard() {
         </section>
       </section>
 
-      <PendingApprovals />
-
-      <section className="section-block recent-section">
-        <div className="section-head"><div><div className="eyebrow">EXECUTION LOG</div><h2>Recent Runs</h2></div><NavLink className="text-link" to="/runs">All Runs <ArrowUpRight size={14} /></NavLink></div>
-        {runs.status === "loading" ? <LoadingLine /> : runs.status === "error" ? <InlineError message={runs.message} /> : runs.data.items.length ? <RunTable runs={runs.data.items} /> : <EmptyState />}
-      </section>
     </section>
   );
 }
@@ -228,9 +216,10 @@ function AssetsPage() {
   const [mediaType, setMediaType] = useState("all");
   const [origin, setOrigin] = useState("all");
   const [provider, setProvider] = useState("all");
-  const query = new URLSearchParams({ limit: "500" });
+  const [offset, setOffset] = useState(0);
+  const query = new URLSearchParams({ limit: "20", offset: String(offset) });
   if (status !== "all") query.set("status", status);
-  const [resource, reload] = useResource<{ items: Asset[] }>(`/api/assets?${query.toString()}`);
+  const [resource, reload] = useResource<components["schemas"]["AssetListResponse"]>(`/api/assets?${query.toString()}`);
   const [updating, setUpdating] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -263,7 +252,7 @@ function AssetsPage() {
         <button className="icon-button" onClick={reload} title="Refresh Assets" aria-label="Refresh Assets"><RefreshCw size={17} /></button>
       </div>
       <div className="filter-row" role="group" aria-label="Filter Assets by status">
-        {(["active", "quarantined", "retired", "all"] as const).map((value) => <button key={value} className={`filter-button${status === value ? " selected" : ""}`} onClick={() => setStatus(value)}>{value}</button>)}
+        {(["active", "quarantined", "retired", "all"] as const).map((value) => <button key={value} className={`filter-button${status === value ? " selected" : ""}`} onClick={() => { setStatus(value); setOffset(0); setSelectedId(null); }}>{value}</button>)}
       </div>
       <div className="asset-filters" role="group" aria-label="Filter loaded Assets">
         <label>Media type<select value={mediaType} onChange={(event) => setMediaType(event.target.value)}><option value="all">All media</option>{["video", "image", "audio"].map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
@@ -275,9 +264,10 @@ function AssetsPage() {
       {selected && <AssetPreview key={selected.id} asset={selected} onClose={() => setSelectedId(null)} />}
       <section className="section-block asset-section">
         <div className="section-head"><div><div className="eyebrow">CONTENT-ADDRESSED FILES</div><h2>Stored Assets</h2></div><span className="event-count">{resource.status === "success" ? `${visibleAssets.length} OF ${assets.length} LOADED` : "—"}</span></div>
-        {assets.length === 500 && <p className="form-message">Showing the latest 500 Assets for this status. Filters apply to these loaded Assets.</p>}
+        <p className="form-message">Media, origin and provider filters apply to the current page of up to 20 Assets.</p>
         {resource.status === "loading" ? <LoadingLine /> : resource.status === "error" ? <InlineError message={resource.message} /> : visibleAssets.length ? <AssetTable assets={visibleAssets} updating={updating} onStatus={changeStatus} onPreview={setSelectedId} /> : <EmptyState message="No Assets match the selected filters." />}
       </section>
+      {resource.status === "success" && <Pagination offset={offset} total={resource.data.total ?? resource.data.items.length} onChange={(next) => { setOffset(next); setSelectedId(null); }} label="Assets" />}
     </section>
   );
 }
@@ -320,7 +310,9 @@ function AssetTable({ assets, updating, onStatus, onPreview }: { assets: Asset[]
 }
 
 function ActiveRun({ run }: { run: RunSummary }) {
-  const { events } = useRunEvents(run.run_id);
+  const { events: liveEvents } = useRunEvents(run.run_id);
+  const [history] = useResource<components["schemas"]["RunEventListResponse"]>(`/api/runs/${encodeURIComponent(run.run_id)}/events`);
+  const events = [...new Map([...(history.status === "success" ? history.data.items : []), ...liveEvents].map((event) => [event.sequence, event])).values()].sort((left, right) => left.sequence - right.sequence);
   const now = useNow();
   const started = Date.parse(run.started_at ?? run.created_at);
   const latest = events.filter((event) => event.payload.generation_phase !== "heartbeat").at(-1);
@@ -330,17 +322,8 @@ function ActiveRun({ run }: { run: RunSummary }) {
       <div className="active-run-id">{run.run_id}</div>
       <div className="run-meta-grid"><Meta label="TRIGGER" value={run.trigger} /><Meta label="STAGE" value={latestStage(events) ?? run.current_stage ?? "Queued"} /><Meta label="STARTED" value={formatDate(run.started_at ?? run.created_at)} /><Meta label="ELAPSED" value={Number.isNaN(started) ? "—" : formatElapsed(now - started)} /></div>
       {latest && <p className="active-run-message" role="status"><strong>{humanize(latest.type)}</strong> {latest.message}</p>}
+      <AgentPersonas run={run} events={events} />
       <NavLink to={`/runs/${run.run_id}`} className="inline-action">Inspect Run <ArrowUpRight size={15} /></NavLink>
-    </div>
-  );
-}
-
-function HealthReadout({ status, checks }: { status: string; checks: Record<string, boolean | string | null> }) {
-  const entries = Object.entries(checks);
-  return (
-    <div className="health-body">
-      <div className="health-summary"><span className={`health-icon ${status === "healthy" ? "ok" : "warn"}`}><ShieldCheck size={19} /></span><div><strong>{status === "healthy" ? "All systems nominal" : "Service degraded"}</strong><span>Application checks</span></div></div>
-      <div className="health-list">{entries.map(([name, value]) => <div key={name} className="health-item"><span>{humanize(name)}</span><span className={`health-value ${value === true ? "ok-text" : "warn-text"}`}>{value === true ? "READY" : value === false ? "CHECK" : String(value ?? "N/A")}</span></div>)}</div>
     </div>
   );
 }
@@ -383,25 +366,22 @@ function RunDetailView({ run, reload }: { run: RunDetail; reload: () => void }) 
 }
 
 function RunControls({ run, events, reload }: { run: RunDetail; events: RunDetail["events"]; reload: () => void }) {
-  const [confirming, setConfirming] = useState<"continue" | "stop" | null>(null);
   const [busy, setBusy] = useState(false);
   const [stopRequested, setStopRequested] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeEvents = resumedEvents(events);
   const stopping = !terminalStatuses.has(run.status) && (stopRequested || activeEvents.some((event) => event.type === "run_stop_requested"));
-  async function act() {
-    if (!confirming) return;
+  async function act(action: "continue" | "stop") {
+    if (busy || stopping) return;
     setBusy(true);
     setError(null);
     try {
-      if (confirming === "continue") {
+      if (action === "continue") {
         await continueRun(run.run_id);
-        setConfirming(null);
         reload();
       } else {
         await stopRun(run.run_id);
         setStopRequested(true);
-        setConfirming(null);
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : "Run action failed");
@@ -411,10 +391,9 @@ function RunControls({ run, events, reload }: { run: RunDetail; events: RunDetai
   }
   return <div className="run-controls">
     <div className="run-control-buttons"><span className={`table-status ${run.status}`}><span />{stopping ? "stopping" : run.status}</span>
-      {run.status === "failed" && <button className="filter-button" disabled={busy} onClick={() => setConfirming("continue")}>Continue Run</button>}
-      {["queued", "running"].includes(run.status) && <button className="filter-button stop-button" disabled={busy || stopping} onClick={() => setConfirming("stop")}>{stopping ? "Stopping…" : "Stop"}</button>}
+      {run.status === "failed" && <button className="filter-button" disabled={busy} title="Continue from the saved checkpoint using current application settings. Completed work and approval rules are preserved." onClick={() => void act("continue")}>{busy ? "Continuing…" : "Continue Run"}</button>}
+      {["queued", "running"].includes(run.status) && <button className="filter-button stop-button" disabled={busy || stopping} title="Stop this Run now. Unfinished generation may be lost; imported Assets remain saved." onClick={() => void act("stop")}>{busy || stopping ? "Stopping…" : "Stop"}</button>}
     </div>
-    {confirming && <div className="run-control-confirmation"><p>{confirming === "continue" ? "Continue from the saved checkpoint using current application settings? Completed work, Content Profile and retry limits are preserved. Normal approval rules still apply." : "Stop this Run now? Unfinished generation may be lost. Already imported Assets remain saved. Active GPU steps or downloads may need to return before stopping."}</p><button className="filter-button" disabled={busy} onClick={() => void act()}>{busy ? "Submitting…" : confirming === "continue" ? "Confirm Continue" : "Confirm Stop"}</button><button className="filter-button" disabled={busy} onClick={() => setConfirming(null)}>Cancel</button></div>}
     {error && <InlineError message={error} />}
   </div>;
 }
@@ -503,7 +482,7 @@ function Meta({ label, value }: { label: string; value: string }) {
 function LoadingLine() { return <div className="loading-line"><span />Loading operational data</div>; }
 function InlineError({ message }: { message: string }) { return <div className="inline-error">{message}</div>; }
 function EmptyState({ message = "No Runs recorded yet" }: { message?: string }) { return <div className="empty-state"><FileVideo2 size={21} /><span>{message}</span></div>; }
-function IdleState() { return <div className="idle-state"><span className="idle-ring"><Activity size={18} /></span><strong>Idle</strong><span>No active Run</span></div>; }
+function IdleState() { return <><div className="idle-state"><span className="idle-ring"><Activity size={18} /></span><strong>Idle</strong><span>No active Run</span></div><AgentPersonas run={null} events={[]} /></>; }
 function NotFound() { return <section className="page-wrap"><div className="eyebrow">404 / NOT FOUND</div><h1>Unknown route</h1><NavLink to="/" className="text-link">Return to overview</NavLink></section>; }
 
 function shortId(value: string): string { return value.slice(0, 8).toUpperCase(); }

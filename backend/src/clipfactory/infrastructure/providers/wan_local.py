@@ -44,13 +44,15 @@ class WanLocalVideoProvider:
     def __init__(
         self,
         settings: EnvironmentSettings,
-        media: MediaRunner,
+        media: MediaRunner | None,
         *,
         pipeline_factory: Callable[..., Any] | None = None,
+        allow_download: bool = True,
     ) -> None:
         self.settings = settings
         self.media = media
         self.pipeline_factory = pipeline_factory
+        self.allow_download = allow_download
         self._pipeline: Any | None = None
         self._pipeline_key: tuple[str, str] | None = None
         self._lock = threading.Lock()
@@ -63,6 +65,46 @@ class WanLocalVideoProvider:
 
     def estimate_cost(self, request: VideoGenerationRequest) -> Decimal:
         return Decimal("0")
+
+    def generation_recipe(self, request: VideoGenerationRequest) -> dict[str, object]:
+        if (
+            request.width < 16
+            or request.height < 16
+            or not math.isfinite(request.duration_seconds)
+            or request.duration_seconds <= 0
+            or not request.prompt.strip()
+        ):
+            raise ProviderError(
+                "invalid_generation_request", "Invalid video dimensions, duration or prompt", transient=False
+            )
+        long_side, short_side = max(request.width, request.height), min(request.width, request.height)
+        scale = min(1, self.settings.wan_max_long_side / long_side, self.settings.wan_max_short_side / short_side)
+        dimensions = []
+        for value in (request.width, request.height):
+            aligned = math.floor(value * scale / 16) if scale < 1 else math.ceil(value / 16)
+            dimensions.append(max(16, aligned * 16))
+        frames = max(1, round(request.duration_seconds * self.settings.wan_fps))
+        return {
+            "requested_width": request.width,
+            "requested_height": request.height,
+            "width": dimensions[0],
+            "height": dimensions[1],
+            "num_frames": frames,
+            "inference_num_frames": math.ceil((frames - 1) / 4) * 4 + 1,
+            "fps": self.settings.wan_fps,
+            "num_inference_steps": self.settings.wan_inference_steps,
+            "guidance_scale": self.settings.wan_guidance_scale,
+            "flow_shift": self.settings.wan_flow_shift,
+            "negative_prompt": ", ".join(
+                part for part in (self.settings.wan_negative_prompt, request.negative_prompt.strip()) if part
+            ),
+            "encoding_crf": self.settings.wan_encoding_crf,
+            "scheduler": "UniPCMultistepScheduler",
+            "model_dtype": "bfloat16" if self.settings.wan_device == "cuda" else "float32",
+            "vae_dtype": "float32",
+            "offload_mode": "sequential" if self.settings.wan_device == "cuda" else "none",
+            "seed": request.seed,
+        }
 
     async def generate(
         self, request: VideoGenerationRequest, destination: Path, *, progress: GenerationProgress | None = None
@@ -94,25 +136,17 @@ class WanLocalVideoProvider:
     async def _generate(
         self, request: VideoGenerationRequest, destination: Path, *, progress: GenerationProgress | None = None
     ) -> GeneratedMedia:
+        if self.media is None:
+            raise ProviderError("generation_encoding_failed", "Wan requires a local media encoder", transient=False)
         if not self.is_configured():
             raise ProviderError(
                 "generation_dependencies_missing",
-                "Install native Wan dependencies with: cd backend && uv sync --group local-gen",
+                "Install native Wan dependencies with: uv sync --locked",
                 transient=False,
             )
-        if request.width <= 0 or request.height <= 0 or request.duration_seconds <= 0 or not request.prompt.strip():
-            raise ProviderError(
-                "invalid_generation_request", "Video dimensions, duration and prompt must be valid", transient=False
-            )
+        parameters = self.generation_recipe(request)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        fps = self.settings.wan_fps
-        parameters: dict[str, object] = {
-            "width": math.ceil(request.width / 16) * 16,
-            "height": math.ceil(request.height / 16) * 16,
-            "num_frames": math.ceil(max(0, request.duration_seconds * fps - 1) / 4) * 4 + 1,
-            "fps": fps,
-            "num_inference_steps": self.settings.wan_inference_steps,
-        }
+        fps = parameters["fps"]
         loop = asyncio.get_running_loop()
         abort = GENERATION_ABORT.get()
 
@@ -153,8 +187,12 @@ class WanLocalVideoProvider:
                         str(fps),
                         "-i",
                         str(frames_dir / "%06d.png"),
+                        "-frames:v",
+                        str(parameters["num_frames"]),
                         "-c:v",
                         "libx264",
+                        "-crf",
+                        str(parameters["encoding_crf"]),
                         "-pix_fmt",
                         "yuv420p",
                         "-an",
@@ -214,6 +252,12 @@ class WanLocalVideoProvider:
                     except OSError as exc:
                         if Path(key[0]).is_dir() or not _missing_cached_files(exc):
                             raise
+                        if not self.allow_download:
+                            raise ProviderError(
+                                "generation_model_cache_missing",
+                                "Wan weights are missing from the shared cache; use --allow-download to fetch them.",
+                                transient=False,
+                            ) from exc
                         report("downloading_model")
                         pipeline = factory(key[0], **loading_options, local_files_only=False)
                     else:
@@ -237,6 +281,14 @@ class WanLocalVideoProvider:
                 generator = torch.Generator(device="cpu").manual_seed(request.seed)
                 pipeline = self._pipeline
                 assert pipeline is not None
+                pipeline.scheduler = pipeline.scheduler.from_config(
+                    pipeline.scheduler.config, flow_shift=parameters["flow_shift"]
+                )
+                parameters["scheduler"] = type(pipeline.scheduler).__name__
+                parameters["model_dtype"] = "bfloat16" if self.settings.wan_device == "cuda" else "float32"
+                parameters["vae_dtype"] = "float32"
+                parameters["offload_mode"] = "sequential" if self.settings.wan_device == "cuda" else "none"
+                parameters["seed"] = request.seed
                 total = int(str(parameters["num_inference_steps"]))
                 report("inference", step=0, total_steps=total)
 
@@ -248,17 +300,18 @@ class WanLocalVideoProvider:
 
                 output = pipeline(
                     prompt=request.prompt,
-                    negative_prompt=request.negative_prompt,
+                    negative_prompt=parameters["negative_prompt"],
                     width=parameters["width"],
                     height=parameters["height"],
-                    num_frames=parameters["num_frames"],
+                    num_frames=parameters["inference_num_frames"],
                     num_inference_steps=parameters["num_inference_steps"],
+                    guidance_scale=parameters["guidance_scale"],
                     generator=generator,
                     output_type="pil",
                     callback_on_step_end=on_step_end,
                 )
                 frames = output.frames[0]
-                if len(frames) != parameters["num_frames"]:
+                if len(frames) != parameters["inference_num_frames"]:
                     raise ProviderError(
                         "generation_invalid_output", "Wan returned an incomplete video", transient=False
                     )

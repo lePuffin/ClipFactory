@@ -1,6 +1,7 @@
 import asyncio
 import io
 import wave
+from dataclasses import dataclass
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
@@ -18,7 +19,7 @@ from clipfactory.production.audio_captions import (
     produce_narration_and_captions,
 )
 from clipfactory.production.captions import FontMetrics
-from clipfactory.production.timing import reconcile_visual_timing
+from clipfactory.production.timing import prefer_covering_footage, reconcile_visual_timing, short_footage
 
 
 def _wav(duration_seconds: float) -> bytes:
@@ -190,3 +191,74 @@ def test_reconciled_visual_timing_splits_oversized_spans_and_preserves_assets(du
     assert all(item["selected_asset_id"] == "chosen-asset" for item in result)
     assert all(1.5 <= item["end_seconds"] - item["start_seconds"] <= 8.0 for item in result)
     assert all(left["end_seconds"] == right["start_seconds"] for left, right in pairwise(result))
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-257")
+def test_short_spoken_piece_borrows_time_from_its_longer_neighbour() -> None:
+    segments = [
+        {"index": index, "script_segment_index": script, "planned_duration_seconds": planned}
+        for index, (script, planned) in enumerate([(0, 7.0), (0, 3.0), (1, 1.0)])
+    ]
+    words = (
+        AlignedWord("Prince", 0.0, 2.37, 0),
+        AlignedWord("earlier", 2.37, 3.95, 0),
+        AlignedWord("Two", 3.95, 9.5, 1),
+    )
+    kwargs = {"narration_duration_seconds": 9.5, "lead_in_seconds": 0.3, "tail_seconds": 1.0}
+
+    before = reconcile_visual_timing(segments, words, **kwargs)
+    after = reconcile_visual_timing(segments, words, **kwargs, min_segment_seconds=1.5)
+
+    assert before[1]["end_seconds"] - before[1]["start_seconds"] < 1.5
+    shown = [item["end_seconds"] - item["start_seconds"] for item in after]
+    assert shown[1] == pytest.approx(1.5, abs=0.01)
+    assert all(length >= 1.5 for length in shown)
+    assert after[0]["start_seconds"] == 0.0
+    assert after[-1]["end_seconds"] == pytest.approx(10.8)
+    assert all(left["end_seconds"] == right["start_seconds"] for left, right in pairwise(after))
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-256")
+def test_split_pieces_continue_the_same_footage_instead_of_replaying_it() -> None:
+    segments = [
+        {
+            "index": 3,
+            "script_segment_index": 0,
+            "planned_duration_seconds": 7.0,
+            "selected_asset_id": "stock-video",
+            "transition_in": "crossfade",
+        }
+    ]
+    result = reconcile_visual_timing(
+        segments,
+        (AlignedWord("Narration", 0.0, 15.7, 0),),
+        narration_duration_seconds=15.7,
+        lead_in_seconds=0.3,
+        tail_seconds=1.0,
+        max_segment_seconds=8.0,
+    )
+    assert len(result) == 3
+    assert [item["plan_segment_index"] for item in result] == [3, 3, 3]
+    offsets = [item["source_offset_seconds"] for item in result]
+    shown = [item["end_seconds"] - item["start_seconds"] for item in result]
+    assert offsets[0] == 0.0
+    for index in range(1, len(result)):
+        assert offsets[index] == pytest.approx(offsets[index - 1] + shown[index - 1])
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-256")
+def test_long_enough_footage_is_preferred_and_short_footage_is_detected() -> None:
+    @dataclass(frozen=True)
+    class Candidate:
+        name: str
+        duration_seconds: float | None
+
+    ordered = [(Candidate("short", 4.0), "a"), (Candidate("long", 20.0), "b"), (Candidate("unknown", None), "c")]
+    assert [pair[0].name for pair in prefer_covering_footage(ordered, 9.0)] == ["long", "short", "unknown"]
+    assert not short_footage(20.0, offset_seconds=5.0, shown_seconds=5.0)
+    assert not short_footage(9.5, offset_seconds=5.0, shown_seconds=5.0)
+    assert short_footage(8.0, offset_seconds=5.0, shown_seconds=5.0)
+    assert not short_footage(None, offset_seconds=5.0, shown_seconds=5.0)

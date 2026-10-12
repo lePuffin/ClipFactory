@@ -7,13 +7,13 @@ import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from clipfactory.ports.errors import ProviderError
-from clipfactory.ports.llm import ImageInput, LLMMessage, LLMProvider, LLMResult
+from clipfactory.ports.llm import ImageInput, LLMMessage, LLMModelRole, LLMProvider, LLMResult
 from clipfactory.ports.llm_governance import LLMGovernance
 from clipfactory.workflow.graph import CURRENT_STAGE
 
@@ -77,11 +77,12 @@ class ObservedLLMProvider:
         messages: list[LLMMessage],
         schema: type[T],
         *,
-        model_role: Literal["default", "evaluation"] = "default",
+        model_role: LLMModelRole = "default",
         images: list[ImageInput] | None = None,
         temperature: float = 0.2,
     ) -> LLMResult[T]:
         request = messages
+        opaque_retries = 0
         for repair in range(self._max_schema_repairs + 1):
             final = repair == self._max_schema_repairs
             try:
@@ -97,10 +98,15 @@ class ObservedLLMProvider:
                             repair=repair,
                             final=final,
                             call_retry=call_retry,
+                            opaque_retry_available=opaque_retries < 1,
                         )
                     except ProviderError as exc:
                         if not exc.transient or call_retry == self._max_call_retries:
                             raise
+                        if exc.code == "upstream_bad_request":
+                            if opaque_retries >= 1:
+                                raise
+                            opaque_retries += 1
                         delay = min(
                             self._retry_max_delay,
                             max(
@@ -108,11 +114,19 @@ class ObservedLLMProvider:
                                 exc.retry_after_seconds or 0,
                             ),
                         )
+                        if exc.code == "rate_limited" and (exc.retry_after_seconds or 0) <= 0:
+                            delay = self._retry_max_delay
+                        reason = " (rate-limit cooldown)" if exc.code == "rate_limited" else ""
                         await self._emit(
                             CURRENT_STAGE.get(),
                             "progress",
-                            f"Retrying LLM {task} in {delay:.1f}s ({call_retry + 1}/{self._max_call_retries})",
-                            {"task": task, "call_retries": call_retry + 1, "retry_delay_seconds": delay},
+                            f"Retrying LLM {task} in {delay:.1f}s ({call_retry + 1}/{self._max_call_retries}){reason}",
+                            {
+                                "task": task,
+                                "call_retries": call_retry + 1,
+                                "retry_delay_seconds": delay,
+                                "error_code": exc.code,
+                            },
                         )
                         await self._sleep(delay)
             except ProviderError as exc:
@@ -134,12 +148,13 @@ class ObservedLLMProvider:
         messages: list[LLMMessage],
         schema: type[T],
         *,
-        model_role: Literal["default", "evaluation"],
+        model_role: LLMModelRole,
         images: list[ImageInput] | None,
         temperature: float,
         repair: int,
         final: bool,
         call_retry: int,
+        opaque_retry_available: bool,
     ) -> LLMResult[T]:
         current = CURRENT_STAGE.get()
         prompt_chars = sum(len(message.content) for message in messages)
@@ -159,20 +174,33 @@ class ObservedLLMProvider:
         )
         started = time.monotonic()
         request_id = None
+
+        async def pacing_wait(model: str, seconds: float) -> None:
+            await self._emit(
+                current,
+                "progress",
+                f"Waiting {seconds:.1f}s to pace LLM {task} for {model}",
+                {"task": task, "model": model, "model_role": model_role, "pacing_delay_seconds": seconds},
+            )
+
         try:
             if self._governance is not None:
                 if current is None:
                     raise ProviderError("llm_governance_unavailable", "LLM request has no Run context", transient=False)
-                request_id = await self._governance.begin(UUID(current[0]), task, model_role)
+                request_id = await self._governance.begin(UUID(current[0]), task, model_role, on_wait=pacing_wait)
             result = await self._inner.generate_structured(
                 task, messages, schema, model_role=model_role, images=images, temperature=temperature
             )
         except ProviderError as exc:
             if request_id is not None and self._governance is not None:
-                await self._governance.finish(request_id, None, exc.code)
+                await self._governance.finish(request_id, None, exc.code, retry_after_seconds=exc.retry_after_seconds)
             elapsed = time.monotonic() - started
             repairing = exc.code == "llm_invalid_output" and not final
-            retrying = exc.transient and call_retry < self._max_call_retries
+            retrying = (
+                exc.transient
+                and call_retry < self._max_call_retries
+                and (exc.code != "upstream_bad_request" or opaque_retry_available)
+            )
             await self._emit(
                 current,
                 "provider_call_failed",

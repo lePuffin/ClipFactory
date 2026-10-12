@@ -22,6 +22,11 @@ retaining the single native backend process and PostgreSQL durability.
 - Dragonfly is a disposable operational state store used only for the rolling
   LLM requests-per-minute window and LLM circuit-breaker state. It stores no
   domain data, workflow state, daily usage totals or credentials.
+  Owner-approved refinement (2026-10-08): RPM state includes hashed
+  endpoint/model cadence and temporary 429 cooldowns (CF-REQ-667). Feedback
+  slows only that model; the rolling account ceiling and circuit remain
+  shared. Learned cadence expires after 24 hours of inactivity and can be
+  discarded with Dragonfly; PostgreSQL request accounting remains authoritative.
 - The backend remains one native Python process with one Uvicorn worker.
 - `DRAGONFLY_URL` configures the dependency. If Dragonfly is unavailable,
   LLM calls fail closed before contacting a provider; the service reports the

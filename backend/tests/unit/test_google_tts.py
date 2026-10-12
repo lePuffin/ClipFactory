@@ -86,3 +86,30 @@ async def test_generic_language_uses_matching_voice_locale(language: str, expect
     provider = GoogleTTSProvider(_settings(), client=client)
     await provider.synthesize(SpeechRequest(("A sentence.",), language, "en-US-Chirp3-HD-Leda", 1.0))
     assert client.requests[0]["voice"].language_code == expected
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-300")
+@pytest.mark.asyncio
+async def test_configured_credentials_file_is_used_without_exported_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Regression: GOOGLE_APPLICATION_CREDENTIALS read from .env never reached google-auth's ADC lookup."""
+    from google.cloud import texttospeech
+
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    credentials = tmp_path / "tts.json"
+    client = FakeSpeechClient()
+    opened: list[str] = []
+
+    def from_file(path: str) -> FakeSpeechClient:
+        opened.append(path)
+        return client
+
+    monkeypatch.setattr(texttospeech.TextToSpeechClient, "from_service_account_file", from_file)
+    settings = _settings().model_copy(update={"google_application_credentials": credentials})
+
+    await GoogleTTSProvider(settings).synthesize(SpeechRequest(("Hello.",), "en-US", "en-US-Chirp3-HD-Leda", 1.0))
+
+    assert opened == [str(credentials)]
+    assert len(client.requests) == 1

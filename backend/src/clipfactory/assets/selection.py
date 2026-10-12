@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from clipfactory.domain.models import Asset, AssetStatus
+from clipfactory.domain.models import Asset, AssetOrigin, AssetStatus
 from clipfactory.ports.media_sources import MediaCandidate
 
 
@@ -28,24 +28,126 @@ class AssetMatch:
     score: float
 
 
-def refined_media_queries(requirement: AssetRequirement, declared: Sequence[str] = ()) -> tuple[str, ...]:
-    """Refine keywords without changing the Shot Intent used for ranking/review/import."""
+_QUERY_STOPWORDS = frozenset(
+    [
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "this",
+        "from",
+        "was",
+        "were",
+        "are",
+        "has",
+        "have",
+        "had",
+        "will",
+        "would",
+        "could",
+        "should",
+        "said",
+        "says",
+        "say",
+        "about",
+        "after",
+        "before",
+        "into",
+        "over",
+        "under",
+        "than",
+        "then",
+        "their",
+        "there",
+        "they",
+        "them",
+        "its",
+        "his",
+        "her",
+        "him",
+        "she",
+        "who",
+        "whom",
+        "which",
+        "what",
+        "when",
+        "where",
+        "while",
+        "also",
+        "but",
+        "not",
+        "nor",
+        "yet",
+        "been",
+        "being",
+        "per",
+        "via",
+        "according",
+        "since",
+        "until",
+        "upon",
+        "onto",
+        "out",
+        "off",
+    ]
+)
+
+
+def narration_keywords(narration: str, limit: int = 6) -> tuple[str, ...]:
+    """Content words of one Script Segment, without a leading publisher credit."""
+    text = re.sub(r"^\s*according to [^,]{1,80},", "", narration, flags=re.IGNORECASE)
+    output: list[str] = []
+    for word in re.findall(r"[A-Za-z][\w'-]*", text):
+        if (
+            len(word) > 2
+            and word.casefold() not in _QUERY_STOPWORDS
+            and word.casefold() not in {item.casefold() for item in output}
+        ):
+            output.append(word)
+        if len(output) == limit:
+            break
+    return tuple(output)
+
+
+def _generalized(query: str) -> str:
+    """A declared query without its proper nouns, kept only when at least two words remain."""
+    words = [word for word in query.split() if not word[:1].isupper()]
+    return " ".join(words) if len(words) >= 2 else ""
+
+
+def refined_media_queries(
+    requirement: AssetRequirement, declared: Sequence[str] = (), narration: str = "", *, rotation: int = 0
+) -> tuple[str, ...]:
+    """Refine keywords without changing the Shot Intent used for ranking/review/import.
+
+    Writer-declared queries come first; the remaining slots are filled from subjects/tags, the declared queries
+    without proper nouns (stock catalogues rarely hold place-specific footage) and then the segment's own narration
+    keywords, so a single weak declared query never leaves the refined search one-sided. A positive
+    ``rotation`` (the revision Attempt) moves to the next distinct pair so reselection searches something new.
+    """
     original = " ".join(requirement.description.split()).casefold()
     seen = {original}
-    output: list[str] = []
-    choices = declared or (
+    pool: list[str] = []
+    keywords = narration_keywords(narration)
+    choices = (
+        *declared,
         " ".join(requirement.subjects),
         " ".join((*requirement.subjects, *requirement.tags)),
         " ".join(requirement.tags),
+        *(_generalized(query) for query in declared),
+        " ".join(keywords),
+        " ".join(keywords[:3]),
     )
     for value in choices:
         query = " ".join(re.findall(r"[\w'-]+", value)[:12])[:120].strip()
         if query and query.casefold() not in seen:
             seen.add(query.casefold())
-            output.append(query)
-        if len(output) == 2:
-            break
-    return tuple(output)
+            pool.append(query)
+    if len(pool) <= 2:
+        return tuple(pool)
+    offset = (2 * max(rotation, 0)) % len(pool)
+    return (pool[offset], pool[(offset + 1) % len(pool)])
 
 
 def rank_media_candidates(requirement: AssetRequirement, candidates: Sequence[MediaCandidate]) -> list[MediaCandidate]:
@@ -89,7 +191,12 @@ def choose_reusable_asset(
 
 
 def _eligible(asset: Asset, requirement: AssetRequirement, already_used: frozenset[str]) -> bool:
-    if asset.status != AssetStatus.ACTIVE or not asset.reusable or str(asset.id) in already_used:
+    if (
+        asset.provenance.origin == AssetOrigin.EXTERNAL
+        or asset.status != AssetStatus.ACTIVE
+        or not asset.reusable
+        or str(asset.id) in already_used
+    ):
         return False
     if requirement.media_type != "any" and asset.media_type != requirement.media_type:
         return False

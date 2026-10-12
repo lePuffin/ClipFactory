@@ -74,3 +74,102 @@ async def test_rss_provider_parses_article_references() -> None:
     assert refs[0].title == "Update"
     assert refs[0].publisher == "Example News"
     assert refs[0].published_at == datetime(2026, 9, 30, 9, 0, tzinfo=UTC)
+
+
+class _Feeds:
+    def __init__(self, *feeds: tuple[str, str]) -> None:
+        self.feeds = list(feeds)
+
+
+def _any_public(_host: str, _port: int) -> list[str]:
+    return ["93.184.216.34"]
+
+
+async def _no_sleep(_seconds: float) -> None:
+    return None
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-100")
+@pytest.mark.asyncio
+async def test_one_failing_feed_never_discards_other_feeds_references() -> None:
+    rss = b"<rss><channel><item><title>Kept</title><link>https://ok.example/a</link></item></channel></rss>"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404 if request.url.host == "broken.example" else 200, content=rss)
+
+    http = SafeHTTPClient(resolver=_any_public, transport=httpx.MockTransport(respond))
+    source = RssNewsSource(http, sleep=_no_sleep)
+    refs = await source.latest(_Feeds(("Broken", "https://broken.example/f"), ("Ok", "https://ok.example/f")))
+    assert [(ref.title, ref.publisher) for ref in refs] == [("Kept", "Ok")]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-100")
+@pytest.mark.asyncio
+async def test_rss_provider_parses_rdf_and_atom_feeds() -> None:
+    rdf = b"""<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"
+      xmlns:dc="http://purl.org/dc/elements/1.1/"><item rdf:about="https://dw.example/a">
+      <title>RDF story</title><link>https://dw.example/a</link><description>Lead</description>
+      <dc:date>2026-10-08T07:30:00Z</dc:date></item></rdf:RDF>"""
+    atom = b"""<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Atom story</title>
+      <link rel="alternate" href="https://atom.example/b"/><updated>2026-10-08T08:00:00+00:00</updated>
+      <summary>Atom lead</summary></entry></feed>"""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=rdf if request.url.host == "dw.example" else atom)
+
+    http = SafeHTTPClient(resolver=_any_public, transport=httpx.MockTransport(respond))
+    refs = await RssNewsSource(http).latest(_Feeds(("DW", "https://dw.example/f"), ("Atom", "https://atom.example/f")))
+    assert [(ref.title, ref.url, ref.summary) for ref in refs] == [
+        ("RDF story", "https://dw.example/a", "Lead"),
+        ("Atom story", "https://atom.example/b", "Atom lead"),
+    ]
+    assert refs[0].published_at == datetime(2026, 10, 8, 7, 30, tzinfo=UTC)
+    assert refs[1].published_at == datetime(2026, 10, 8, 8, 0, tzinfo=UTC)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-100")
+@pytest.mark.asyncio
+async def test_transient_dns_failure_is_retried_with_bounded_backoff() -> None:
+    rss = b"<rss><channel><item><title>Back</title><link>https://news.example/a</link></item></channel></rss>"
+    lookups: list[str] = []
+    waits: list[float] = []
+
+    def flaky_resolver(host: str, _port: int) -> list[str]:
+        lookups.append(host)
+        if len(lookups) < 3:
+            raise OSError("Temporary failure in name resolution")
+        return ["93.184.216.34"]
+
+    async def record(seconds: float) -> None:
+        waits.append(seconds)
+
+    http = SafeHTTPClient(
+        resolver=flaky_resolver, transport=httpx.MockTransport(lambda _r: httpx.Response(200, content=rss))
+    )
+    refs = await RssNewsSource(http, retry_delays_seconds=(1, 2), sleep=record).latest(
+        _Feeds(("News", "https://news.example/f"))
+    )
+    assert [ref.title for ref in refs] == ["Back"]
+    assert waits == [1, 2]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-100")
+@pytest.mark.asyncio
+async def test_permanent_feed_errors_are_not_retried_and_all_failures_are_named() -> None:
+    from clipfactory.infrastructure.providers.news.rss import FeedUnavailable
+
+    waits: list[float] = []
+
+    async def record(seconds: float) -> None:
+        waits.append(seconds)
+
+    http = SafeHTTPClient(resolver=_any_public, transport=httpx.MockTransport(lambda _r: httpx.Response(404)))
+    with pytest.raises(FeedUnavailable, match=r"One: HTTPStatusError.*Two: HTTPStatusError"):
+        await RssNewsSource(http, sleep=record).latest(
+            _Feeds(("One", "https://one.example/f"), ("Two", "https://two.example/f"))
+        )
+    assert waits == []

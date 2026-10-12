@@ -14,6 +14,7 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-001 — Research
 
 - Given the fixture news set (≥ 40 references incl. the Reuters/AP/BBC/CNN/Blog set, a blocked publisher, stale items), when a Run starts, then at most `max_candidate_articles` articles are fetched, blocked/stale items are excluded, exact duplicates are stored once and the Blog copy is marked syndicated of Reuters.
+- Given one unreachable feed among working RSS, RDF and Atom feeds, research continues with the other feeds' references and a warning Run Event names the failing feed; when every feed fails, `no_candidates` lists each feed error.
 - **Requirements:** CF-REQ-100–104, CF-REQ-118
 - **Verified by:** integration + E2E-1
 
@@ -32,6 +33,12 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-004 — Story Package and script
 
 - A versioned Story Package exists; the script is in the profile language, within the word budget, 4–8 segments, hook ≤ 5 s, every segment cites accepted Claims; each script-gate failure code triggers a revision; social metadata contains source and asset attributions and disclosure flags.
+- Each publisher is spoken at most once in the complete narration; repeated
+  mentions fail the script gate and route to a bounded script revision.
+  Per-segment attribution fields and description credits are preserved.
+- Rejected schema-valid drafts remain non-approved durable artifacts.
+  Narration-only retries merge bounded indexed corrections without changing
+  Claim IDs, unaffected narration, metadata or visuals; all gates still apply.
 - **Requirements:** CF-REQ-150–162
 - **Verified by:** unit + E2E-1
 
@@ -102,7 +109,13 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 
 ### CF-AC-014 — Settings and Content Profile
 
+- Named profiles can be created, edited, listed, activated atomically and
+  deleted only when inactive; name conflicts and invalid values are rejected
+  without changing stored state (CF-REQ-550–551).
 - The owner edits the Content Profile and application settings; invalid values are rejected with field errors; credential status is visible without secrets; edits affect only subsequent Runs.
+- Fixed-choice Settings use labelled, dark-theme dropdowns for LLM output
+  modes, Whisper device and publishing mode, with readable native options and
+  visible keyboard focus. Open-ended values remain editable.
 - **Requirements:** CF-REQ-550–555, CF-REQ-606–607, CF-REQ-750–754
 - **Verified by:** E2E-7 + integration
 
@@ -118,8 +131,13 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
   checkpoint with current settings without repeating completed stages.
   Active-run conflicts, missing checkpoints, exhausted retries and publication
   failures are rejected explicitly; failure history and costs are retained.
+  Raising `workflow.max_revision_retries` above a Run's own used retries makes
+  an `evaluation_failed_after_retries` Run continuable at `plan_retry`; retry
+  counters stay per Run.
 - Stop cancels queued/running work without killing the Run worker, retains
   imported Assets, records `owner_stopped`, and rejects active publication.
+- Continue Run and Stop dispatch on a single click, without confirmation
+  panels; pending actions are disabled and rejected requests show errors.
 
 - With a fake clock, a Run starts at 05:00 in the profile timezone exactly once; a missed schedule within grace runs at startup; concurrent triggers produce one Run and a 409; a process kill after `write_script` resumes at `plan_visuals`; stage timeouts fail the Run with `stage_timeout`.
 - **Requirements:** CF-REQ-650–660
@@ -177,6 +195,20 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-024 — LLM request governance
 
 - An uncached quality Run makes five initial requests (four for Manual URL), never more than eight total. Cache hits reduce counts and are visible. RPM/daily/cost checks precede dispatch and survive restart; start thresholds are trigger-specific. Permanent/daily/credit errors are not retried; exhaustion opens the circuit and retains pending artifacts. Dragonfly unavailability fails closed; durable usage/domain/workflow data remain in PostgreSQL.
+- Endpoint/model pacing starts at the account RPM cadence, slows on transient
+  429s and recovers by 10% on success without exceeding the configured ceiling.
+  A 429 without a positive retry hint waits the full configured cooldown
+  (default 60 s). Waits are cancellable, attempts remain budgeted, and another
+  model cannot bypass the shared account limit or circuit.
+- Main/evaluation output modes are independently editable and snapshotted.
+  Strict schema is the default; JSON-object and prompt-only modes retain
+  local schema/business validation, image input and bounded, accounted repair.
+  JSON-object/prompt-only modes can unwrap one whole-response JSON fence
+  without modifying JSON contents; prose, malformed answers and invalid
+  schemas fail explicitly. HTTP errors never downgrade the mode. The narrowly
+  identified opaque AtlasCloud 400 has one governed retry across the logical
+  request; the opaque `openrouter/free` upstream 400 may use the configured
+  call-retry bound to route again. Ordinary/permanent 400s are not retried.
 - **Requirements:** CF-REQ-666–671, CF-REQ-758
 - **Verified by:** unit + integration + pipeline + failure/recovery tests
 
@@ -222,8 +254,20 @@ The following scenarios extend the baseline by owner direction on 2026-10-06. Th
 
 ### CF-AC-030 — Reproducible retained-content revision
 
-- The repository's preview/rerender path reads saved versioned inputs and produces a new render revision, without temporary scripts. Label/transition-only changes reuse research, script, narration and transcript; script edits invalidate audio/alignment; media edits invalidate relevant judgments. Prior output remains retrievable. Approval is tied to the exact reviewed hash and is invalidated by material changes. The original failed Run is not relabelled successful.
+- The repository's preview/rerender path reads available saved versioned inputs and produces a new render revision, without temporary scripts. Label/transition-only changes reuse research, script, narration and transcript; script edits invalidate audio/alignment; media edits invalidate relevant judgments. Prior output remains retrievable. Approval is tied to the exact reviewed hash and is invalidated by material changes. The original failed Run is not relabelled successful.
 - An optional owner-provided logo Asset retains its transparency and aspect ratio, stays within 112 × 112 px at 720 px output width, and appears 24 px from the top/right edges for the entire revision. The logo-only revision leaves the original file and narration intact, adds no provider calls, and is pending review.
+- Future normal Runs always include the configured subtle top-right logo
+  and a `8 Oct 2026`-format date from the latest cited Source publication date,
+  not the render date. Unknown dates warn and remain absent; archive years
+  remain deferred. Saved-package revisions preserve the persistent identity.
+- The owner installation uses the tightly cropped `logo_letters.png` wordmark.
+  When configured, the last three reserved tail seconds show the frozen local
+  centered globe end card and "Follow for more", with its original synthesized
+  news sting and baked-in TTS saying "Keep up with the world. Follow InPulso.",
+  without story captions, logo, date, music or SFX. New owner Run Now Clips
+  reuse the card without an additional TTS request. Saved
+  revisions preserve the frozen end-card hash; disabled configurations retain
+  the ordinary tail. Missing or invalid enabled cards fail explicitly.
 - **Requirements:** CF-REQ-152, CF-REQ-220, CF-REQ-302, CF-REQ-360–362, CF-REQ-412
 - **Verified by:** integration + E2E + zero-provider-call assertions
 
@@ -269,3 +313,44 @@ The following scenarios extend the baseline by owner direction on 2026-10-06. Th
 - **Requirements:** CF-REQ-207–210, CF-REQ-215, CF-REQ-263–266, CF-REQ-606, CF-REQ-653, CF-REQ-759
 - **Verified by:** unit + repository/API integration with fakes + UI tests.
   Real provider quality and live end-to-end production remain separate checks.
+
+### CF-AC-035 — Reproducible isolated Wan comparison
+
+- The paper-boat test uses local Wan 2.1 1.3B, 832x480, 16 FPS, five seconds,
+  seed 42 and 25 steps, explicit guidance 5, UniPC shift 3 and the official
+  motion/quality negative prompt. Native inference uses 81 frames, MP4 has
+  exactly 80; real probe/decode and recipe manifest are required on success.
+- Production prompts describe concrete moving scenes rather than disclosure
+  policy or search keywords, with stable subject geometry, restrained motion
+  and profile-oriented framing, including eligible reuse-first fallback shots.
+  Default native portrait inference is 464x832 at 16 FPS and 25 steps;
+  final Clip fitting preserves profile dimensions. The per-Run
+  cap and graphic routing remain unchanged.
+- `wan-test --dry-run` loads no weights and generates nothing. Actual manual
+  generation is explicitly owner-triggered, offline by default, and isolated
+  from database, Runs, scheduler, LLMs, cloud generation and publication.
+  Existing output/manifest files cannot be overwritten.
+- **Requirements:** CF-REQ-208, CF-REQ-255, CF-REQ-266–267, CF-REQ-759
+- **Verified by:** unit + mocked inference/real encoding + owner playback
+  comparison. The owner accepted the recovered-prompt landscape test at 25
+  steps on 2026-10-08; live production portrait quality remains unverified.
+
+### CF-AC-036 — Public figures on mention and persistent buzz line
+
+- Narration naming a real public figure cuts to a freely licensed Commons
+  portrait bound through the human Wikidata entity; people without a licensed
+  portrait or unresolved names keep the original shot. No
+  person is generated and no unverified name label is drawn.
+- The top editorial panel shows a Claim-grounded context summary (context cue
+  or buzz line) continuously from the Clip start to the branded ending, never a
+  Source label; each change plays the information sound cue; no mid-screen
+  buzz banner is drawn.
+- **Requirements:** CF-REQ-164, CF-REQ-215, CF-REQ-259, CF-REQ-260, CF-REQ-268–269
+- **Verified by:** unit + mocked HTTP Wikidata/Commons + compose integration;
+  live free Wikidata/Commons lookup verified in hosted Runs.
+
+Owner retention revision (2026-10-11), CF-AC-005/CF-AC-006: external media
+inputs survive same-Run targeted retries, then are removed and retired at
+production end. Generated files and attribution/source history remain. The
+library excludes removed external inputs; saved re-render reports unavailable
+source inputs while the composed Clip still supports publishing/Retry publish.

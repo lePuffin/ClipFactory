@@ -57,6 +57,14 @@ class SelectedStoryContext:
     sources: tuple[ResearchSourceRecord, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class CoveredStory:
+    """The selected Story of a successfully completed Run, used by the novelty rule."""
+
+    title: str
+    canonical_urls: frozenset[str]
+
+
 class ResearchRepository(Protocol):
     def persist(self, snapshot: ResearchSnapshot) -> None: ...
 

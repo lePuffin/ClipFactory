@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine
 from test_generation_fallback import FakeVideoProvider, fake_assets, fake_inspector
 from test_local_graphics import FakeGraphics, assets_and_media, claim, payload, spec
-from test_script_planning import FakeLLM, _result
+from test_script_planning import FakeLLM, _claims, _result
 from test_settings_and_api import Configuration, RunCreatorFake, settings
 
 from clipfactory.api.app import create_app
@@ -37,7 +37,7 @@ from clipfactory.infrastructure.providers.wan_local import WanLocalVideoProvider
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.infrastructure.settings_validation import apply_runtime_environment
 from clipfactory.infrastructure.storage import LocalStorageProvider
-from clipfactory.planning.script import VisualDraft, WriteScriptResult, generate_script
+from clipfactory.planning.script import ScriptGateError, VisualDraft, WriteScriptResult, generate_script
 from clipfactory.planning.visuals import _normalize_segment
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.generation import GENERATION_ABORT, VideoGenerationRequest
@@ -397,6 +397,11 @@ def test_queries_and_normalized_draft_are_bounded_distinct_and_backward_compatib
     queries = refined_media_queries(requirement)
     assert queries == ("electricity", "electricity power grid")
     assert len(set(queries)) == 2
+    vague = AssetRequirement("video", "News", "Shows the announcement")
+    assert refined_media_queries(
+        vague, narration="According to France 24, the Pentagon said the firing squad execution was approved."
+    ) == ("Pentagon firing squad execution approved", "Pentagon firing squad")
+    assert refined_media_queries(vague) == ()
 
 
 @pytest.mark.parametrize("supported", [True, False])
@@ -411,7 +416,7 @@ async def test_writer_declares_and_grounds_alternatives_in_its_existing_single_c
     arguments = {
         "story_title": "Synthetic study",
         "story_summary": "Source-grounded research",
-        "claims": [accepted],
+        "claims": [accepted, *_claims()],
         "key_fact_claim_ids": [accepted.id],
         "profile": ContentProfile(),
     }
@@ -420,8 +425,11 @@ async def test_writer_declares_and_grounds_alternatives_in_its_existing_single_c
         assert generated.visuals[0].graphics_spec is None
         assert generated.visuals[0].fallback_graphics_spec is not None
     else:
-        with pytest.raises(GraphicsError, match="value"):
+        with pytest.raises(ScriptGateError) as gate:
             await generate_script(llm, **arguments)
+        assert gate.value.codes == ("unsupported_statement",)
+        assert isinstance(gate.value.__cause__, GraphicsError)
+        assert "value" in str(gate.value.__cause__)
     assert len(llm.calls) == 1
     assert llm.calls[0][0] == "write_script"
     assert "fallback_graphics_spec" in llm.calls[0][1][0].content
@@ -624,3 +632,119 @@ def test_settings_default_env_api_validation_and_snapshots(monkeypatch: pytest.M
         }
         with pytest.raises(ValidationError):
             EnvironmentSettings(**values)
+
+
+@pytest.mark.req("CF-REQ-266")
+def test_refined_queries_fill_weak_declared_query_and_rotate_on_reselection() -> None:
+    """Regression: Run a935dd18 retried one declared query for nine Attempts without finding media."""
+    requirement = AssetRequirement("any", "news", "Policy announcement", ("ministry",), ("pension", "reform"))
+    narration = "According to The Guardian, the ministry issued the pension reform program on October ninth."
+    first = refined_media_queries(requirement, ["program issued October ninth"], narration)
+    assert first == ("program issued October ninth", "ministry")
+    second = refined_media_queries(requirement, ["program issued October ninth"], narration, rotation=1)
+    assert second == ("ministry pension reform", "pension reform")
+    assert not set(first) & set(second)
+    for rotation in range(6):
+        queries = refined_media_queries(requirement, ["program issued October ninth"], narration, rotation=rotation)
+        assert len(queries) == 2
+        assert len(set(queries)) == 2
+        assert "policy announcement" not in {query.casefold() for query in queries}
+
+
+@pytest.mark.req("CF-REQ-266")
+def test_refined_queries_generalize_place_specific_declared_queries() -> None:
+    """Regression: Run 95b4b7b4 never searched a generic rally after its place-specific queries failed."""
+    requirement = AssetRequirement("video", "media", "A wide-angle view of an outdoor political rally in Nebraska")
+    declared = ["Nebraska political rally crowd", "Grand Island Nebraska podium"]
+    narration = "At a Nebraska rally in Grand Island recently, he said, 'They can take out a city,'"
+    assert refined_media_queries(requirement, declared, narration) == tuple(declared)
+    assert refined_media_queries(requirement, declared, narration, rotation=1)[0] == "political rally crowd"
+    assert "podium" not in {
+        query
+        for rotation in range(4)
+        for query in refined_media_queries(requirement, declared, narration, rotation=rotation)
+    }
+
+
+class TypedSource(RefinedSource):
+    def __init__(self, storage: LocalStorageProvider) -> None:
+        super().__init__(storage)
+        self.requests: list[tuple[str, str]] = []
+
+    async def search(self, request: Any) -> list[MediaCandidate]:
+        self.requests.append((request.description, request.media_type))
+        if request.description == "Electricity substation":
+            return []
+        return [
+            MediaCandidate(
+                f"https://media.example/{request.media_type}/{request.description}",
+                f"https://media.example/{request.media_type}/{request.description}.png",
+                self.name,
+                "CC0",
+                request.media_type,
+                800,
+                1280,
+                description="Electricity grid transformer",
+            )
+        ]
+
+
+@pytest.mark.parametrize("attempt", [1, 2])
+async def test_revision_refined_search_for_video_also_offers_stills(
+    repository: RunRepository, tmp_path: Path, attempt: int
+) -> None:
+    run_id = create_run(repository, 0)
+    with repository.sessions.begin() as session:
+        row = session.get(RunRow, run_id)
+        assert row is not None
+        row.attempt = attempt
+    visual_plan = plan(1)
+    visual_plan["segments"][0]["requirement"].update(search_queries=["power station", "grid transformer"])
+    storage = LocalStorageProvider(tmp_path)
+    source = TypedSource(storage)
+    llm = MagicMock()
+    llm.generate_structured = AsyncMock(
+        return_value=MagicMock(value=ReviewMediaResult.model_validate({"choices": [{"segment": 0, "ranked": []}]}))
+    )
+    instance = service(repository, tmp_path, visual_plan, FakeVideoProvider(), media_sources=[source], llm=llm)
+    await select(instance, run_id, attempt)
+    refined = [item for item in source.requests if item[0] != "Electricity substation"]
+    offered = json.loads(
+        llm.generate_structured.await_args.args[1][1]
+        .content.split("<untrusted-candidate-metadata>\n")[1]
+        .split("\n</")[0]
+    )[0]["candidates"]
+    if attempt == 1:
+        assert {media_type for _, media_type in refined} == {"video"}
+        assert [item["type"] for item in offered] == ["video", "video"]
+    else:
+        assert {media_type for _, media_type in refined} == {"video", "image"}
+        assert [item["type"] for item in offered] == ["video", "image", "video", "image"]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-251", "CF-REQ-263")
+@pytest.mark.parametrize(
+    ("strategy", "allowed", "subjects", "expected"),
+    [
+        ("reuse_first", True, [], "generate_allowed"),
+        ("acquire_only", True, [], "generate_allowed"),
+        ("reuse_first", False, [], "reuse_first"),
+        ("reuse_first", True, ["Jane Smith"], "acquire_only"),
+    ],
+)
+def test_typed_graphics_strategy_is_normalized_to_render_permission(
+    strategy: str, allowed: bool, subjects: list[str], expected: str
+) -> None:
+    base = dict(plan(1)["segments"][0]["requirement"])
+    base.update(
+        objective="Timeline",
+        kind="infographic",
+        graphics_spec=payload(),
+        strategy=strategy,
+        subjects=subjects,
+        media_type="video",
+    )
+    draft = VisualDraft.model_validate(base)
+    normalized = _normalize_segment(0, 0, "Timeline", 5, draft, allowed)
+    assert normalized.requirement["strategy"] == expected

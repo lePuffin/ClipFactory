@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import logging
 from uuid import UUID
 
 import httpx
@@ -12,6 +13,8 @@ from clipfactory.ports.assets import AssetReader
 from clipfactory.ports.llm import ImageInput
 from clipfactory.ports.media_sources import MediaCandidate
 from clipfactory.ports.storage import MediaStorage
+
+logger = logging.getLogger(__name__)
 
 
 class CandidatePreviews:
@@ -36,7 +39,8 @@ class CandidatePreviews:
                 body, _, _ = await self.http.get_bytes(url, max_bytes=5_000_000)
             content = await asyncio.to_thread(_jpeg, body)
             return ImageInput(content, "image/jpeg", {"candidate_url": candidate.url})
-        except (httpx.HTTPError, UnsafeURL, ResponseTooLarge, OSError, ValueError, Image.DecompressionBombError):
+        except (httpx.HTTPError, UnsafeURL, ResponseTooLarge, OSError, ValueError, Image.DecompressionBombError) as exc:
+            logger.warning("Candidate preview unavailable for %s: %s: %s", candidate.url, type(exc).__name__, exc)
             return None
 
 

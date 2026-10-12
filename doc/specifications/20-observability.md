@@ -40,6 +40,7 @@ the others are additions required for diagnosis.
 | `llm_call_started` | An LLM request is sent inside a stage | `task`, `model_role`, `prompt_chars` |
 | `llm_call_completed` | An LLM request returns valid structured output | `task`, `model`, `duration_seconds`, `prompt_tokens?`, `completion_tokens?`, `reasoning?`, `response` (each excerpt ≤ 4 000 characters) |
 | `progress` | A long stage reaches a milestone (e.g. articles fetched, candidates ranked, Claims extracted for a Story, generation/render progress) | free-form counts; renderer progress may include `generation_phase`, `provider`, `model`, `template_id`, `template_version`, `visual_index`, `visual_count`, actual `frames_completed`/`frames_total`, and measured `progress_fraction` |
+| `asset_cleanup_failed` | External input file deletion fails after metadata retirement (CF-REQ-214) | none; Run ID is carried by the event envelope |
 | `stage_failed` | A stage raises or its gate fails without retry | `stage`, `error_code`, `message` |
 | `warning` | Non-blocking condition (e.g. `budget_degraded`, `no_music_available`) | `code`, `message` |
 | ● `run_completed` | Run completed | `outcome`, `clip_id` |

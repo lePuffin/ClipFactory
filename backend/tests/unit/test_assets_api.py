@@ -1,13 +1,14 @@
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from clipfactory.api.app import create_app
-from clipfactory.domain.models import Asset, AssetOrigin, Provenance
+from clipfactory.domain.models import Asset, AssetOrigin, AssetStatus, Provenance
 from clipfactory.infrastructure.db.asset_repository import AssetRepository
 from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.session import create_session_factory
@@ -122,3 +123,44 @@ def test_asset_file_endpoint_hides_missing_files_and_rejects_unsatisfiable_range
     invalid_range = client.get(f"/api/assets/{asset.id}/file", headers={"Range": "bytes=100-"})
     assert invalid_range.status_code == 416
     assert invalid_range.headers["content-range"] == "bytes */10"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-200")
+def test_asset_pagination_preserves_filtered_total(asset_client) -> None:
+    client, _repository, asset, _content = asset_client
+    assert client.get("/api/assets?limit=1&offset=0").json()["total"] == 1
+    assert client.get("/api/assets?offset=1").json() == {"items": [], "total": 1}
+    client.patch(f"/api/assets/{asset.id}", json={"status": "retired"})
+    assert client.get("/api/assets").json() == {"items": [], "total": 0}
+    assert client.get("/api/assets?status=retired&offset=1").json() == {"items": [], "total": 1}
+    assert client.get("/api/assets?limit=500").status_code == 200
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-200")
+@pytest.mark.parametrize("query", ["limit=0", "limit=501", "offset=-1", "offset=bad"])
+def test_asset_pagination_rejects_invalid_bounds(asset_client, query: str) -> None:
+    client, *_ = asset_client
+    assert client.get(f"/api/assets?{query}").status_code == 422
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-200")
+def test_asset_library_excludes_retired_external_metadata_even_with_retired_filter(asset_client) -> None:
+    client, repository, imported, _ = asset_client
+    external = imported.model_copy(
+        update={
+            "id": uuid4(),
+            "sha256": "b" * 64,
+            "storage_key": "assets/external-runs/fixture/input.png",
+            "provenance": Provenance(
+                origin=AssetOrigin.EXTERNAL, provider="fake", license="CC0", source_url="https://example.org/stock"
+            ),
+            "status": AssetStatus.RETIRED,
+        }
+    )
+    repository.save(external)
+    assert client.get("/api/assets").json()["total"] == 1
+    assert client.get("/api/assets?status=retired").json() == {"items": [], "total": 0}
+    assert client.get(f"/api/assets/{external.id}").json()["provenance"]["source_url"] == "https://example.org/stock"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -40,6 +40,11 @@ class PublicURLFactory(Protocol):
     def __call__(self, clip_id: UUID, expires_at: datetime) -> str: ...
 
 
+class MediaStaging(Protocol):
+    def stage(self, clip_file: Path, signed_url: str) -> str: ...
+    def release(self, staged_url: str) -> None: ...
+
+
 class PublishService:
     def __init__(
         self,
@@ -49,12 +54,14 @@ class PublishService:
         *,
         clock: Any,
         public_url: PublicURLFactory | None = None,
+        staging: MediaStaging | None = None,
     ) -> None:
         self._store = store
         self._storage = storage
         self._publishers = dict(publishers)
         self._clock = clock
         self._public_url = public_url
+        self._staging = staging
 
     async def execute(self, run_id: UUID, clip_id: UUID, *, approval_resolved: bool = False) -> dict[str, Any]:
         context = await asyncio.to_thread(self._store.context, run_id, clip_id)
@@ -64,7 +71,11 @@ class PublishService:
         analytics = context["settings"].get("analytics", {})
         mode = str(settings.get("mode", "dry_run"))
         platforms = [Platform(value) for value in context["platforms"]]
-        request = _request(clip_id, context["social_metadata"])
+        request = _request(
+            clip_id,
+            context["social_metadata"],
+            settings.get("discovery_hashtags", ["News", "BreakingNews", "WorldNews"]),
+        )
         if mode == "disabled" or not platforms:
             return {"outcome": "not_published", "clip_id": str(clip_id)}
 
@@ -119,6 +130,8 @@ class PublishService:
             publication_id = UUID(existing["id"])
             await asyncio.to_thread(self._store.mark_publishing, publication_id)
             platform_request = request
+            clip_file = self._storage.local_path(context["storage_key"])
+            staged_url: str | None = None
             if platform in {Platform.INSTAGRAM, Platform.FACEBOOK}:
                 if self._public_url is None:
                     await asyncio.to_thread(
@@ -129,17 +142,19 @@ class PublishService:
                     )
                     continue
                 ttl = int(settings.get("public_media_url_ttl_minutes", 60))
-                platform_request = PublicationRequest(
-                    **{
-                        **_as_dict(request),
-                        "public_media_url": self._public_url(clip_id, self._clock() + timedelta(minutes=ttl)),
-                    }
-                )
+                public_media_url = self._public_url(clip_id, self._clock() + timedelta(minutes=ttl))
+                if self._staging is not None:
+                    public_media_url = await asyncio.to_thread(self._staging.stage, clip_file, public_media_url)
+                    staged_url = public_media_url
+                platform_request = PublicationRequest(**{**_as_dict(request), "public_media_url": public_media_url})
             try:
-                result = await publisher.publish(platform_request, self._storage.local_path(context["storage_key"]))
+                result = await publisher.publish(platform_request, clip_file)
             except ProviderError as exc:
                 await asyncio.to_thread(self._store.mark_failed, publication_id, exc.code, str(exc))
                 continue
+            finally:
+                if self._staging is not None and staged_url is not None:
+                    await asyncio.to_thread(self._staging.release, staged_url)
             published_at = self._clock()
             await asyncio.to_thread(
                 self._store.mark_published,
@@ -167,12 +182,21 @@ class PublishService:
         return {"outcome": outcome, "clip_id": str(clip_id)}
 
 
-def _request(clip_id: UUID, value: dict[str, Any]) -> PublicationRequest:
+def _hashtags(generated: Sequence[str], discovery: Sequence[str], limit: int = 8) -> tuple[str, ...]:
+    tags: dict[str, str] = {}
+    for tag in (*generated, *discovery):
+        cleaned = "".join(str(tag).lstrip("#").split())
+        if cleaned and cleaned.casefold() not in tags and len(tags) < limit:
+            tags[cleaned.casefold()] = cleaned
+    return tuple(tags.values())
+
+
+def _request(clip_id: UUID, value: dict[str, Any], discovery_hashtags: Sequence[str] = ()) -> PublicationRequest:
     return PublicationRequest(
         clip_id=clip_id,
         title=value["title"],
         description=value["description"],
-        hashtags=tuple(value.get("hashtags", [])),
+        hashtags=_hashtags(value.get("hashtags", []), discovery_hashtags),
         source_attributions=tuple(value.get("source_attributions", [])),
         asset_attributions=tuple(value.get("asset_attributions", [])),
         contains_synthetic_media=bool(value.get("contains_synthetic_media", False)),

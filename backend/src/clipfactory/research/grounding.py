@@ -137,7 +137,21 @@ def build_verified_claims(
 
     claims: list[Claim] = []
     for index, (draft, evidence, support) in enumerate(verified):
-        accepted = support != SupportLevel.UNSUPPORTED and index not in rejected_indexes
+        metadata = is_page_metadata(draft.text)
+        fragment = is_fragment(draft.text)
+        accepted = (
+            support != SupportLevel.UNSUPPORTED and index not in rejected_indexes and not metadata and not fragment
+        )
+        if accepted:
+            reason = None
+        elif index in rejected_indexes:
+            reason = "contradicted"
+        elif support == SupportLevel.UNSUPPORTED:
+            reason = "unsupported"
+        elif metadata:
+            reason = "page_metadata"
+        else:
+            reason = "fragment"
         claims.append(
             Claim(
                 story_id=story_id,
@@ -146,10 +160,43 @@ def build_verified_claims(
                 evidence=evidence,
                 support_level=support,
                 status=ClaimStatus.ACCEPTED if accepted else ClaimStatus.REJECTED,
-                rejection_reason=None if accepted else ("contradicted" if index in rejected_indexes else "unsupported"),
+                rejection_reason=reason,
             )
         )
     return claims
+
+
+_PAGE_METADATA = re.compile(
+    r"^\s*(?:(?:issued|published|posted|modified|updated|last\s+updated)(?:\s+on)?\s*:"
+    r"|(?:video|photo|photos|image|images|picture|reporting|editing|words|text|graphics|footage)\s+by\b"
+    r"|(?:credit|source|copyright)\s*:|©)"
+    r"|\bcorrespondent\b.{0,80}\btells?\s+us\s+more\b"
+    r"|^\s*(?:read|watch|listen|click|subscribe|sign\s+up)\b.{0,40}(?:more|here|now|newsletter)\W*$"
+    r"|^\s*(?:keywords?|tags|topics)\b(?:\s+for\s+this\s+(?:article|story|page))?\s*:?\s"
+    r"|\b(?:was|were|is|has\s+been)\s+(?:first\s+)?(?:published|posted|updated|modified)\s+(?:on|at)\b"
+    r"|^\s*(?:video\s+)?(?:duration|running\s+time|runtime)\b\s*:?\s*\d"
+    r"|\b(?:illustrations?|images?|graphics|artwork|visuals)\b.{0,60}\b(?:created|generated|made|produced)\b"
+    r".{0,60}\b(?:ai|a\.i\.|artificial\s+intelligence)\b"
+    r"|^[^.;]{0,80}\bis\s+an?\b[^.;]{0,60}\b(?:originals?\s+)?production\W*$",
+    re.IGNORECASE,
+)
+_DATE_WORDS = re.compile(
+    r"^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*$|^(?:am|pm|gmt|utc|on|at)$", re.IGNORECASE
+)
+
+
+def is_page_metadata(text: str) -> bool:
+    """True for page furniture (timestamps, bylines, credits, teasers) rather than reported facts (CF-REQ-115)."""
+    if _PAGE_METADATA.search(text):
+        return True
+    words = [word for word in re.findall(r"[^\W\d_]+", text) if not _DATE_WORDS.match(word)]
+    return len(words) < 2
+
+
+def is_fragment(text: str) -> bool:
+    """True for a sentence fragment cut from its context (it starts lower-case), not an atomic Claim (CF-REQ-115)."""
+    first = re.search(r"\w", text)
+    return first is not None and first.group().islower()
 
 
 def _published_key(value: datetime | None) -> tuple[int, float]:

@@ -149,6 +149,9 @@ async def test_unsafe_continuations_are_rejected_without_modifying_run(repositor
     created = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
     rid = UUID(created["run_id"])
     repository.claim_next_queued(NOW)
+    if reason == "exhausted":
+        for used in (1, 2, 3):
+            repository.apply_retry(rid, attempt=used + 1, revision_retries_used=used)
     stage = "publish" if reason == "publication" else "select_assets"
     repository.start_stage(rid, stage)
     if reason != "not_failed":
@@ -164,6 +167,42 @@ async def test_unsafe_continuations_are_rejected_without_modifying_run(repositor
     with pytest.raises(ActiveRunConflict if reason == "active_run" else RunContinuationConflict):
         await runner.continue_run(rid, {"changed": True})
     assert repository.get(rid) == before
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.req("CF-REQ-411")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("maximum", "allowed"), [(3, False), (2, False), (4, True), (6, True)])
+async def test_exhausted_run_continues_only_when_limit_exceeds_its_own_used_retries(
+    repository, maximum, allowed
+) -> None:
+    other = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
+    repository.claim_next_queued(NOW)
+    repository.apply_retry(other, attempt=2, revision_retries_used=1)
+    repository.complete(other, "not_published", None, NOW)
+    rid = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
+    repository.claim_next_queued(NOW)
+    for used in (1, 2, 3):
+        repository.apply_retry(rid, attempt=used + 1, revision_retries_used=used)
+    repository.start_stage(rid, "plan_retry")
+    repository.fail(rid, "plan_retry", "evaluation_failed_after_retries", "Exhausted", NOW)
+    graph = FakeGraph()
+    graph.next = ("plan_retry",)
+    runner = WorkflowRunner(repository, graph, clock=lambda: NOW, default_stage_timeout_seconds=1)
+    settings = {"workflow": {"max_revision_retries": maximum}}
+    if not allowed:
+        with pytest.raises(RunContinuationConflict, match="max_revision_retries"):
+            await runner.continue_run(rid, settings)
+        assert repository.get(rid)["status"] == "failed"
+        return
+    await runner.continue_run(rid, settings)
+    resumed = repository.get(rid)
+    assert resumed["status"] == "queued"
+    assert resumed["current_stage"] == "plan_retry"
+    assert resumed["revision_retries_used"] == 3
+    assert resumed["settings_snapshot"] == settings
+    assert repository.get(other)["revision_retries_used"] == 1
 
 
 @pytest.mark.unit
@@ -476,3 +515,49 @@ async def test_lifecycle_reports_enabled_scheduler_live_after_tick(repository) -
     await asyncio.sleep(0)
     assert lifecycle.scheduler_alive is True
     await lifecycle.stop()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.parametrize("outcome", ["published", "partially_published", "not_published", "awaiting_approval"])
+@pytest.mark.asyncio
+async def test_terminal_run_invokes_external_cleanup(repository, outcome: str) -> None:
+    created = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    run_id = UUID(created["run_id"])
+    cleaned: list[UUID] = []
+
+    async def cleanup(rid: UUID) -> None:
+        assert repository.get(rid)["status"] == "completed"
+        cleaned.append(rid)
+
+    runner = WorkflowRunner(
+        repository,
+        FakeGraph(result={"outcome": outcome}),
+        clock=lambda: NOW,
+        default_stage_timeout_seconds=30,
+        cleanup_run=cleanup,
+    )
+    assert await runner.run_next()
+    assert cleaned == [run_id]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.asyncio
+async def test_failed_run_invokes_external_cleanup(repository) -> None:
+    created = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    cleaned: list[UUID] = []
+
+    async def cleanup(rid: UUID) -> None:
+        assert repository.get(rid)["status"] == "failed"
+        cleaned.append(rid)
+
+    runner = WorkflowRunner(
+        repository,
+        FakeGraph(error=StageFailure("missing_asset", "missing")),
+        clock=lambda: NOW,
+        default_stage_timeout_seconds=30,
+        cleanup_run=cleanup,
+    )
+    assert await runner.run_next()
+    assert cleaned == [UUID(created["run_id"])]

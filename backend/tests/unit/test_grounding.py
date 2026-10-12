@@ -13,6 +13,8 @@ from clipfactory.research.grounding import (
     build_verified_claims,
     detect_syndication,
     independent_source_count,
+    is_fragment,
+    is_page_metadata,
 )
 
 
@@ -91,3 +93,95 @@ def test_claims_require_verified_evidence_and_contradictions_are_resolved_determ
     assert claims[1].rejection_reason == "contradicted"
     assert claims[2].support_level == SupportLevel.UNSUPPORTED
     assert claims[2].status == ClaimStatus.REJECTED
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-115")
+def test_page_furniture_claims_are_rejected_as_page_metadata() -> None:
+    text = (
+        "Spain's Prime Minister Pedro Sanchez began campaigning on Saturday for a snap vote. Prices rose 5%. "
+        "Issued on: 11/10/2026 - 10:37 Modified: 11/10/2026 - 10:37 "
+        "Our correspondent Sarah Morris tells us more. Video by: Sarah MORRIS"
+    )
+    source = GroundedSource(uuid4(), article("https://f.example/1", "F", text, datetime(2026, 10, 11, tzinfo=UTC)), "F")
+    texts = [
+        "Sanchez began campaigning on Saturday for a snap vote",
+        "Prices rose 5%",
+        "Issued on: 11/10/2026 - 10:37",
+        "Modified: 11/10/2026 - 10:37",
+        "Our correspondent Sarah Morris tells us more.",
+        "Video by: Sarah MORRIS",
+        "11/10/2026 - 10:37",
+    ]
+    excerpts = [
+        "began campaigning on Saturday for a snap vote",
+        "Prices rose 5%",
+        "Issued on: 11/10/2026 - 10:37",
+        "Modified: 11/10/2026 - 10:37",
+        "Our correspondent Sarah Morris tells us more.",
+        "Video by: Sarah MORRIS",
+        "11/10/2026 - 10:37",
+    ]
+    drafts = [
+        ClaimDraft(text=claim, kind=ClaimKind.FACT, evidence=[ClaimEvidenceDraft(source_id=source.id, excerpt=quote)])
+        for claim, quote in zip(texts, excerpts, strict=True)
+    ]
+    claims = build_verified_claims(uuid4(), drafts, [source])
+    assert [claim.status for claim in claims[:2]] == [ClaimStatus.ACCEPTED, ClaimStatus.ACCEPTED]
+    assert all(claim.status == ClaimStatus.REJECTED for claim in claims[2:])
+    assert {claim.rejection_reason for claim in claims[2:]} == {"page_metadata"}
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-115")
+@pytest.mark.parametrize(
+    ("text", "metadata"),
+    [
+        ("Video Duration 30 minutes 36 seconds 30:36", True),
+        ("The event was published on 11 Oct 2026", True),
+        ("The report was published in March and cited by lawmakers.", False),
+        ("Keywords for this article elections France Left wing Socialist Party (France)", True),
+        ("The illustrations in this video have been created by artists aided by AI-powered software.", True),
+        ("True Crime Reports is an Al Jazeera Originals Production.", True),
+        ("Vittorio Boiocchi, a lifelong Inter Milan fan, is shot outside his Milan home in 2022.", False),
+        ("The film is a joint production with the BBC, the studio said on Monday.", False),
+        ("The company generated images with AI and was fined 2 million euros.", False),
+    ],
+)
+def test_runtime_labels_ai_disclaimers_and_production_credits_are_page_metadata(text: str, metadata: bool) -> None:
+    assert is_page_metadata(text) is metadata
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-115")
+@pytest.mark.parametrize(
+    ("text", "fragment"),
+    [
+        ("with a cyberattack disrupting the primary vote.", True),
+        ("guest Joseph Downing, Senior Lecturer in Politics at Aston University.", True),
+        ("“irresponsible threats” that “could potentially compromise”", True),
+        ("an allegation he denies.", True),
+        ("A cyberattack disrupted the Socialist primary vote on Thursday.", False),
+        ("“We will not back down,” the minister said.", False),
+        ("7,000 people were detained, media reports said.", False),
+    ],
+)
+def test_sentence_fragments_are_not_atomic_claims(text: str, fragment: bool) -> None:
+    assert is_fragment(text) is fragment
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-115")
+def test_fragment_claims_are_rejected_with_reason_fragment() -> None:
+    text = "A cyberattack disrupted the primary vote on Thursday, with officials investigating."
+    source = GroundedSource(uuid4(), article("https://f.example/2", "F", text, datetime(2026, 10, 11, tzinfo=UTC)), "F")
+    drafts = [
+        ClaimDraft(text=claim, kind=ClaimKind.FACT, evidence=[ClaimEvidenceDraft(source_id=source.id, excerpt=quote)])
+        for claim, quote in [
+            ("A cyberattack disrupted the primary vote on Thursday", "A cyberattack disrupted the primary vote"),
+            ("with officials investigating.", "with officials investigating."),
+        ]
+    ]
+    claims = build_verified_claims(uuid4(), drafts, [source])
+    assert claims[0].status == ClaimStatus.ACCEPTED
+    assert (claims[1].status, claims[1].rejection_reason) == (ClaimStatus.REJECTED, "fragment")

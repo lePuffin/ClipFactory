@@ -1,6 +1,9 @@
+import asyncio
 import hashlib
 import io
 from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PIL import Image
@@ -89,7 +92,7 @@ async def test_only_chosen_candidate_downloaded_and_external_provenance_is_persi
     assert result.provenance.source_url == "https://source.example/1"
     assert result.width == 800
     assert result.height == 1200
-    assert result.reusable
+    assert not result.reusable
     assert await storage.exists(result.storage_key)
     assert not list((tmp_path / "work/media-downloads").glob("*.media"))
 
@@ -146,3 +149,39 @@ async def test_transient_search_is_retried_without_waiting_in_test(tmp_path):
     assert result is not None
     assert source.calls == 2
     assert len(delays) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.asyncio
+async def test_cancelled_acquisition_registers_input_before_terminal_cleanup(tmp_path: Path) -> None:
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class HeldStorage(LocalStorageProvider):
+        async def put_file(self, source: Path, key: str) -> str:
+            started.set()
+            await release.wait()
+            return await super().put_file(source, key)
+
+    storage, assets = HeldStorage(tmp_path), Assets()
+    run_id = uuid4()
+    task = asyncio.create_task(
+        acquire_asset(
+            AssetRequirement("image", "photo", "Parliament vote", min_width=720),
+            providers=[Source(storage)],
+            storage=storage,
+            assets=assets,
+            media=Inspector(),
+            now=datetime(2026, 10, 11, tzinfo=UTC),
+            run_id=run_id,
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)
+    assert len(assets.items) == 1
+    assert assets.items[0].storage_key.startswith(f"assets/external-runs/{run_id}/")
+    assert await storage.exists(assets.items[0].storage_key)
+    assert not list((tmp_path / "work/media-downloads").glob("*.media"))

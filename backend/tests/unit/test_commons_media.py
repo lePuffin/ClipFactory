@@ -10,7 +10,11 @@ from clipfactory.ports.media_sources import MediaSearchRequest
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-203")
 @pytest.mark.req("CF-REQ-207")
-@pytest.mark.parametrize(("license_name", "count"), [("CC BY-SA 4.0", 1), ("CC BY-NC 4.0", 0)])
+@pytest.mark.req("CF-REQ-268")
+@pytest.mark.parametrize(
+    ("license_name", "count"),
+    [("CC BY-SA 4.0", 1), ("CC BY-NC 4.0", 0), ("OGL 3", 1), ("OGL v3.0", 1), ("OGL 2", 0), ("All rights reserved", 0)],
+)
 @pytest.mark.asyncio
 async def test_safe_raster_thumbnail_preserves_free_license_attribution(tmp_path, license_name, count) -> None:
     body = {

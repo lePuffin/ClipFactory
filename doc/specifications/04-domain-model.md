@@ -103,7 +103,7 @@ Canonical requirements: [16-scheduling-and-runs.md](16-scheduling-and-runs.md).
 | id | UUID | |
 | trigger | enum `RunTrigger` | `scheduled`, `run_now`, `manual_url` |
 | manual_url | str? | Required iff `trigger = manual_url` |
-| profile_id | UUID | |
+| profile_id | UUID? | Active profile at Run start; `ON DELETE SET NULL` preserves Run when saved profile is deleted |
 | profile_snapshot | JSON | Immutable copy of the profile at Run start |
 | status | enum `RunStatus` | see state machine |
 | outcome | enum `RunOutcome`? | Set when `status = completed` |
@@ -286,6 +286,10 @@ accepted Claims, and are selected only under CF-REQ-266. The fallback template
 determines infographic/scientific routing; no executable content is accepted.
 Absent fields preserve compatibility with saved drafts. Normalized media
 requirements retain these fields so Retry/Continue can use the same alternatives.
+Media drafts may carry `generation_prompt` (optional non-empty text, at most
+2000 characters) for a concrete illustrative moving shot, distinct from the
+search description (CF-REQ-267). Legacy drafts use their description plus
+deterministic cinematography instructions. No additional planning request.
 
 Typed graphics payloads:
 

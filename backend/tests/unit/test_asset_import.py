@@ -2,13 +2,15 @@ import io
 import struct
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PIL import Image
 from sqlalchemy import create_engine
 
 from clipfactory.assets.importing import AssetImportError, ImportProvenance, import_asset_file
-from clipfactory.domain.models import AssetOrigin
+from clipfactory.assets.retention import retire_run_external_assets
+from clipfactory.domain.models import AssetOrigin, AssetStatus
 from clipfactory.infrastructure.db.asset_repository import AssetRepository
 from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.session import create_session_factory
@@ -207,3 +209,45 @@ async def test_import_rejects_categories_without_supported_import_model(library,
             _wav(tmp_path / "a.wav"), category=category, provenance=CC0, storage=storage, assets=repository, now=NOW
         )
     assert error.value.code == "unsupported_category"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-211")
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.asyncio
+async def test_external_input_is_redownloaded_for_new_run_without_losing_metadata(library, tmp_path: Path) -> None:
+    assets, storage = library
+    source = _png(tmp_path / "external.png")
+    run_id, second_run_id = uuid4(), uuid4()
+    provenance = ImportProvenance(
+        origin=AssetOrigin.EXTERNAL,
+        provider="fake",
+        license="CC BY 4.0",
+        source_url="https://example.org/photo",
+        attribution_required=True,
+        attribution_text="Author / CC BY 4.0",
+    )
+    first = await import_asset_file(
+        source, category="photo", provenance=provenance, storage=storage, assets=assets, now=NOW, run_id=run_id
+    )
+    retry = await import_asset_file(
+        source, category="photo", provenance=provenance, storage=storage, assets=assets, now=NOW, run_id=run_id
+    )
+    assert retry.reused
+    assert retry.asset.id == first.asset.id
+    assert await storage.exists(first.asset.storage_key)
+    await retire_run_external_assets(run_id, assets=assets, storage=storage)
+    retired = assets.get(first.asset.id)
+    assert retired is not None
+    assert retired.status == AssetStatus.RETIRED
+    second = await import_asset_file(
+        source, category="photo", provenance=provenance, storage=storage, assets=assets, now=NOW, run_id=second_run_id
+    )
+    assert second.asset.id == first.asset.id
+    assert second.asset.provenance == first.asset.provenance
+    assert second.asset.status == AssetStatus.ACTIVE
+    assert not second.asset.reusable
+    assert second.asset.storage_key.startswith(f"assets/external-runs/{second_run_id}/")
+    assert await storage.exists(second.asset.storage_key)
+    assert not await storage.exists(first.asset.storage_key)
+    assert assets.count() == 1

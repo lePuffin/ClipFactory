@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import io
+import hashlib
 import json
 from collections.abc import Callable
 from datetime import datetime
@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from PIL import Image, ImageFont
+from PIL import ImageFont
 from pydantic import BaseModel, ConfigDict, Field
 
 from clipfactory.assets.title_card import render_title_card
-from clipfactory.composition.render import MediaExecutor, render_clip
+from clipfactory.composition.render import MediaExecutor, freeze_end_card, render_clip
 from clipfactory.composition.spec import AudioInput, CompositionSpec, OverlayInput, VisualInput
 from clipfactory.domain.models import Asset, AssetStatus, ContentProfile, Platform
 from clipfactory.planning.motion import ShotMedia, choose_shot_motions
@@ -24,7 +24,7 @@ from clipfactory.ports.render_revisions import RenderRevisionRepository
 from clipfactory.ports.storage import MediaStorage
 from clipfactory.production.alignment import AlignedWord
 from clipfactory.production.captions import FontLoader, build_caption_track, render_ass
-from clipfactory.production.editorial import EditorialCue, render_editorial_graphic
+from clipfactory.production.editorial import EditorialCue, render_brand_mark, render_editorial_graphic
 
 
 class OverlayRequest(BaseModel):
@@ -194,6 +194,51 @@ class SavedNewsRenderer:
                     graphic.height,
                 )
             )
+        persistent_identity = []
+        for identity in metadata.get("identity_overlays", []):
+            if identity["kind"] == "logo" and request.brand_mark_asset_id is not None:
+                continue
+            identity_path = Path(identity["path"])
+            content = await asyncio.to_thread(identity_path.read_bytes)
+            if hashlib.sha256(content).hexdigest() != identity["sha256"]:
+                raise ValueError("Saved persistent identity image changed; rerender cannot reproduce it")
+            overlays.append(
+                OverlayInput(
+                    identity_path,
+                    0,
+                    duration,
+                    identity["x"],
+                    identity["y"],
+                    identity["width"],
+                    identity["height"],
+                    0,
+                    identity["sha256"],
+                )
+            )
+            persistent_identity.append(identity)
+        buzz_overlays = []
+        for buzz in metadata.get("buzz_overlays", []):
+            buzz_path = Path(buzz["path"])
+            content = await asyncio.to_thread(buzz_path.read_bytes)
+            if hashlib.sha256(content).hexdigest() != buzz["sha256"]:
+                raise ValueError("Saved buzz line image changed; rerender cannot reproduce it")
+            end = min(float(buzz["end_seconds"]), duration)
+            if end <= float(buzz["start_seconds"]):
+                continue
+            overlays.append(
+                OverlayInput(
+                    buzz_path,
+                    float(buzz["start_seconds"]),
+                    end,
+                    buzz["x"],
+                    buzz["y"],
+                    buzz["width"],
+                    buzz["height"],
+                    float(buzz.get("fade_seconds", 0.2)),
+                    buzz["sha256"],
+                )
+            )
+            buzz_overlays.append(buzz)
         if request.brand_mark_asset_id is not None:
             brand_mark = await asyncio.to_thread(self.assets.get, request.brand_mark_asset_id)
             if (
@@ -225,7 +270,21 @@ class SavedNewsRenderer:
                     margin,
                     brand_width,
                     brand_height,
+                    sha256=hashlib.sha256(image_bytes).hexdigest(),
                 )
+            )
+            persistent_identity.append(
+                {
+                    "kind": "logo",
+                    "path": str(self.storage.local_path(brand_mark_key)),
+                    "sha256": hashlib.sha256(image_bytes).hexdigest(),
+                    "asset_id": str(brand_mark.id),
+                    "asset_sha256": brand_mark.sha256,
+                    "x": profile.output.width - margin - brand_width,
+                    "y": margin,
+                    "width": brand_width,
+                    "height": brand_height,
+                }
             )
             if brand_mark.provenance.attribution_required:
                 credits.append(brand_mark.provenance.attribution_text)
@@ -281,6 +340,7 @@ class SavedNewsRenderer:
                     motion.motion,
                     segment["transition_in"] if request.transition_policy == "planned" else "cut",
                     segment.get("source_label"),
+                    float(segment.get("source_offset_seconds", 0.0)) if asset.media_type == "video" else 0.0,
                 )
             )
         sounds = []
@@ -327,6 +387,18 @@ class SavedNewsRenderer:
             music_path = self.storage.local_path(music.storage_key)
             if music.provenance.attribution_required:
                 credits.append(music.provenance.attribution_text)
+        end_card = metadata.get("end_card")
+        end_card_path = None
+        end_card_sha256 = None
+        if end_card:
+            end_card_path, end_card_sha256 = await freeze_end_card(
+                Path(end_card["path"]),
+                storage=self.storage,
+                runner=self.media,
+                key=f"{work_key}/end-card.mp4",
+            )
+            if end_card_sha256 != end_card["sha256"]:
+                raise ValueError("Saved end card no longer matches its recorded hash")
         spec = CompositionSpec(
             segments=tuple(segments),
             narration_path=self.storage.local_path(narration["narration_key"]),
@@ -346,6 +418,8 @@ class SavedNewsRenderer:
             motion_intensity=profile.visual_style.motion_intensity,
             overlays=tuple(overlays),
             sound_effects=tuple(sounds),
+            end_card_path=end_card_path,
+            end_card_sha256=end_card_sha256,
         )
         rendered = await render_clip(
             spec, storage=self.storage, runner=self.media, final_key=f"clips/revisions/{revision_id}.mp4"
@@ -361,6 +435,13 @@ class SavedNewsRenderer:
             "probe": rendered.probe,
             "credits": list(dict.fromkeys(credit for credit in credits if credit)),
             "sources": context["package"]["source_attributions"],
+            "identity_overlays": persistent_identity,
+            "buzz_overlays": buzz_overlays,
+            "end_card": (
+                {"path": str(end_card_path), "sha256": end_card_sha256, "duration_seconds": 3}
+                if end_card_path is not None
+                else None
+            ),
             "template_version": request.template_version,
             "openrouter_calls": 0,
             "tts_calls": 0,
@@ -399,9 +480,4 @@ class SavedNewsRenderer:
 
 
 def _resize_brand_mark(source: Path, maximum_dimension: int) -> tuple[bytes, int, int]:
-    with Image.open(source) as original:
-        image = original.convert("RGBA")
-        image.thumbnail((maximum_dimension, maximum_dimension), Image.Resampling.LANCZOS)
-        output = io.BytesIO()
-        image.save(output, format="PNG", optimize=True)
-        return output.getvalue(), image.width, image.height
+    return render_brand_mark(source, maximum_dimension)

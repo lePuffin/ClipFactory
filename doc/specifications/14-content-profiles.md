@@ -27,11 +27,35 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
 ### CF-REQ-550 — Single active profile
 
 - **Description:** Exactly one Content Profile shall be active in v1.0. The
-  data model stores profiles in a table keyed by ID so multiple profiles can
-  be supported later without migration of Runs.
+  owner may store multiple uniquely named profiles in the existing ID-keyed
+  table, without migrating Runs. Names contain 1–160 characters after
+  trimming surrounding whitespace and cannot be blank. Stored ID, name, activation and update
+  time are authoritative over those fields in submitted profile JSON.
+- **Behaviour:** `GET /api/content-profiles` returns `{"items": [{"id", "name",
+  "is_active", "updated_at", "profile": ContentProfile}]}`. Creation via
+  `POST /api/content-profiles` accepts `{name, profile, activate: false}` and
+  returns the item with 201 and a new ID. `PUT /api/content-profiles/{id}`
+  accepts optional `name` and/or `profile` and returns the item.
+  `POST /api/content-profiles/{id}/activate` activates that item and atomically
+  deactivates others. `DELETE /api/content-profiles/{id}` returns 204 for an
+  inactive profile; deleting the active profile returns 409 with error code
+  `active_profile_delete_forbidden`. Missing IDs return 404 `profile_not_found`;
+  duplicate names return 409 `profile_name_conflict`, using the standard error
+  envelope. Existing `GET/PUT /api/content-profile` continue to read/replace
+  the active profile; edits and activation never alter existing Run snapshots.
+  Deleting an inactive profile physically removes its row. Prior Runs retain
+  their immutable `profile_snapshot`; their nullable `profile_id` reference
+  becomes null through `ON DELETE SET NULL` (owner-approved retention decision,
+  2026-10-11). No hidden tombstone is stored. Profile fields and the single-active
+  unique index need no migration; this Run foreign-key change does.
 - **Acceptance:**
   - Activating profile B deactivates profile A in the same transaction.
-  - Every Run references the profile it used.
+  - Every Run retains the complete profile snapshot it used; when that saved
+    profile is deleted, only its live reference becomes null.
+  - Creating an inactive profile leaves the active profile unchanged; activating
+    it makes both row metadata and nested profile JSON agree.
+  - Duplicate names, missing IDs and active deletion return the codes above
+    without changing stored profiles.
 
 ### CF-REQ-551 — Profile validation
 
@@ -40,6 +64,11 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
   dimensions and 24 ≤ fps ≤ 60, valid IANA timezone and `HH:MM` time,
   platforms from the supported set, `1 ≤ min_sources ≤ preferred_independent_sources`,
   `1 ≤ max_candidate_articles ≤ 50`.
+- **Behaviour:** Both named-profile creation/replacement and active-profile
+  replacement validate ContentProfile values. Invalid profile JSON returns 422
+  `{"error": {"code": "profile_validation_failed", "message":
+  "Content Profile validation failed", "details": {"errors": [...]}}}`; invalid
+  updates leave persisted values unchanged.
 - **Acceptance:**
   - `min_seconds = 90, max_seconds = 60` is rejected with a field error.
   - `timezone = "Mars/Base"` is rejected.

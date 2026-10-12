@@ -9,6 +9,13 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+WAN_NEGATIVE_PROMPT = (
+    "色调艳丽,过曝,静态,细节模糊不清,字幕,风格,作品,画作,画面,静止,整体发灰,最差质量,"
+    "低质量,JPEG压缩残留,丑陋的,残缺的,多余的手指,画得不好的手部,画得不好的脸部,畸形的,"
+    "毁容的,形态畸形的肢体,手指融合,静止不动的画面,杂乱的背景,三条腿,背景人很多,倒着走"
+)
+LLMOutputMode = Literal["json_schema", "json_object", "prompt_json"]
+
 
 class EnvironmentSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -52,6 +59,12 @@ class EnvironmentSettings(BaseSettings):
     llm_api_key: SecretStr | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str = Field(default="google/gemma-4-31b-it:free", alias="LLM_MODEL")
     llm_model_evaluation: str | None = Field(default=None, alias="LLM_MODEL_EVALUATION")
+    llm_model_evaluation_fallback: str | None = Field(default=None, alias="LLM_MODEL_EVALUATION_FALLBACK")
+    llm_output_mode: LLMOutputMode = Field(default="json_schema", alias="LLM_OUTPUT_MODE")
+    llm_output_mode_evaluation: LLMOutputMode = Field(default="json_schema", alias="LLM_OUTPUT_MODE_EVALUATION")
+    llm_output_mode_evaluation_fallback: LLMOutputMode = Field(
+        default="prompt_json", alias="LLM_OUTPUT_MODE_EVALUATION_FALLBACK"
+    )
     llm_request_timeout_seconds: int = Field(default=120, ge=1, le=600, alias="LLM_REQUEST_TIMEOUT_SECONDS")
     google_application_credentials: Path | None = Field(default=None, alias="GOOGLE_APPLICATION_CREDENTIALS")
     whisper_model: str = Field(default="large-v3-turbo", alias="WHISPER_MODEL")
@@ -67,7 +80,15 @@ class EnvironmentSettings(BaseSettings):
     wan_model: str = Field(default="Wan-AI/Wan2.1-T2V-1.3B-Diffusers", alias="WAN_MODEL")
     wan_device: Literal["cuda", "cpu"] = Field(default="cuda", alias="WAN_DEVICE")
     wan_fps: int = Field(default=16, ge=1, le=60, alias="WAN_FPS")
-    wan_inference_steps: int = Field(default=50, ge=1, le=100, alias="WAN_INFERENCE_STEPS")
+    wan_inference_steps: int = Field(default=25, ge=1, le=100, alias="WAN_INFERENCE_STEPS")
+    wan_guidance_scale: float = Field(default=5, gt=0, le=20, allow_inf_nan=False, alias="WAN_GUIDANCE_SCALE")
+    wan_flow_shift: float = Field(default=3, gt=0, le=20, allow_inf_nan=False, alias="WAN_FLOW_SHIFT")
+    wan_max_long_side: int = Field(default=832, ge=64, le=832, multiple_of=16, alias="WAN_MAX_LONG_SIDE")
+    wan_max_short_side: int = Field(default=480, ge=64, le=480, multiple_of=16, alias="WAN_MAX_SHORT_SIDE")
+    wan_encoding_crf: int = Field(default=10, ge=0, le=51, alias="WAN_ENCODING_CRF")
+    wan_negative_prompt: str = Field(
+        default=WAN_NEGATIVE_PROMPT, min_length=1, max_length=2000, alias="WAN_NEGATIVE_PROMPT"
+    )
     wan_max_generations_per_run: int = Field(default=2, ge=0, le=100, alias="WAN_MAX_GENERATIONS_PER_RUN")
     wan_model_license: str = Field(default="Apache-2.0", min_length=1, alias="WAN_MODEL_LICENSE")
     higgsfield_api_key: SecretStr | None = Field(default=None, alias="HIGGSFIELD_API_KEY")
@@ -123,6 +144,13 @@ class EnvironmentSettings(BaseSettings):
     @property
     def effective_log_format(self) -> Literal["json", "console"]:
         return self.log_format or ("json" if self.app_env == "production" else "console")
+
+    def model_for_role(self, role: str) -> str:
+        if role == "evaluation_fallback" and self.llm_model_evaluation_fallback:
+            return self.llm_model_evaluation_fallback
+        if role != "default" and self.llm_model_evaluation:
+            return self.llm_model_evaluation
+        return self.llm_model
 
     def credential_status(self) -> dict[str, bool]:
         """Return presence only, never credential values."""

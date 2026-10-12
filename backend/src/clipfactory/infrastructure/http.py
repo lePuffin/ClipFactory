@@ -15,6 +15,10 @@ class UnsafeURL(ValueError):
     """Raised when a URL or one of its resolved addresses is unsafe."""
 
 
+class HostResolutionError(UnsafeURL):
+    """Raised when DNS resolution fails; usually transient (for example right after the host wakes)."""
+
+
 class ResponseTooLarge(ValueError):
     """Raised when a streaming response exceeds its configured bound."""
 
@@ -84,9 +88,9 @@ class SafeHTTPClient:
         try:
             addresses = await asyncio.to_thread(self.resolver, parts.hostname, port)
         except (OSError, socket.gaierror) as exc:
-            raise UnsafeURL("host could not be resolved") from exc
+            raise HostResolutionError("host could not be resolved") from exc
         if not addresses:
-            raise UnsafeURL("host did not resolve")
+            raise HostResolutionError("host did not resolve")
         for address in addresses:
             parsed = ipaddress.ip_address(address)
             if not parsed.is_global:

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from clipfactory.infrastructure.db.models import (
@@ -28,15 +28,43 @@ class CatalogueRepository:
     def __init__(self, sessions: sessionmaker) -> None:
         self.sessions = sessions
 
-    def clips(self, *, pending_approval: bool = False, limit: int = 100) -> list[dict[str, Any]]:
-        statement = select(ClipRow).where(ClipRow.status == "approved")
+    @staticmethod
+    def _clip_query(*, pending_approval: bool = False, filter: str = "all") -> Any:
+        statement = select(ClipRow)
         if pending_approval:
             statement = statement.where(
-                ClipRow.id.in_(select(PublicationRow.clip_id).where(PublicationRow.status == "awaiting_approval"))
+                ClipRow.status == "approved",
+                ClipRow.id.in_(select(PublicationRow.clip_id).where(PublicationRow.status == "awaiting_approval")),
             )
-        statement = statement.order_by(ClipRow.created_at.desc()).limit(max(1, min(limit, 100)))
+        elif filter == "published":
+            statement = statement.where(
+                ClipRow.id.in_(select(PublicationRow.clip_id).where(PublicationRow.status == "published"))
+            )
+        elif filter == "failed":
+            statement = statement.where(
+                or_(
+                    ClipRow.status.in_(("rejected", "failed")),
+                    ClipRow.id.in_(select(PublicationRow.clip_id).where(PublicationRow.status == "failed")),
+                )
+            )
+        return statement
+
+    def clips(
+        self, *, pending_approval: bool = False, filter: str = "all", limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        statement = (
+            self._clip_query(pending_approval=pending_approval, filter=filter)
+            .order_by(ClipRow.created_at.desc(), ClipRow.id.desc())
+            .limit(max(1, min(limit, 100)))
+            .offset(max(0, offset))
+        )
         with self.sessions() as session:
             return [self._clip(session, row) for row in session.scalars(statement)]
+
+    def count_clips(self, *, pending_approval: bool = False, filter: str = "all") -> int:
+        statement = self._clip_query(pending_approval=pending_approval, filter=filter)
+        with self.sessions() as session:
+            return session.scalar(select(func.count()).select_from(statement.subquery())) or 0
 
     def clip(self, clip_id: UUID) -> dict[str, Any] | None:
         with self.sessions() as session:

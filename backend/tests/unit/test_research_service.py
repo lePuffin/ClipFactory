@@ -88,9 +88,21 @@ class GroundedFakeLLM:
                     )
                     for index, (claim_text, excerpt) in enumerate(
                         (
-                            ("Researchers confirmed three results", "confirmed three independent results"),
-                            ("The team published a report", "team published its report on Tuesday"),
-                            ("The study improved measurements", "study improved measurements significantly"),
+                            (
+                                "Researchers confirmed three independent results after a two year study of"
+                                " coastal ocean samples collected along the northern shelf",
+                                "confirmed three independent results",
+                            ),
+                            (
+                                "The research team published its full report on Tuesday in a peer reviewed"
+                                " journal and shared the underlying data with other laboratories",
+                                "team published its report on Tuesday",
+                            ),
+                            (
+                                "The study improved measurement accuracy significantly compared with the older"
+                                " laboratory techniques that agencies had relied on for decades",
+                                "study improved measurements significantly",
+                            ),
                         ),
                         start=1,
                     )

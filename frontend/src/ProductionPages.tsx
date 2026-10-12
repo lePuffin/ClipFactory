@@ -1,8 +1,10 @@
 import { ArrowUpRight, BarChart3, Check, ExternalLink, RefreshCw, Save, Settings2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useParams } from "react-router-dom";
 
-import { ApiError, decideApproval, type BudgetSummary, type Clip, type ClipList, type JsonObject, updateContentProfile, updateSettings } from "./api/client";
+import { ApiError, decideApproval, retryPublications, type BudgetSummary, type Clip, type ClipList, type JsonObject, updateContentProfile, updateSettings, createContentProfile, saveContentProfile, activateContentProfile, deleteContentProfile, type ContentProfileItem, type ContentProfileList } from "./api/client";
+import { Collapsible } from "./Collapsible";
+import { Pagination } from "./Pagination";
 import { useResource } from "./hooks/useResource";
 
 type EditorValue = string | number | boolean | null | EditorValue[] | { [key: string]: EditorValue };
@@ -41,37 +43,66 @@ export function AnalyticsPage() {
 }
 
 export function ProfilePage() {
-  const [resource, reload] = useResource<unknown>("/api/content-profile");
-  return <Page title="Content Profile" eyebrow="EDITORIAL / 06" lede="The active editorial and production policy used by subsequent Runs." action={<IconButton label="Refresh Content Profile" onClick={reload} />}>
-    {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : <ProfileEditor key={JSON.stringify(resource.data)} initial={record(resource.data) as JsonObject} onSaved={reload} />}
+  const [resource, reload] = useResource<ContentProfileList>("/api/content-profiles");
+  const [active] = useResource<JsonObject>("/api/content-profile");
+  const [selectedId, setSelectedId] = useState("");
+  const [message, setMessage] = useState("");
+  const items = resource.status === "success" ? resource.data.items : [];
+  const selected = items.find((item) => item.id === selectedId) ?? items.find((item) => item.is_active) ?? items[0];
+  return <Page title="Content Profile" eyebrow="EDITORIAL / 06" lede="Manage saved editorial policies. Only the active profile is used by subsequent Runs." action={<IconButton label="Refresh Content Profile" onClick={reload} />}>
+    {message && <p className="form-message" role="status">{message}</p>}
+    {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : <>
+      <div className="profile-selector field"><label htmlFor="saved-profile">Saved profiles</label><select id="saved-profile" value={selected?.id ?? ""} onChange={(event) => { setSelectedId(event.target.value); setMessage(""); }}>{!items.length && <option value="">No saved profiles</option>}{items.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? " (active)" : ""}</option>)}</select></div>
+      {selected || active.status === "success" ? <ProfileEditor key={selected?.id ?? "new"} item={selected} initial={selected?.profile ?? (active.status === "success" ? active.data : {})} onSaved={(item, notice) => { setSelectedId(item?.id ?? ""); setMessage(notice); reload(); }} /> : active.status === "error" ? <ErrorMessage message={active.message} /> : <Loading />}
+    </>}
   </Page>;
 }
 
-function ProfileEditor({ initial, onSaved }: { initial: JsonObject; onSaved: () => void }) {
+function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?: ContentProfileItem; onSaved: (item: ContentProfileItem | undefined, notice: string) => void }) {
   const [draft, setDraft] = useState(initial as { [key: string]: EditorValue });
+  const [name, setName] = useState(item?.name ?? "");
+  const [newName, setNewName] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
 
-  async function save() {
-    const validation = validateProfile(draft);
-    setErrors(validation);
+  async function perform(action: "save" | "create" | "activate" | "delete") {
     setMessage("");
+    const validation = action === "save" || action === "create" ? validateProfile(draft) : {};
+    if ((action === "create" && !newName.trim()) || (action === "save" && item && !name.trim())) validation.form = "Enter a profile name.";
+    setErrors(validation);
     if (Object.keys(validation).length) return;
     setSaving(true);
     try {
-      await updateContentProfile(draft as JsonObject);
-      setMessage("Content Profile saved. New Runs will use this version.");
-      onSaved();
+      let saved: ContentProfileItem | undefined = item;
+      if (action === "create") saved = await createContentProfile({ name: newName.trim(), profile: draft as JsonObject });
+      if (action === "save") {
+        if (item) saved = await saveContentProfile(item.id, { name: name.trim(), profile: draft as JsonObject });
+        else await updateContentProfile(draft as JsonObject);
+      }
+      if (action === "activate" && item) saved = await activateContentProfile(item.id);
+      if (action === "delete" && item) { await deleteContentProfile(item.id); saved = undefined; }
+      onSaved(saved, action === "activate" ? "Content Profile activated. New Runs will use this profile." : action === "delete" ? "Content Profile deleted." : "Content Profile saved.");
     } catch (error: unknown) {
-      setErrors(serverErrors(error));
-      setMessage(error instanceof Error ? error.message : "Content Profile could not be saved");
-    } finally { setSaving(false); }
+      setErrors(Object.fromEntries(Object.entries(serverErrors(error)).map(([path, value]) => [path.replace(/^profile\./, ""), value])));
+      setMessage(error instanceof Error ? error.message : "Content Profile could not be updated");
+    } finally { setSaving(false); setConfirmDelete(false); }
   }
 
   return <section className="section-block form-section">
+    {item && <div className="profile-management">
+      <div className="field"><label htmlFor="profile-name">Profile name</label><input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} /></div>
+      <span className={`table-status ${item.is_active ? "active" : "queued"}`}>{item.is_active ? "Active profile" : "Saved profile"}</span>
+      <button className="command-button" disabled={saving || item.is_active} onClick={() => void perform("activate")}>Activate selected profile</button>
+      <button ref={deleteButton} className="danger-button" disabled={saving || item.is_active} title={item.is_active ? "The active profile cannot be deleted" : "Delete this saved profile"} onClick={() => setConfirmDelete(true)}>Delete profile</button>
+    </div>}
     <ObjectEditor value={draft} onChange={setDraft} errors={errors} />
-    <FormFooter saving={saving} message={message} onSave={() => void save()} />
+    {errors.form && <p className="field-error" role="alert">{errors.form}</p>}
+    <FormFooter saving={saving} message={message} onSave={() => void perform("save")} />
+    <div className="profile-create"><div className="field"><label htmlFor="new-profile-name">New profile name</label><input id="new-profile-name" value={newName} onChange={(event) => setNewName(event.target.value)} /></div><button className="ghost-button" disabled={saving} onClick={() => void perform("create")}>Save as new profile</button></div>
+    {confirmDelete && <div className="profile-confirm" role="alertdialog" aria-modal="false" aria-labelledby="delete-profile-title"><h3 id="delete-profile-title">Delete {item?.name}?</h3><p>This removes the saved profile and cannot be undone.</p><button className="danger-button" autoFocus disabled={saving} onClick={() => void perform("delete")}>Confirm delete</button><button className="ghost-button" disabled={saving} onClick={() => { setConfirmDelete(false); deleteButton.current?.focus(); }}>Cancel</button></div>}
   </section>;
 }
 
@@ -82,13 +113,74 @@ export function SettingsPage() {
   const settings = record(payload.settings);
   return <Page title="Settings" eyebrow="SYSTEM / 07" lede="Runtime policy and provider readiness. Credentials remain environment-only." action={<IconButton label="Refresh settings" onClick={reload} />}>
     {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : <>
-      <section className="section-block provider-section">
+      <Collapsible title="Schedule"><ScheduleSection /></Collapsible>
+      <Collapsible title="Providers"><section className="section-block provider-section">
         <div className="section-head"><div><div className="eyebrow">CREDENTIAL PRESENCE</div><h2>Providers</h2></div><span className="privacy-note">VALUES NEVER DISPLAYED</span></div>
         <div className="provider-grid">{providers.map((provider) => <div className="provider-row" key={text(provider.provider)}><span>{humanize(text(provider.provider))}</span><span className={`credential ${provider.credentials_configured === true ? "configured" : "missing"}`}>{provider.credentials_configured === true ? <Check size={13} /> : <X size={13} />}{provider.credentials_configured === true ? "Configured" : "Not configured"}</span></div>)}</div>
-      </section>
-      <div className="settings-stack">{Object.entries(settings).filter(([, value]) => isEditorObject(value)).sort(([left], [right]) => Number(right === "environment") - Number(left === "environment")).map(([section, value]) => <SettingsSection key={section} name={section} initial={record(value)} onSaved={reload} />)}</div>
+      </section></Collapsible>
+      <div className="settings-stack">{Object.entries(settings).filter(([, value]) => isEditorObject(value)).sort(([left], [right]) => Number(right === "environment") - Number(left === "environment")).map(([section, value]) => <Collapsible key={section} title={humanize(section)}><SettingsSection name={section} initial={record(value)} onSaved={reload} /></Collapsible>)}</div>
     </>}
   </Page>;
+}
+
+function ScheduleSection() {
+  const [resource, reload] = useResource<unknown>("/api/content-profile");
+  const profile = resource.status === "success" ? record(resource.data) : {};
+  if (!isEditorObject(profile.schedule)) return null;
+  return <ScheduleEditor key={JSON.stringify(profile.schedule)} profile={profile} onSaved={reload} />;
+}
+
+function timezoneOptions(current: string): string[] {
+  const supported = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+  return [...new Set([current, "UTC", ...supported].filter(Boolean))].sort((left, right) => left.localeCompare(right));
+}
+
+function ScheduleEditor({ profile, onSaved }: { profile: JsonObject; onSaved: () => void }) {
+  const initial = record(profile.schedule);
+  const [enabled, setEnabled] = useState(initial.enabled !== false);
+  const [localTime, setLocalTime] = useState(text(initial.local_time) || "05:00");
+  const [timezone, setTimezone] = useState(text(initial.timezone) || "Europe/Lisbon");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [summary, reloadSummary] = useResource<{ next_scheduled_run_at?: string | null }>("/api/dashboard/summary", { intervalMs: 30_000 });
+  const next = summary.status === "success" ? summary.data.next_scheduled_run_at : null;
+
+  async function save() {
+    const validation: Record<string, string> = {};
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(localTime)) validation["schedule.local_time"] = "Use HH:MM in 24-hour time.";
+    setErrors(validation); setMessage("");
+    if (Object.keys(validation).length) return;
+    setSaving(true);
+    try {
+      await updateContentProfile({ ...profile, schedule: { ...initial, enabled, local_time: localTime, timezone } });
+      setMessage(enabled ? `Daily Run set for ${localTime} (${timezone}). The next Run updates within 30 seconds.` : "Daily Run disabled.");
+      onSaved(); reloadSummary();
+    } catch (error: unknown) {
+      setErrors(serverErrors(error));
+      setMessage(error instanceof Error ? error.message : "Schedule could not be saved");
+    } finally { setSaving(false); }
+  }
+
+  return <section className="section-block form-section schedule-section">
+    <div className="section-head"><div><div className="eyebrow">AUTOMATION</div><h2>Schedule</h2></div><span className="privacy-note">NEXT RUN {next ? formatDate(next).toUpperCase() : "N/A"}</span></div>
+    <div className="object-editor">
+      <div className="field"><label htmlFor="schedule-enabled">Daily Run</label><input id="schedule-enabled" type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></div>
+      <div className="field">
+        <label htmlFor="schedule-local-time">Run Time</label>
+        <input id="schedule-local-time" type="time" step={60} value={localTime} disabled={!enabled} aria-invalid={Boolean(errors["schedule.local_time"])} onChange={(event) => setLocalTime(event.target.value.slice(0, 5))} />
+        {errors["schedule.local_time"] && <span className="field-error" role="alert">{errors["schedule.local_time"]}</span>}
+      </div>
+      <div className="field">
+        <label htmlFor="schedule-timezone">Timezone</label>
+        <select id="schedule-timezone" value={timezone} disabled={!enabled} aria-invalid={Boolean(errors["schedule.timezone"])} onChange={(event) => setTimezone(event.target.value)}>
+          {timezoneOptions(timezone).map((zone) => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}
+        </select>
+        {errors["schedule.timezone"] && <span className="field-error" role="alert">{errors["schedule.timezone"]}</span>}
+      </div>
+    </div>
+    <FormFooter saving={saving} message={message} onSave={() => void save()} />
+  </section>;
 }
 
 function SettingsSection({ name, initial, onSaved }: { name: string; initial: JsonObject; onSaved: () => void }) {
@@ -122,11 +214,14 @@ function SettingsSection({ name, initial, onSaved }: { name: string; initial: Js
 }
 
 export function ClipsPage() {
-  const [clips, reload] = useResource<ClipList>("/api/clips?limit=100");
+  const [filter, setFilter] = useState<"all" | "published" | "failed">("all");
+  const [offset, setOffset] = useState(0);
+  const [clips, reload] = useResource<ClipList>(`/api/clips?limit=20&offset=${offset}&filter=${filter}`);
   const [budget] = useResource<BudgetSummary>("/api/budget");
   const currency = budget.status === "success" ? budget.data.currency : null;
-  return <Page title="Clips" eyebrow="PUBLISHING / 04" lede="Approved Clips and platform Publications." action={<IconButton label="Refresh Clips" onClick={reload} />}>
-    {clips.status === "loading" ? <Loading /> : clips.status === "error" ? <ErrorMessage message={clips.message} /> : clips.data.items.length ? <div className="clip-list">{clips.data.items.map((clip) => <ClipCard key={clip.id} clip={clip} currency={currency} />)}</div> : <Empty message="No approved Clips are available." />}
+  return <Page title="Clips" headingExtra={<div className="clip-tabs" role="tablist" aria-label="Clip status">{(["all", "published", "failed"] as const).map((value) => <button id={`clip-tab-${value}`} key={value} role="tab" tabIndex={filter === value ? 0 : -1} onKeyDown={(event) => { const keys = ["ArrowLeft", "ArrowRight", "Home", "End"]; if (!keys.includes(event.key)) return; event.preventDefault(); const values = ["all", "published", "failed"] as const; const index = values.indexOf(value); const next = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3; const chosen = values[next]!; setFilter(chosen); setOffset(0); document.getElementById(`clip-tab-${chosen}`)?.focus(); }} aria-selected={filter === value} aria-controls="clip-results" className={`filter-button${filter === value ? " selected" : ""}`} onClick={() => { setFilter(value); setOffset(0); }}>{humanize(value)}</button>)}</div>} eyebrow="PUBLISHING / 04" lede="Approved Clips and platform Publications." action={<IconButton label="Refresh Clips" onClick={reload} />}>
+    <div id="clip-results" role="tabpanel" aria-labelledby={`clip-tab-${filter}`}>{clips.status === "loading" ? <Loading /> : clips.status === "error" ? <ErrorMessage message={clips.message} /> : clips.data.items.length ? <div className="clip-list">{clips.data.items.map((clip) => <ClipCard key={clip.id} clip={clip} currency={currency} />)}</div> : <Empty message="No Clips match this filter." />}</div>
+    {clips.status === "success" && <Pagination offset={offset} total={clips.data.total ?? clips.data.items.length} onChange={setOffset} label="Clips" />}
     <div className="platform-strip" aria-label="Supported publication platforms"><span>YouTube</span><span>Instagram</span><span>Facebook</span><span className="deferred">TikTok · deferred</span></div>
   </Page>;
 }
@@ -136,7 +231,7 @@ export function ClipDetailPage() {
   const [clip, reload] = useResource<Clip>(`/api/clips/${encodeURIComponent(clipId)}`);
   const [budget] = useResource<BudgetSummary>("/api/budget");
   return <Page title={clip.status === "success" ? clip.data.story_title || "Untitled Clip" : "Clip detail"} eyebrow="PUBLISHING / CLIP" lede={clipId} action={<IconButton label="Refresh Clip" onClick={reload} />}>
-    {clip.status === "loading" ? <Loading /> : clip.status === "error" ? <ErrorMessage message={clip.message} /> : <ClipDetail clip={clip.data} currency={budget.status === "success" ? budget.data.currency : null} />}
+    {clip.status === "loading" ? <Loading /> : clip.status === "error" ? <ErrorMessage message={clip.message} /> : <ClipDetail clip={clip.data} currency={budget.status === "success" ? budget.data.currency : null} onChanged={reload} />}
   </Page>;
 }
 
@@ -164,12 +259,77 @@ export function PendingApprovals() {
   </section>;
 }
 
-function ClipCard({ clip, currency }: { clip: Clip; currency: string | null }) {
-  return <article className="section-block clip-card"><ClipPreview clip={clip} /><div className="clip-card-copy"><div className="section-head"><div><span className="eyebrow">{clip.status.toUpperCase()}</span><h2><NavLink to={`/clips/${clip.id}`}>{clip.story_title || "Untitled Clip"}</NavLink></h2></div><span className="table-date">{formatDate(clip.created_at)}</span></div><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s</span><span>{clip.preview.width}×{clip.preview.height}</span></div><PublicationList clip={clip} /></div></article>;
+export function PublishesPage() {
+  const [offset, setOffset] = useState(0);
+  const [resource, reload] = useResource<ClipList>(`/api/clips/pending-approval?limit=20&offset=${offset}`);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  async function decide(clip: Clip, decision: "approve" | "reject") {
+    setBusy(clip.id); setMessage("");
+    try {
+      await decideApproval(clip.id, { decision });
+      setMessage(`${clip.story_title || "Clip"} ${decision === "approve" ? "approved for publication" : "rejected"}.`);
+      setOffset(0); reload();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Approval decision failed");
+    } finally { setBusy(null); }
+  }
+  const count = resource.status === "success" ? (resource.data.total ?? resource.data.items.length) : null;
+  return <Page title="Review Board" eyebrow="PUBLISHING / REVIEW BOARD" lede="Clips awaiting your decision before they are published to the enabled platforms." action={<div className="board-head-actions">{count !== null && <span className="event-count">{count} AWAITING</span>}<button className="ghost-button" onClick={reload} aria-label="Refresh review board"><RefreshCw size={14} />Refresh</button></div>}>
+    {message && <p className="form-message" role="status">{message}</p>}
+    {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : resource.data.items.length ? <div className="review-board">{resource.data.items.map((clip) => <ReviewCard key={clip.id} clip={clip} busy={busy === clip.id} onDecide={(decision) => void decide(clip, decision)} />)}</div> : <div className="section-block"><Empty message="Nothing to review. Clips awaiting approval will appear here." /></div>}
+    {resource.status === "success" && <Pagination offset={offset} total={resource.data.total ?? resource.data.items.length} onChange={setOffset} label="Clips awaiting approval" />}
+  </Page>;
 }
 
-function ClipDetail({ clip, currency }: { clip: Clip; currency: string | null }) {
-  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div></div><PublicationList clip={clip} /></section></div>;
+function ReviewCard({ clip, busy, onDecide }: { clip: Clip; busy: boolean; onDecide: (decision: "approve" | "reject") => void }) {
+  const metadata = record(clip.social_metadata);
+  const description = text(metadata.description);
+  const hashtags = Array.isArray(metadata.hashtags) ? metadata.hashtags.map(text).filter(Boolean) : [];
+  const sources = Array.isArray(metadata.source_attributions) ? metadata.source_attributions.map(text).filter(Boolean) : [];
+  const title = clip.story_title || "Untitled Clip";
+  return <article className="review-card" aria-label={`Review ${title}`}>
+    <div className="review-media"><ClipPreview clip={clip} /></div>
+    <div className="review-body">
+      <div className="review-meta"><span>{Math.round(clip.preview.duration_seconds)}s</span><span>{formatDate(clip.created_at)}</span></div>
+      <h2>{title}</h2>
+      <p className="review-caption">{description || "No caption recorded."}</p>
+      {hashtags.length > 0 && <div className="review-tags" aria-label="Hashtags">{hashtags.map((tag) => <span key={tag}>#{tag.replace(/^#/, "")}</span>)}</div>}
+      {sources.length > 0 && <details className="review-sources"><summary>{sources.length} {sources.length === 1 ? "Source" : "Sources"}</summary><ul>{sources.map((source) => <li key={source}>{source}</li>)}</ul></details>}
+      <div className="review-platforms">{clip.publications.length ? clip.publications.map((publication) => <span key={publication.id}>{platformLabel(publication.platform)} · {humanize(publication.mode ?? "")}</span>) : <span>No platform targets</span>}</div>
+      {clip.auto_publish_due_at ? <Countdown dueAt={clip.auto_publish_due_at} /> : <span className="approval-countdown">Awaiting your decision</span>}
+      <div className="review-actions">
+        <button className="command-button" disabled={busy} aria-label={`Approve ${title}`} onClick={() => onDecide("approve")}><Check size={15} />Approve</button>
+        <button className="danger-button" disabled={busy} aria-label={`Reject ${title}`} onClick={() => onDecide("reject")}><X size={15} />Reject</button>
+        <NavLink className="text-link" to={`/runs/${clip.run_id}`}>Run <ArrowUpRight size={14} /></NavLink>
+      </div>
+    </div>
+  </article>;
+}
+
+function ClipCard({ clip, currency }: { clip: Clip; currency: string | null }) {
+  return <article className="section-block clip-card"><ClipPreview clip={clip} /><div className="clip-card-copy"><div className="section-head"><div><span className={`table-status ${clip.status}`}>{humanize(clip.status)}</span><h2><NavLink to={`/clips/${clip.id}`}>{clip.story_title || "Untitled Clip"}</NavLink></h2></div><span className="table-date">{formatDate(clip.created_at)}</span></div><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s</span><span>{clip.preview.width}×{clip.preview.height}</span></div><PublicationList clip={clip} /></div></article>;
+}
+
+function ClipDetail({ clip, currency, onChanged }: { clip: Clip; currency: string | null; onChanged: () => void }) {
+  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /></section></div>;
+}
+
+function RetryPublishButton({ clip, onRetried }: { clip: Clip; onRetried: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  if (clip.status !== "approved" || !clip.publications.some((publication) => publication.status === "failed")) return null;
+  async function retry() {
+    setBusy(true); setMessage("");
+    try {
+      await retryPublications(clip.id);
+      setMessage("Publish retry finished.");
+      onRetried();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Publish retry failed");
+    } finally { setBusy(false); }
+  }
+  return <div className="retry-publish"><button className="command-button" disabled={busy} onClick={() => void retry()}><RefreshCw size={15} />{busy ? "Retrying…" : "Retry publish"}</button>{message && <p className="form-message" role="status">{message}</p>}</div>;
 }
 
 function ClipPreview({ clip }: { clip: Clip }) {
@@ -182,7 +342,7 @@ function PublicationList({ clip }: { clip: Clip }) {
 }
 
 function PublicationBadges({ clip }: { clip: Clip }) {
-  return <div className="publication-badges">{clip.publications.map((publication) => <span key={publication.id}>{platformLabel(publication.platform)} · {humanize(publication.status)}</span>)}</div>;
+  return <div className="publication-badges">{clip.publications.map((publication) => <span key={publication.id} className={`table-status ${publication.status}`}>{platformLabel(publication.platform)} · {humanize(publication.status)}</span>)}</div>;
 }
 
 function Countdown({ dueAt }: { dueAt?: string | null }) {
@@ -207,11 +367,42 @@ export function ApprovalPage() {
   </Page>;
 }
 
+const outputModeOptions = [
+  { value: "json_schema", label: "Strict schema (default)" },
+  { value: "json_object", label: "JSON mode + schema instructions" },
+  { value: "prompt_json", label: "Prompt-only JSON" },
+];
+const settingOptions: Record<string, { value: string; label: string }[]> = {
+  "environment.llm_output_mode": outputModeOptions,
+  "environment.llm_output_mode_evaluation": outputModeOptions,
+  "environment.llm_output_mode_evaluation_fallback": outputModeOptions,
+  "environment.whisper_device": [
+    { value: "auto", label: "Automatic" }, { value: "cpu", label: "CPU" }, { value: "cuda", label: "CUDA (GPU)" },
+  ],
+  "publishing.mode": [
+    { value: "disabled", label: "Disabled" }, { value: "dry_run", label: "Dry run" }, { value: "live", label: "Live" },
+  ],
+};
+
 function ObjectEditor({ value, onChange, errors, prefix = "" }: { value: { [key: string]: EditorValue }; onChange: (value: { [key: string]: EditorValue }) => void; errors: Record<string, string>; prefix?: string }) {
   return <div className="object-editor">{Object.entries(value).map(([key, item]) => {
     const path = prefix ? `${prefix}.${key}` : key;
     if (isEditorObject(item)) return <fieldset key={key}><legend>{humanize(key)}</legend><ObjectEditor value={item} onChange={(next) => onChange({ ...value, [key]: next })} errors={errors} prefix={path} /></fieldset>;
     const id = `field-${path.replaceAll(".", "-")}`;
+    const options = settingOptions[path];
+    if (options) {
+      const current = typeof item === "string" ? item : "";
+      const outputMode = path.startsWith("environment.llm_output_mode");
+      return <div className="field" key={key}>
+        <label htmlFor={id}>{humanize(key)}</label>
+        <select id={id} value={current} aria-describedby={outputMode ? `${id}-help` : undefined} aria-invalid={Boolean(errors[path])} onChange={(event) => onChange({ ...value, [key]: event.target.value })}>
+          {!options.some((option) => option.value === current) && <option value={current}>{current || "Not set"} (unrecognized)</option>}
+          {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        {outputMode && <small id={`${id}-help`}>Strict schema asks the provider to enforce the schema; JSON mode enforces JSON syntax; prompt-only uses instructions without response_format. Local schema validation and bounded repairs apply in every mode. Visual review still requires an image-capable model.</small>}
+        {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}
+      </div>;
+    }
     if (path === "environment.wan_max_generations_per_run") {
       return <div className="field" key={key}>
         <label htmlFor={id}>{humanize(key)}</label>
@@ -243,7 +434,7 @@ function EstimatedRevenue({ value, currency, basis }: { value: unknown; currency
   return <div className="revenue"><span>Estimated revenue</span><strong>{value == null ? "n/a" : `${text(currency) || ""} ${text(value)}`.trim()}</strong><small>{Object.keys(breakdown).length ? Object.entries(breakdown).map(([name, amount]) => `${humanize(name)}: ${text(amount)}`).join(" · ") : "basis unavailable"}</small></div>;
 }
 
-function Page({ title, eyebrow, lede, action, children }: { title: string; eyebrow: string; lede: string; action?: React.ReactNode; children: React.ReactNode }) { return <section className="page-wrap"><div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p className="page-lede">{lede}</p></div>{action}</div>{children}</section>; }
+function Page({ title, eyebrow, lede, action, headingExtra, children }: { title: string; eyebrow: string; lede: string; action?: React.ReactNode; headingExtra?: React.ReactNode; children: React.ReactNode }) { return <section className="page-wrap"><div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><div className="heading-with-tabs"><h1>{title}</h1>{headingExtra}</div><p className="page-lede">{lede}</p></div>{action}</div>{children}</section>; }
 function IconButton({ label, onClick }: { label: string; onClick: () => void }) { return <button className="icon-button" onClick={onClick} title={label} aria-label={label}><RefreshCw size={17} /></button>; }
 function Loading() { return <div className="loading-line"><span />Loading operational data</div>; }
 function ErrorMessage({ message }: { message: string }) { return <div className="inline-error" role="alert">{message}</div>; }

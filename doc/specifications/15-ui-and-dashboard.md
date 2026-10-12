@@ -8,14 +8,15 @@ API contract: [architecture/application-architecture.md](architecture/applicatio
 
 | Route | Page | Purpose |
 | --- | --- | --- |
-| `/` | Dashboard | Current Run, recent Runs, KPIs, next scheduled Run |
+| `/` | Overview | Current Run with agent personas, KPIs, budget, next scheduled Run |
 | `/runs` | Runs | Run history with status/outcome filters |
 | `/runs/:id` | Run detail | Timeline, Story, Sources, Claims, Script, Evaluations, Clip, failure reason |
-| `/clips` | Clips | Approved Clips, preview, publications, latest metrics |
+| `/clips` | Clips | All / Published / Failed tabs, 20 Clips per page, preview, publications, latest metrics |
+| `/publishes` | Review Board | Review board (20 per page) of Clips awaiting approval only: preview, caption, hashtags, Sources, platform targets, Approve / Reject |
 | `/analytics` | Analytics | Per-platform metrics and estimated revenue over time |
-| `/assets` | Asset library | Browse, filter, preview, provenance, status, import |
-| `/profile` | Content Profile | Edit the active profile |
-| `/settings` | Settings | Application settings, provider status, publishing mode, approval gate, budget limits and price table |
+| `/assets` | Asset library | Browse (20 per page), filter, preview, provenance, status, import |
+| `/profile` | Content Profile | Select, save as new, edit, activate or delete saved profiles |
+| `/settings` | Settings | Daily Run schedule, application settings, provider status, publishing mode, approval gate, budget limits and price table |
 
 Global header: product name, current Run indicator, **Run Now** button,
 **Manual URL** action.
@@ -38,8 +39,25 @@ Global header: product name, current Run indicator, **Run Now** button,
   outcome; totals for the last 7 days (Clips approved, Publications, views,
   estimated revenue labelled "Estimated"); and the next scheduled Run time in
   the profile timezone.
+- **Overview layout:** The Overview page does not show System Health,
+  Publishing Gate or Recent Runs panels. The Current Run panel spans the full
+  content width and presents each agent role as a **Persona**: a cartoonish
+  human character, its name, and its role beneath it (Scout — research and
+  discovery; Sage — Sources and Claims; Scribe — script and visual plan;
+  Pixel — Asset selection; Echo — narration and captions; Frame —
+  composition; Guard — validation and evaluation; Relay — publishing). Each
+  Persona shows one of four moods derived from its stages in the current Run:
+  **waiting** (eager), **working** (committed), **success** (happy) and
+  **failure** (sad). The mood is expressed only through the character's face
+  and pose; no mood word is shown. Directly beneath the role the Persona shows
+  its state (Waiting, Working, Success or Failure). The eight Personas are
+  compact and laid out as one row of eight on desktop widths, wrapping on
+  narrow screens (owner request, 11 October). Personas are illustrative only;
+  they do not imply autonomous agents at runtime.
 - **Acceptance:**
   - With fixtures, each element renders the expected values (component tests).
+  - A running stage puts its Persona in the working mood, finished stages
+    show success, a failed stage shows failure, and untouched roles wait.
 
 ### CF-REQ-602 — Live Run progress
 
@@ -112,8 +130,10 @@ Global header: product name, current Run indicator, **Run Now** button,
   - Failed records offer Continue Run with current application settings,
     preserving the Run ID and completed work (CF-REQ-657); conflicts are shown.
   - Continue Run and Stop are adjacent to Execution status. Stop is offered
-    for queued/running Runs with confirmation of potential unfinished media
-    loss, shows Stopping until completion, and surfaces API errors.
+    for queued/running Runs. Both act on one click without confirmation
+    panels; descriptive button titles explain current-settings use and
+    potential unfinished-media loss. Pending requests disable their controls,
+    Stop shows Stopping until completion, and API errors remain visible.
 - **Related:** CF-REQ-118, CF-REQ-265, CF-REQ-409, CF-REQ-850
 
 ### CF-REQ-605 — Asset library
@@ -136,6 +156,8 @@ Global header: product name, current Run indicator, **Run Now** button,
       Provider choices come from the loaded Assets' provenance, including
       local generators and external media sources. These filters operate on
       the current loaded library page (up to 500 Assets for the selected status).
+  - The library paginates 20 Assets per page using `limit`/`offset` and the
+    returned `total`.
 - **Related:** CF-REQ-213, CF-REQ-216
 
 ### CF-REQ-606 — Settings
@@ -147,19 +169,36 @@ Global header: product name, current Run indicator, **Run Now** button,
 - **Acceptance:**
   - No input on the settings page accepts an API key or token.
   - Server-side validation errors are displayed next to the field.
+  - Fixed-choice environment output modes, Whisper device and publishing
+    mode use labelled dropdowns containing their configured allowed values.
+    Closed controls and native option menus have readable dark-theme contrast
+    and keyboard focus indicators. Unknown existing values remain visible,
+    never silently replaced; open-ended model IDs and other strings remain editable.
   - Settings / Environment exposes `wan_max_generations_per_run` (default 2,
     integer 0–100) with guidance that 0 disables new Wan calls and Retry/
     Continue retain usage. Additional Visuals use suitable graphics or refined
     free-media searches, not unlimited Wan generation (CF-REQ-266).
-- **Related:** CF-REQ-752, CF-REQ-753
+  - A Schedule section edits the active Content Profile's daily schedule
+    (CF-REQ-651): an enabled toggle, a 24-hour local time picker and an IANA
+    timezone dropdown, plus the next scheduled Run. Saving stores a new
+    Content Profile version with only `schedule` changed; invalid times are
+    rejected before saving. The scheduler applies it within one poll interval.
+  - Each Settings group is a collapsible section that can be expanded or
+    collapsed independently without losing unsaved edits.
+- **Related:** CF-REQ-651, CF-REQ-752, CF-REQ-753
 
 ### CF-REQ-607 — Content Profile editor
 
 - **Description:** The profile page shall edit every Content Profile field
   with client-side validation mirroring CF-REQ-551 and server-side validation
-  as authority.
+  as authority. A selector lists saved Content Profiles; the owner can load
+  one for editing, save the current form as a new named profile, update or
+  activate the selected profile, and delete a profile that is not active
+  (CF-REQ-550 named-profile APIs).
 - **Acceptance:**
   - Entering `min 90 / max 60` shows a field error and does not submit.
+  - Saving as new adds the profile to the selector; deleting the active
+    profile is refused with the server's 409 message.
 
 ### CF-REQ-608 — Run Now
 
@@ -181,10 +220,25 @@ Global header: product name, current Run indicator, **Run Now** button,
 
 ### CF-REQ-610 — Clips page
 
-- **Description:** The Clips page shall list approved Clips with preview
+- **API behaviour:** `GET /api/clips` accepts `limit` (default 100, 1–100),
+  `offset` (default 0, non-negative) and `filter=all|published|failed` (default
+  `all`). It returns `{"items": [...], "total": integer}` with existing item
+  fields, newest-first ordering and ID tie-breaker. `all` includes every Clip
+  status; `published` means at least one Publication has status `published`;
+  `failed` means Clip status `rejected`/`failed` or at least one Publication
+  has status `failed`. These predicates may overlap and each Clip is counted
+  once. Total is computed after filtering and before limit/offset; out-of-range
+  offsets return empty items with the full filtered total. Invalid parameters
+  return 422. Listing failed Clips does not authorise their publication.
+
+- **Description:** The Clips page shall list Clips with preview
   playback (HTTP range streaming), Story title, creation time, and per-platform
-  Publication status, link and latest metrics.
+  Publication status, link and latest metrics, in three tabs — **All**,
+  **Published** and **Failed** — mapped to the `filter` parameter, 20 Clips
+  per page. A `published` status badge is shown in green.
 - **Acceptance:**
+  - Switching tab resets to page 1 and requests the matching filter;
+    pagination controls reflect `total`.
   - Seeking in the preview player issues range requests that the API serves with 206.
 
 ### CF-REQ-611 — Safe rendering of external text
@@ -212,11 +266,21 @@ Global header: product name, current Run indicator, **Run Now** button,
 
 ### CF-REQ-613 — Approval of pending Clips
 
+- **API behaviour:** `GET /api/clips/pending-approval` accepts `limit` (default
+  100, 1–100) and `offset` (default 0, non-negative), returning
+  `{"items": [...], "total": integer}`. Only approved Clips with at least one
+  `awaiting_approval` Publication qualify; pagination, stable ordering and total
+  follow CF-REQ-610.
+
 - **Description:** When Clips are `awaiting_approval`, the dashboard shall
   show them prominently with exact-version preview, unresolved review reasons, platform metadata and Approve / Reject actions. Human-review rollout has no auto-publication countdown; an automatic countdown is shown only for explicitly enabled benchmark-qualified timeout mode.
 - **Acceptance:**
   - Approving from the dashboard triggers publication and the item disappears from the pending list.
   - Human-review mode requires an explicit decision; eligible automatic mode's countdown matches the task due time.
+  - The **Review Board** navigation tab (`/publishes`) lists only
+    `awaiting_approval` Clips, one Clip per row with preview, caption,
+    hashtags, Sources and platform targets, 20 per page; a decided Clip
+    leaves the board.
 - **Related:** CF-REQ-459, CF-REQ-460
 
 ### CF-REQ-614 — Storyboard and version-bound quality review UI

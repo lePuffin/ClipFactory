@@ -45,3 +45,22 @@ class MediaSourceProvider(Protocol):
     async def search(self, request: MediaSearchRequest) -> list[MediaCandidate]: ...
 
     async def download(self, candidate: MediaCandidate, dest: str, max_bytes: int) -> DownloadedMedia: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PersonPortraits:
+    """A named person bound to an authoritative identity with licensed real photographs (CF-REQ-268)."""
+
+    name: str
+    identity_ref: str
+    identity_url: str
+    candidates: tuple[MediaCandidate, ...]
+
+
+class PersonPortraitSource(MediaSourceProvider, Protocol):
+    """A media source that can also resolve a named human to licensed portraits (CF-REQ-268)."""
+
+    async def find_person(self, name: str, limit: int = 3, min_short_side_px: int = 0) -> PersonPortraits | None:
+        """Return the human matching ``name`` (empty candidates when no licensed photo of at least
+        ``min_short_side_px`` on its short side), or None if unresolved."""
+        ...

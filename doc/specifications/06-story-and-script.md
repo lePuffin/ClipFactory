@@ -68,8 +68,16 @@ references). They never call a `NewsSource` again.
   segment lists the `claim_ids` it uses and an
   `attribution` when required (CF-REQ-116). The prompt forbids facts,
   numbers, names, dates or quotes not present in the provided Claims.
+  The writer names each publisher at most once across the complete narration,
+  not once per segment, while preserving every required attribution field.
+  Media visual descriptions request ordinary photographable scenes that free
+  stock libraries plausibly hold (places, crowds, buildings, objects,
+  activities); on-screen text, tables, scoreboards, specific numbers, logos
+  and screenshots are never requested as stock media, because data belongs
+  in a typed graphics payload (CF-REQ-263, CF-REQ-266).
 - **Acceptance:**
   - With a fake LLM, every returned segment is persisted with its claim IDs.
+  - The writing prompt states the stock-findable media description rule.
   - A segment citing a Claim ID not in the package is rejected by the script gate.
   - A first-attempt Run makes exactly one `write_script` request.
 - **Related:** CF-REQ-158, CF-REQ-263, CF-REQ-406
@@ -91,6 +99,8 @@ references). They never call a `NewsSource` again.
   is `word_count × 60 / words_per_minute + lead_in + tail`.
 - **Acceptance:**
   - Defaults (60/70/90 s, 150 wpm, 0.3 s + 1.0 s) ⇒ target 172, min 147, max 221 words.
+  - The script gate counts `lead_in + tail` once: with the defaults a 146-word
+    script is rejected as `script_too_short` and a 147-word script passes.
 - **Related:** CF-REQ-158, CF-REQ-401, OD-002
 
 ### CF-REQ-156 — Segment structure
@@ -118,10 +128,112 @@ references). They never call a `NewsSource` again.
   - `segment_ungrounded` — a segment cites no Claim
   - `unknown_claim` — cites an ID that is not an accepted Claim of the package
   - `missing_attribution` — CF-REQ-116
+  - `repeated_attribution` — more than one spoken mention of a known publisher
+    across the complete narration (CF-REQ-116); metadata fields do not count
+  - `repeated_sentence` — the same sentence of five or more words (after
+    case, whitespace and punctuation normalization) is spoken more than once
+    across the complete narration; this is the deterministic form of
+    CF-REQ-163's repetitive-narration `editorial_quality` rule. The same code
+    flags a paraphrased restatement: a later sentence with four or more
+    content words (stopwords and request verbs such as "asked" removed,
+    simple suffix stemming so "convicted" and "conviction" match, stems of
+    five or more letters matching when one prefixes the other so "reduced"
+    and "reduction" match, spelled ordinals as numbers) of which at least
+    65% already occur in one earlier sentence, or in the combined text of
+    one earlier script segment (a closing line that re-summarizes a finding
+    split across two sentences, as in live Run 9f50477a). A later sentence
+    that is not directly after an earlier sentence with five or more content
+    words and repeats at least 80% of that earlier sentence's content words
+    is also a restatement, even when it adds new detail (owner review of live
+    Run c7b99ffb: the hook "Andy Burnham will publish all details of his City
+    dealings" was spoken again in full four sentences later). The revision
+    instruction names both passages and asks for the restatement to be
+    deleted or replaced by a different accepted fact (owner review of live
+    Run d519e520: one eligibility fact was narrated three times; live Run
+    620a25e1 followed a court deadline "to explain whether it reduced the
+    reach … and to detail any irregularities" with "The court asked Meta to
+    clarify both the reach reduction and the reported irregularities"). The
+    same code also flags a Claim-grounded restatement that uses synonyms:
+    each sentence is mapped to the accepted Claim whose words (digits also in
+    spoken form) it covers most; a later sentence with three or more covered
+    Claim words is a restatement when an earlier sentence other than the
+    opening hook maps to the same Claim and already covers at least 60% of
+    those words, and the later sentence adds at most one Claim word not yet
+    spoken for that Claim (owner review of live Runs 0b566a75 — "secure a
+    large victory" after "win by massive numbers" — and 63197c85 — "three
+    points clear … at the summit" after "three-point lead at the top"). The
+    opening hook is exempt as the earlier passage because the next sentence
+    normally elaborates the headline. A Story too
+    thin to reach the minimum duration without padding fails with
+    `script_too_short` instead of producing repeated filler
+  - `spoken_call_to_action` — a narration sentence asks the viewer to
+    follow, subscribe, like, share, comment, turn on notifications, "stay
+    tuned", or refers to "our/this channel/page"; or promises "we will keep
+    monitoring/report/bring updates"; or tells viewers/the audience they are
+    invited/encouraged to act or to submit questions (Run 5feb3c43: "The
+    audience is encouraged to submit questions via social media during the
+    broadcast."). The fixed end card (CF-REQ-360) is the
+    only follow invitation in a Clip, so the narration never contains one
+    (owner review of Clip 8c694e6d: "Please follow our channel for further
+    news…" was spoken at 0:55 before the end card). The revision instruction
+    names the sentence and asks for it to be deleted or replaced by an
+    accepted fact. The post caption (`social_metadata.description`, CF-REQ-160)
+    is not narration and keeps its follow invitation
+  - `filler_padding` — narration padded with empty intensifier adverbs
+    (notably, remarkably, noticeably, impressively, truly, incredibly,
+    undeniably, strikingly, stunningly, astonishingly, amazingly,
+    interestingly, importantly, clearly), ignoring text inside quotation
+    marks: two or more in one sentence, or four or more across the whole
+    narration (every sentence containing one is then named). Length is
+    changed only by adding or removing accepted facts or necessary context
+    (owner review of live Run 2274bf0b: a "add at least 4 words" retry
+    produced "Notably, clearly he noticeably impressively scored…")
+  - `stage_direction` — a narration sentence is a director's note rather
+    than news copy: camera or shot language (the camera pulls back/pans/
+    zooms, final/opening/wide shot, the shot lingers, cut to, fade out),
+    an instruction to watch ("watch the action unfold", "we see", "on
+    screen"), a description of on-screen lighting ("under bright overhead
+    lights"), something that "appears in the crowd/frame", or a crowd
+    action in the present tense ("crowd chants loudly"). Visuals are
+    planned only in the media fields; the narration never describes them
+    (owner review of approved Clip 4743e208: "The camera pulls back to show
+    the rally hall…" was spoken at 0:23). Quoted text is ignored. The
+    revision instruction names the sentence and asks for it to be deleted
+    or replaced by an accepted fact
+  - `unsupported_commentary` — a narration sentence with three or more
+    content words of which fewer than 30% (after the restatement stemming)
+    occur in the accepted Claims, the segment attributions or the Claim
+    publishers. Digits in the evidence also count in their spoken form
+    (860,000 → eight hundred sixty thousand; 2026 → twenty twenty-six).
+    This catches generic analysis and invented context that names no
+    specific fact, which `unsupported_statement` cannot see (owner standard
+    "news, not opinion"; live Run a811d673 added "Observers view this as a
+    notable shift.", "Critics argue the decision may influence regional
+    stability." and "The warning emerged during a public briefing." although
+    the warning was a social-media post; a scan of 393 sentences from 44
+    completed scripts flagged 86, all padding, invented context or text from
+    a rejected Claim). The revision instruction names the sentence and asks
+    for it to be deleted or replaced by an accepted fact in the Claim's own
+    words
+  - `headline_fragment` — a segment's narration does not end with
+    sentence-final punctuation (`.`, `!`, `?` or `…`, optionally followed by
+    a closing quote or bracket), or its first word is entirely lowercase: the
+    tail of a source sentence whose start was cut away (owner review of live
+    Run ebea2875: segment 1 was "to do more to make sure it is safe."). Narration is spoken copy made of complete
+    sentences, not headlines; an unpunctuated headline also runs into the
+    next segment, which hides restatements of it from the sentence checks
+    (owner review of live Run 48c3524d: the writer copied two live-blog
+    headlines, "Hanson-Young writes to Albanese govt after Hegseth comment"
+    and "Greens urge block of US execution livestream", as segments 0 and 1
+    and the next segment repeated them). The revision instruction names the
+    segment and asks for one complete spoken sentence
   - `script_too_short` / `script_too_long` — estimated duration outside `[min_seconds, max_seconds]`
   - `forbidden_content` — URLs, Markdown, SSML/markup, emoji, or text in a different script than the profile language's expected script
 - **Failure:** A failed gate routes to a script revision (counts as a revision
   retry) with the issues as instructions.
+  A schema-valid rejected draft is retained as a non-approved `write_script`
+  stage artifact, bound to the Story Package, for the next retry/Continue.
+  It is never the current accepted Script and cannot proceed downstream.
 - **Acceptance:**
   - Each listed check has a unit test with a passing and a failing example.
   - A failed gate never proceeds to `plan_visuals`.
@@ -135,16 +247,42 @@ references). They never call a `NewsSource` again.
 - **Behaviour:** Segments whose text is unchanged keep their index so that
   downstream artefacts (visual segments, selected Assets) can be reused
   (CF-REQ-412).
+  For a retained schema-valid draft whose only failures are hook length,
+  narration length, missing/repeated attribution or forbidden narration
+  formatting, repeated sentences, a spoken call to action, filler padding, a stage direction, unsupported commentary or a headline fragment, the existing single `write_script` retry request returns only
+  indexed narration corrections (`text`, `attribution`). Code merges these
+  into the draft, preserving Claim IDs, purposes, social metadata, visual
+  drafts and editorial overlays, then reruns every original gate. A hook-only
+  failure permits only index 0; duration-only corrections preserve a passing
+  hook. Duplicate, out-of-range or out-of-scope corrections are rejected.
+  Other failures continue to use the full writer output. No extra call,
+  unbounded repair loop, word truncation or relaxed gate is introduced.
 - **Acceptance:**
   - Revising with a single `remove_claim` Action on segment 3 yields identical text for segments not citing that Claim (fake LLM honours instruction; code verifies unchanged segments are recognised as unchanged by text hash).
+  - A retained 13-word hook failing a 12-word limit is corrected in one
+    narration-only request; unaffected segments and all visual/metadata
+    fields remain identical. A still-overlong correction remains rejected
+    and is retained for the next bounded retry.
 
 ### CF-REQ-160 — Social metadata
 
 - **Description:** The system shall generate platform-neutral social metadata:
   title (≤ 100 characters), description (≤ 2 000 characters), 3–8 hashtags,
-  in the profile language, as part of the `write_script` request.
+  in the profile language, as part of the `write_script` request. The
+  description is a descriptive post caption: two to four sentences that
+  summarise the Story's key verified facts and why they matter, ending with
+  an invitation to follow for more news; it never states facts absent from
+  accepted Claims. Hashtags are specific discovery tags (people, places,
+  organisations, topic) without spaces. When the generated description is
+  shorter than 120 characters, the deterministic composition appends the
+  Story Package summary. At publication, the platform-neutral request appends
+  the configured `publishing.discovery_hashtags` (case-insensitive
+  de-duplication) while keeping at most 8 hashtags, generated tags first.
 - **Acceptance:**
   - Titles and descriptions exceeding limits are rejected by schema validation and repaired (CF-REQ-758).
+  - The `write_script` prompt requests the descriptive caption and specific hashtags.
+  - A one-line description is extended with the Story summary; three generated hashtags plus the default discovery tags yield six unique hashtags.
+- **Owner decision 2026-10-11:** posts need a descriptive caption and hashtags that help platform discovery.
 - **Related:** CF-REQ-451
 
 ### CF-REQ-161 — Attribution in metadata [Derived]
@@ -193,5 +331,12 @@ Owner-authorized direction (2026-10-06): factual modern news explainers for YouT
 - **Description:** A Clip may include a relevant, non-coercive audience invitation under `quality.*` policy.
 - **Behaviour:** No more than `quality.max_ctas_per_clip` invitations are allowed; their duration counts against the existing Clip budget. A question must relate to the covered Story without asserting a new fact. Subscription invitations are optional rather than mandatory in every Clip. Sensitive-story policy suppresses promotional or playful invitations. Invitations are separately typed beats, never fabricated accepted Claims.
 - **Failure:** Invalid invitations are removed or revised; they shall not force publication or bypass quality review.
+- **Owner branding revision (2026-10-10):** The explicitly configured end
+  card in CF-REQ-360 may display the fixed "Follow for more" branding outside
+  the spoken narrative. It does not invent a Claim or require a spoken CTA;
+  its three seconds count within the tail and existing Clip duration budget.
+  When the end card is configured it is the only follow/subscribe
+  invitation: spoken narration never contains one (CF-REQ-158
+  `spoken_call_to_action`).
 - **Acceptance:** Two invitations fail when the configured maximum is one; disabling invitations emits no invitation text; a sensitive-story fixture contains no promotional invitation; removing an invitation leaves the factual narration unchanged.
 - **Related:** CF-REQ-155, CF-REQ-163, CF-REQ-164

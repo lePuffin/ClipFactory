@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import sessionmaker
 
-from clipfactory.domain.models import Asset, AssetStatus, MusicInfo, Provenance
+from clipfactory.domain.models import Asset, AssetOrigin, AssetStatus, MusicInfo, Provenance
 from clipfactory.infrastructure.db.models import AssetRow
 
 
@@ -20,6 +20,15 @@ class AssetRepository:
         with self.sessions.begin() as session:
             existing = session.scalar(select(AssetRow).where(AssetRow.sha256 == asset.sha256))
             if existing is not None:
+                if (
+                    existing.provenance.get("origin") == AssetOrigin.EXTERNAL.value
+                    and asset.provenance.origin == AssetOrigin.EXTERNAL
+                    and asset.storage_key.startswith("assets/external-runs/")
+                ):
+                    existing.storage_key = asset.storage_key
+                    existing.status = asset.status.value
+                    existing.reusable = False
+                    session.flush()
                 return _to_domain(existing)
             row = AssetRow(
                 id=asset.id,
@@ -57,10 +66,36 @@ class AssetRepository:
             row = session.scalar(select(AssetRow).where(AssetRow.sha256 == sha256))
             return _to_domain(row) if row is not None else None
 
-    def list(self, *, status: AssetStatus | None = None, limit: int = 100) -> list[Asset]:
-        statement = select(AssetRow).order_by(AssetRow.created_at.desc()).limit(max(1, min(limit, 500)))
+    def list(
+        self, *, status: AssetStatus | None = None, limit: int = 100, offset: int = 0, saved_only: bool = False
+    ) -> list[Asset]:
+        statement = (
+            select(AssetRow)
+            .order_by(AssetRow.created_at.desc(), AssetRow.id.desc())
+            .limit(max(1, min(limit, 500)))
+            .offset(max(0, offset))
+        )
         if status is not None:
             statement = statement.where(AssetRow.status == status.value)
+        if saved_only:
+            statement = statement.where(_saved_media())
+        with self.sessions() as session:
+            return [_to_domain(row) for row in session.scalars(statement)]
+
+    def count(self, *, status: AssetStatus | None = None, saved_only: bool = False) -> int:
+        statement = select(func.count(AssetRow.id))
+        if status is not None:
+            statement = statement.where(AssetRow.status == status.value)
+        if saved_only:
+            statement = statement.where(_saved_media())
+        with self.sessions() as session:
+            return session.scalar(statement) or 0
+
+    def external_for_run(self, run_id: UUID) -> list[Asset]:
+        statement = select(AssetRow).where(
+            AssetRow.storage_key.startswith(f"assets/external-runs/{run_id}/"),
+            AssetRow.provenance["origin"].as_string() == AssetOrigin.EXTERNAL.value,
+        )
         with self.sessions() as session:
             return [_to_domain(row) for row in session.scalars(statement)]
 
@@ -84,6 +119,13 @@ class AssetRepository:
                 row.status = status.value
             session.flush()
             return _to_domain(row)
+
+
+def _saved_media():
+    return or_(
+        AssetRow.provenance["origin"].as_string() != AssetOrigin.EXTERNAL.value,
+        AssetRow.status == AssetStatus.ACTIVE.value,
+    )
 
 
 def _to_domain(row: AssetRow) -> Asset:

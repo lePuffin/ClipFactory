@@ -14,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from clipfactory.domain.models import Claim, ClaimStatus
 
+_UNSAFE_LABEL = re.compile(r"[<>{}`\\;|\n\r]|\$\(|://|www\.|javascript:|data:|\b(?:eval|exec|import|fetch)\s*\(", re.I)
+
 
 class GraphicsError(ValueError):
     def __init__(self, code: str, message: str) -> None:
@@ -35,7 +37,9 @@ class GroundedText(GraphicsModel):
         value = value.strip()
         if not value or any(not character.isprintable() for character in value):
             raise ValueError("graphics labels must contain printable non-empty text")
-        if re.search(r"[<>{}`\\;$|&\n\r]|://|www\.|javascript:|data:|\b(?:eval|exec|import|fetch)\s*\(", value, re.I):
+        if re.search(
+            r"[<>{}`\\;|\n\r]|\$\(|://|www\.|javascript:|data:|\b(?:eval|exec|import|fetch)\s*\(", value, re.I
+        ):
             raise ValueError("graphics accepts plain factual labels, not markup, code or URLs")
         return value
 
@@ -66,6 +70,12 @@ class Timeline(GraphicsModel):
     template: Literal["timeline"]
     title: GroundedText
     events: list[TimelineEvent] = Field(min_length=2, max_length=8)
+
+
+class KeyDate(GraphicsModel):
+    template: Literal["key_date"]
+    date: GroundedText
+    title: GroundedText | None = None
 
 
 class FunctionPlot(GraphicsModel):
@@ -113,17 +123,38 @@ class RelationshipDiagram(GraphicsModel):
 
 
 GraphicsSpec = Annotated[
-    Statistic | Comparison | Timeline | FunctionPlot | RelationshipDiagram, Field(discriminator="template")
+    Statistic | Comparison | Timeline | KeyDate | FunctionPlot | RelationshipDiagram, Field(discriminator="template")
 ]
 VisualKind = Literal["media", "infographic", "scientific"]
 
 
 def graphics_kind(spec: GraphicsSpec) -> VisualKind:
-    return "infographic" if isinstance(spec, Statistic | Comparison | Timeline) else "scientific"
+    return "infographic" if isinstance(spec, Statistic | Comparison | Timeline | KeyDate) else "scientific"
+
+
+KEY_DATE_ENTRANCE_SECONDS = 1.1
+
+
+def entrance_seconds(spec: GraphicsSpec, rendered_seconds: float) -> float | None:
+    """Upper bound on when a v1 HyperFrames template stops animating; None when unknown (Manim)."""
+    if isinstance(spec, KeyDate):
+        return KEY_DATE_ENTRANCE_SECONDS
+    if isinstance(spec, Statistic | Comparison | Timeline):
+        return min(rendered_seconds * 0.4, 1.5) + rendered_seconds * 0.4
+    return None
+
+
+def reusable_render_duration(
+    spec: GraphicsSpec, rendered_seconds: float, planned_seconds: float, frame_seconds: float
+) -> bool:
+    if abs(rendered_seconds - planned_seconds) <= frame_seconds + 0.001:
+        return True
+    entrance = entrance_seconds(spec, rendered_seconds)
+    return rendered_seconds > planned_seconds and entrance is not None and entrance <= planned_seconds - 1.0
 
 
 def validate_graphics_kind(kind: VisualKind, spec: GraphicsSpec | None) -> None:
-    infographic = isinstance(spec, Statistic | Comparison | Timeline)
+    infographic = isinstance(spec, Statistic | Comparison | Timeline | KeyDate)
     scientific = isinstance(spec, FunctionPlot | RelationshipDiagram)
     if (
         (kind == "media" and spec is not None)
@@ -174,8 +205,11 @@ def validate_graphics_claims(spec: GraphicsSpec, claims: Sequence[Claim]) -> Non
             if Decimal(str(value)) not in numbers:
                 raise GraphicsError("unsupported_statement", "Graphics value does not match its label evidence")
 
-    check(spec.title)
-    if isinstance(spec, Statistic):
+    if spec.title is not None:
+        check(spec.title)
+    if isinstance(spec, KeyDate):
+        check(spec.date)
+    elif isinstance(spec, Statistic):
         check(spec.item.label, spec.item.value)
     elif isinstance(spec, Comparison):
         for item in spec.items:

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -46,6 +47,7 @@ class ResearchResult:
     articles_skipped: int
     articles: tuple[RetrievedArticle, ...]
     provider_warnings: tuple[str, ...]
+    articles_covered: int = 0
 
 
 async def research_articles(
@@ -54,17 +56,35 @@ async def research_articles(
     policy: ResearchPolicy,
     *,
     now: datetime,
+    excluded_urls: Collection[str] = (),
 ) -> ResearchResult:
+    excluded = {_url_key(url) for url in excluded_urls}
     references: list[ArticleRef] = []
     warnings: list[str] = []
-    query = _FeedQuery(policy.feeds)
+    seen_references: set[str] = set()
+    # One query per feed so a single failing feed is isolated and named in the warnings (CF-REQ-100).
+    queries = [(publisher, _FeedQuery([(publisher, url)])) for publisher, url in policy.feeds] or [
+        (None, _FeedQuery([]))
+    ]
     for source in news_sources:
-        try:
-            references.extend(await source.latest(query))
-        except Exception as exc:
-            warnings.append(f"{source.name}: {type(exc).__name__}")
+        results = await asyncio.gather(*(source.latest(query) for _, query in queries), return_exceptions=True)
+        for (publisher, _), result in zip(queries, results, strict=True):
+            if isinstance(result, BaseException):
+                if not isinstance(result, Exception):
+                    raise result
+                label = source.name if publisher is None else f"{source.name}/{publisher}"
+                detail = " ".join(str(result).split())[:200]
+                warnings.append(f"{label}: {type(result).__name__}" + (f" ({detail})" if detail else ""))
+                continue
+            for reference in result:
+                if reference.url not in seen_references:
+                    seen_references.add(reference.url)
+                    references.append(reference)
 
     eligible = [ref for ref in references if _eligible_reference(ref, policy, now)]
+    fresh = [ref for ref in eligible if _url_key(ref.url) not in excluded]
+    covered = len(eligible) - len(fresh)
+    eligible = fresh
     ranked = sorted(eligible, key=lambda ref: _rank_key(ref, policy), reverse=True)
     chosen = ranked[: policy.max_candidate_articles]
     skipped = len(references) - len(chosen)
@@ -76,8 +96,7 @@ async def research_articles(
         try:
             payload, final_url, _ = await fetcher.get_bytes(reference.url, max_bytes=policy.max_article_bytes)
             extracted = extract_article(payload.decode("utf-8", errors="replace"), final_url)
-        except Exception as exc:
-            warnings.append(f"article retrieval skipped: {type(exc).__name__}")
+        except Exception:
             skipped += 1
             continue
         title = extracted["title"] or reference.title.strip()
@@ -88,6 +107,10 @@ async def research_articles(
             skipped += 1
             continue
         if canonical in seen_urls or text_hash in seen_hashes:
+            continue
+        if _url_key(canonical) in excluded:
+            skipped += 1
+            covered += 1
             continue
         seen_urls.add(canonical)
         seen_hashes.add(text_hash)
@@ -103,12 +126,18 @@ async def research_articles(
                 quality_tier=quality_tier,
             )
         )
-    return ResearchResult(len(references), skipped, tuple(articles), tuple(warnings))
+    return ResearchResult(len(references), skipped, tuple(articles), tuple(warnings), covered)
 
 
 class _FeedQuery(NewsQuery):
     def __init__(self, feeds: list[tuple[str, str]]) -> None:
         self.feeds = feeds
+
+
+def _url_key(url: str) -> str:
+    """CF-REQ-109: compare article URLs without query string, fragment or trailing slash."""
+    parts = urlsplit(url.strip())
+    return f"{parts.scheme.casefold()}://{parts.netloc.casefold()}{parts.path.rstrip('/')}"
 
 
 def _eligible_reference(reference: ArticleRef, policy: ResearchPolicy, now: datetime) -> bool:

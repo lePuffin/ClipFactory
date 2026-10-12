@@ -10,7 +10,7 @@ from uuid import UUID
 from clipfactory.domain.models import ContentProfile
 from clipfactory.ports.llm import LLMProvider
 from clipfactory.ports.news import NewsSource
-from clipfactory.ports.research import ResearchRepository
+from clipfactory.ports.research import CoveredStory, ResearchRepository
 from clipfactory.research.discovery import ByteFetcher, ResearchPolicy
 from clipfactory.research.pipeline import (
     GroundedStoryResult,
@@ -57,13 +57,19 @@ class ResearchUseCase:
         *,
         now: datetime,
         selection_weights: SelectionWeights | None = None,
-        recently_covered_titles: tuple[str, ...] = (),
+        recently_covered: tuple[CoveredStory, ...] = (),
         max_claim_input_chars: int = 60_000,
         emit_events: bool = True,
     ) -> GroundedStoryResult:
         async def progress(message: str, payload: dict[str, object]) -> None:
             await asyncio.to_thread(
-                self.events.append_event, run_id, "progress", message, stage="research", payload=dict(payload)
+                self.events.append_event,
+                run_id,
+                "progress",
+                message,
+                stage="research",
+                level="warning" if "provider_warnings" in payload else "info",
+                payload=dict(payload),
             )
 
         result = await research_grounded_story(
@@ -74,7 +80,7 @@ class ResearchUseCase:
             policy,
             now=now,
             selection_weights=selection_weights or SelectionWeights(),
-            recently_covered_titles=recently_covered_titles,
+            recently_covered=recently_covered,
             max_claim_input_chars=max_claim_input_chars,
             progress=progress,
         )

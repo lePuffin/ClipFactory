@@ -9,6 +9,10 @@ from uuid import UUID
 from clipfactory.publishing.service import PublishService
 
 
+class PublicationRetryConflict(RuntimeError):
+    """The Clip is not approved or has no failed Publication to retry."""
+
+
 class ApprovalService:
     def __init__(self, repository: Any, publisher: PublishService, *, clock: Any) -> None:
         self._repository = repository
@@ -30,3 +34,15 @@ class ApprovalService:
                 raise RuntimeError("Automatic publication requires explicit benchmark and exact-version eligibility")
         result = await self.decide(clip_id, "approve")
         return {**result, "approved_by": approved_by}
+
+    async def retry_failed(self, clip_id: UUID) -> dict[str, Any]:
+        """Re-publish only the failed Publications of an approved Clip (CF-REQ-462)."""
+        reset = await asyncio.to_thread(self._repository.reset_failed_publications, clip_id)
+        if reset["clip_status"] != "approved":
+            raise PublicationRetryConflict("Only approved Clips may be published")
+        if not reset["reset"]:
+            raise PublicationRetryConflict("The Clip has no failed Publication to retry")
+        run_id = UUID(reset["run_id"])
+        result = await self._publisher.execute(run_id, clip_id, approval_resolved=True)
+        await asyncio.to_thread(self._repository.update_run_outcome, run_id, result["outcome"])
+        return {"run_id": reset["run_id"], "clip_id": str(clip_id), "retried": reset["reset"], **result}

@@ -52,6 +52,11 @@ Existing Wan Assets remain reusable. Additional Visuals use suitable grounded
 HyperFrames/Manim alternatives or refined free-media searches; unresolved
 media remains an explicit failure, never a placeholder.
 
+For a local Wan comparison without starting the app or a Run, use
+`uv run clipfactory wan-test`; see the
+[isolated paper-boat reference test](doc/setup/wan-reference-test.md).
+`--dry-run` prints its recipe without loading weights or generating media.
+
 Run the backend checks with `make backend-check` and the documentation link/traceability checks with `make docs-check`. See [provider setup](doc/setup/platform-credentials.md) before configuring live integrations.
 
 The root runtime installs native Wan and Manim without group flags.

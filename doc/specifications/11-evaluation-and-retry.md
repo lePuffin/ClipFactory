@@ -28,12 +28,13 @@ Entity: `Evaluation`, `Issue`, `Action` in [04-domain-model.md](04-domain-model.
 
 | Issue code | Layer | Target stage | Action type |
 | --- | --- | --- | --- |
-| `script_segment_count`, `hook_too_long`, `hook_ungrounded`, `segment_ungrounded`, `unknown_claim`, `missing_attribution`, `script_too_short`, `script_too_long`, `forbidden_content` | stage gate | `write_script` | `revise_script` |
+| `script_segment_count`, `hook_too_long`, `hook_ungrounded`, `segment_ungrounded`, `unknown_claim`, `missing_attribution`, `repeated_attribution`, `repeated_sentence`, `spoken_call_to_action`, `filler_padding`, `stage_direction`, `unsupported_commentary`, `script_too_short`, `script_too_long`, `forbidden_content` | stage gate | `write_script` | `revise_script` |
 | `narration_too_short`, `narration_too_long` | stage gate | `write_script` | `revise_script` |
 | `narration_invalid` | stage gate | `generate_narration` | `regenerate_narration` |
 | `narration_mismatch` | deterministic | `generate_narration` | `regenerate_narration` |
 | `missing_asset`, `asset_too_short`, `asset_render_failed`, `asset_unavailable`, `asset_license_missing` | gate / deterministic | `select_assets` | `reselect_asset` |
 | `segment_too_short`, `segment_too_long`, `visual_timing_drift` | gate / deterministic | `plan_visuals` | `replan_visuals` |
+| `unsourceable_visual` (a `missing_asset` repeated after a `reselect_asset` Retry for the same segment, CF-REQ-266) | stage gate | `write_script` | `revise_script` (rewrite that Visual as a stock-findable scene; narration unchanged) |
 | `caption_out_of_bounds` | deterministic | `write_script` | `revise_script` (rephrase the offending text) |
 | `duration_out_of_range` | deterministic | `write_script` | `revise_script` |
 | `resolution_mismatch`, `aspect_ratio_mismatch`, `fps_mismatch`, `stream_missing`, `codec_mismatch`, `media_corrupt` | deterministic | `compose_clip` | `recompose` (once; repeated ⇒ `composition_defect`) |
@@ -132,8 +133,30 @@ Adding an issue code requires adding a row here.
   is emitted. If the LLM is unavailable (circuit open or request budget
   exhausted, CF-REQ-671), the Clip is **not** approved and the Run fails with
   `llm_unavailable`; the Clip file is retained for a later manual Run.
+- **Opaque upstream rejection fallback:** Some free providers moderate news
+  imagery or text (crime scenes, torture, deaths) and answer with an opaque
+  `400 bad request` (`upstream_bad_request`) that repeats deterministically for
+  the same input. When the evaluation model's request still ends in
+  `upstream_bad_request` after its single opaque retry (CF-REQ-758), or in
+  `http_500`/`http_502`/`http_503` after its bounded call retries, and the Run's
+  `llm_model_evaluation_fallback` is non-empty and differs from the evaluation
+  model, the same request (same production data and frames) is sent once to
+  that fallback model and a `warning` Run Event `evaluation_model_fallback` names
+  both models. The fallback answer is evaluated exactly like the primary one;
+  it is never treated as an approval by itself. The fallback request uses its
+  own transport `LLM_OUTPUT_MODE_EVALUATION_FALLBACK` (default `prompt_json`),
+  because free fallback models may not advertise `response_format` and
+  OpenRouter then answers `404 no endpoints` for a `json_schema` request; the
+  answer is still validated locally against the same schema.
+  Without a usable fallback, or
+  when the fallback also fails, the Run fails with `llm_unavailable` as above.
+  Owner decision 2026-10-11 after free diagnostic calls showed
+  `dots-studio/dots-3-note-preview:free` rejecting crime-scene frames while
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` accepted the identical request.
 - **Acceptance:**
   - A fake evaluator returning `weak_hook` (blocking) causes a revision retry targeting `write_script`.
+  - A fake evaluation model raising `upstream_bad_request` with a configured fallback produces an Evaluation from the fallback model, sent with the same frames, and emits `evaluation_model_fallback`; without a fallback the Run fails with `llm_unavailable`.
+  - The fallback request is sent with `LLM_OUTPUT_MODE_EVALUATION_FALLBACK` (default `prompt_json`: schema in the prompt, no `response_format`), independent of `LLM_OUTPUT_MODE_EVALUATION`.
   - Per-criterion scores alone never change `passed`.
   - Switching `LLM_MODEL_EVALUATION` requires no code change (contract test with two fake model names).
   - Outside quality mode, a fake rejecting images completes metadata-only with a warning; in quality mode it retains a pending visual review and cannot approve.
@@ -240,8 +263,13 @@ Adding an issue code requires adding a row here.
   hook); if there are fewer segments than frames, remaining frames are taken
   at evenly spaced times. Frame extraction uses FFmpeg via the media runner.
   The evaluator may return `visual_irrelevant`, `misleading_generated_media`
-  or `caption_quality` issues referencing the frame's segment.
+  or `caption_quality` issues referencing the frame's segment. When the
+  provider rejects the request because the routed model accepts fewer images
+  per prompt (`image_limit`), the same single request is resent with half the
+  frames, evenly spaced and keeping the first and last, with the frame metadata
+  reduced to match, down to one frame.
 - **Acceptance:**
+  - On `image_limit`, 5 frames are resent as frames 0 and 4, then as frame 1 of the pair.
   - For an 8-segment Clip, exactly 5 frames are extracted, including segment 0, and identical inputs give identical timestamps.
   - The `evaluate_clip` request contains 5 images and counts as one LLM request.
   - A `visual_irrelevant` issue on the frame from segment 3 routes to `reselect_asset` for segment 3.

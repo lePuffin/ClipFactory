@@ -10,7 +10,7 @@ verification is [traceability.md](traceability.md).
 | Research, clustering, selection, sources, claims | [05-research-and-source-grounding.md](05-research-and-source-grounding.md) | CF-REQ-100 – CF-REQ-118 | `research`, `cluster_stories`, `select_story`, `gather_sources`, `extract_claims` |
 | Story Package, script, social metadata | [06-story-and-script.md](06-story-and-script.md) | CF-REQ-150 – CF-REQ-162 | `build_story_package`, `write_script` |
 | Asset library, reuse, acquisition, generation, provenance | [07-asset-management.md](07-asset-management.md) | CF-REQ-200 – CF-REQ-220 | `select_assets` |
-| Visual plan, graphics, motion, framing, timing | [08-visual-production.md](08-visual-production.md) | CF-REQ-250 – CF-REQ-266 | `plan_visuals`, `select_assets`, `build_captions`, `compose_clip` |
+| Visual plan, graphics, motion, framing, timing | [08-visual-production.md](08-visual-production.md) | CF-REQ-250 – CF-REQ-267 | `plan_visuals`, `select_assets`, `build_captions`, `compose_clip` |
 | Narration, transcription, captions, music | [09-audio-and-tts.md](09-audio-and-tts.md) | CF-REQ-300 – CF-REQ-321 | `generate_narration`, `transcribe_narration`, `build_captions` |
 | Composition and output format | [10-composition.md](10-composition.md) | CF-REQ-350 – CF-REQ-359 | `compose_clip` |
 | Evaluation and targeted retry | [11-evaluation-and-retry.md](11-evaluation-and-retry.md) | CF-REQ-400 – CF-REQ-414 | `validate_clip`, `evaluate_clip`, `plan_retry` |
@@ -38,8 +38,8 @@ has requirements:
 | Claim extraction | CF-REQ-112 – CF-REQ-117 |
 | Story Package | CF-REQ-150 – CF-REQ-152 |
 | Script writer | CF-REQ-153 – CF-REQ-160 |
-| Visual planner and typed graphics render | CF-REQ-250 – CF-REQ-266 |
-| Asset selection (reuse / acquire / generate / typed graphics) | CF-REQ-204 – CF-REQ-211, CF-REQ-218 – CF-REQ-220, CF-REQ-263 – CF-REQ-266 |
+| Visual planner and typed graphics render | CF-REQ-250 – CF-REQ-267 |
+| Asset selection (reuse / acquire / generate / typed graphics) | CF-REQ-204 – CF-REQ-211, CF-REQ-218 – CF-REQ-220, CF-REQ-263 – CF-REQ-267 |
 | TTS / audio | CF-REQ-300 – CF-REQ-305, CF-REQ-320, CF-REQ-321 |
 | Transcription | CF-REQ-310, CF-REQ-311 |
 | Captions | CF-REQ-312 – CF-REQ-314 |

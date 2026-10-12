@@ -13,12 +13,14 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import FastAPI, File, Form, Query, Request, Response, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, model_validator
 
 from clipfactory.assets.importing import AssetImportError, ImportProvenance, import_asset_file
 from clipfactory.domain.models import Asset, AssetStatus, ContentProfile, RunTrigger
@@ -30,6 +32,7 @@ from clipfactory.infrastructure.settings_validation import (
     validate_settings_section,
 )
 from clipfactory.ports.assets import AssetRepository as AssetRepositoryPort
+from clipfactory.ports.configuration import ActiveProfileDeleteForbidden, ProfileNameConflict, ProfileNotFound
 from clipfactory.ports.publishing import PublicMediaReader
 from clipfactory.ports.runs import (
     ActiveRunConflict,
@@ -40,6 +43,7 @@ from clipfactory.ports.runs import (
     RunReader,
 )
 from clipfactory.ports.storage import MediaStorage
+from clipfactory.publishing.approval import PublicationRetryConflict
 from clipfactory.publishing.media_urls import verify_media_token
 from clipfactory.workflow.saved_news_render import RenderRevisionResponse, SavedNewsRenderRequest
 
@@ -143,6 +147,7 @@ class AssetResponse(BaseModel):
 
 class AssetListResponse(BaseModel):
     items: list[AssetResponse]
+    total: int
 
 
 class AssetPatchRequest(BaseModel):
@@ -150,6 +155,41 @@ class AssetPatchRequest(BaseModel):
     description: str | None = None
     tags: list[str] | None = None
     status: AssetStatus | None = None
+
+
+ProfileName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+
+
+class NamedProfileCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: ProfileName
+    profile: ContentProfile
+    activate: bool = False
+
+
+class NamedProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: ProfileName | None = None
+    profile: ContentProfile | None = None
+
+    @model_validator(mode="after")
+    def reject_explicit_null(self) -> NamedProfileUpdateRequest:
+        for field in self.model_fields_set:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+
+
+class NamedProfileResponse(BaseModel):
+    id: UUID
+    name: str
+    is_active: bool
+    updated_at: datetime
+    profile: ContentProfile
+
+
+class NamedProfileListResponse(BaseModel):
+    items: list[NamedProfileResponse]
 
 
 class ApprovalRequest(BaseModel):
@@ -213,6 +253,7 @@ class ClipResponse(BaseModel):
 
 class ClipListResponse(BaseModel):
     items: list[ClipResponse]
+    total: int
 
 
 class DashboardSummaryResponse(BaseModel):
@@ -410,14 +451,80 @@ def create_app(
         logger.info("Settings section %s saved; stored keys: %s", section, ", ".join(sorted(stored)) or "none")
         return {"section": section, "value": validated}
 
-    @app.get("/api/content-profile", tags=["settings"])
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError) -> Response:
+        if request.url.path.startswith("/api/content-profiles"):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": {
+                        "code": "profile_validation_failed",
+                        "message": "Content Profile validation failed",
+                        "details": {
+                            "errors": [
+                                {key: value for key, value in item.items() if key not in {"ctx", "url"}}
+                                for item in error.errors()
+                            ]
+                        },
+                    }
+                },
+            )
+        return await request_validation_exception_handler(request, error)
+
+    @app.exception_handler(ProfileNotFound)
+    async def profile_not_found(_request: Request, error: ProfileNotFound) -> Response:
+        return JSONResponse(status_code=404, content={"error": {"code": "profile_not_found", "message": str(error)}})
+
+    @app.exception_handler(ProfileNameConflict)
+    async def profile_name_conflict(_request: Request, error: ProfileNameConflict) -> Response:
+        return JSONResponse(
+            status_code=409, content={"error": {"code": "profile_name_conflict", "message": str(error)}}
+        )
+
+    @app.exception_handler(ActiveProfileDeleteForbidden)
+    async def active_profile_delete_forbidden(_request: Request, error: ActiveProfileDeleteForbidden) -> Response:
+        return JSONResponse(
+            status_code=409, content={"error": {"code": "active_profile_delete_forbidden", "message": str(error)}}
+        )
+
+    def require_configuration() -> Any:
+        if configuration is None:
+            raise RuntimeError("Content Profile persistence is not configured")
+        return configuration
+
+    @app.get("/api/content-profiles", response_model=NamedProfileListResponse, tags=["settings"])
+    async def get_named_profiles() -> dict[str, Any]:
+        return {"items": await _in_thread(require_configuration().profiles)}
+
+    @app.post("/api/content-profiles", response_model=NamedProfileResponse, status_code=201, tags=["settings"])
+    async def create_named_profile(request: NamedProfileCreateRequest) -> Any:
+        return await _in_thread(
+            require_configuration().create_profile, request.name, request.profile, activate=request.activate
+        )
+
+    @app.put("/api/content-profiles/{profile_id}", response_model=NamedProfileResponse, tags=["settings"])
+    async def update_named_profile(profile_id: UUID, request: NamedProfileUpdateRequest) -> Any:
+        return await _in_thread(
+            require_configuration().update_profile, profile_id, name=request.name, profile=request.profile
+        )
+
+    @app.post("/api/content-profiles/{profile_id}/activate", response_model=NamedProfileResponse, tags=["settings"])
+    async def activate_named_profile(profile_id: UUID) -> Any:
+        return await _in_thread(require_configuration().activate_profile, profile_id)
+
+    @app.delete("/api/content-profiles/{profile_id}", status_code=204, tags=["settings"])
+    async def delete_named_profile(profile_id: UUID) -> Response:
+        await _in_thread(require_configuration().delete_profile, profile_id)
+        return Response(status_code=204)
+
+    @app.get("/api/content-profile", response_model=ContentProfile, tags=["settings"])
     async def get_content_profile() -> dict[str, Any]:
         if configuration is None:
             raise RuntimeError("Content Profile persistence is not configured")
         profile = await _in_thread(configuration.active_profile)
         return profile.model_dump(mode="json")
 
-    @app.put("/api/content-profile", tags=["settings"])
+    @app.put("/api/content-profile", response_model=ContentProfile, tags=["settings"])
     async def put_content_profile(request: dict[str, Any]) -> Any:
         if configuration is None:
             raise RuntimeError("Content Profile persistence is not configured")
@@ -453,18 +560,45 @@ def create_app(
                 status_code=404, content={"error": {"code": "clip_not_found", "message": "Clip was not found"}}
             )
 
+    @app.post("/api/clips/{clip_id}/publications/retry", tags=["publishing"])
+    async def retry_publications(clip_id: UUID) -> Any:
+        if approvals is None:
+            raise RuntimeError("Approval service is not configured")
+        try:
+            return await approvals.retry_failed(clip_id)
+        except LookupError:
+            return JSONResponse(
+                status_code=404, content={"error": {"code": "clip_not_found", "message": "Clip was not found"}}
+            )
+        except PublicationRetryConflict as exc:
+            return JSONResponse(status_code=409, content={"error": {"code": "retry_not_allowed", "message": str(exc)}})
+
     def require_catalogue() -> Any:
         if catalogue is None:
             raise RuntimeError("Clip catalogue is not configured")
         return catalogue
 
     @app.get("/api/clips", response_model=ClipListResponse, tags=["publishing"])
-    async def list_clips(limit: int = Query(default=100, ge=1, le=100)) -> dict[str, Any]:
-        return {"items": await _in_thread(require_catalogue().clips, limit=limit)}
+    async def list_clips(
+        limit: int = Query(default=100, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        filter: Literal["all", "published", "failed"] = "all",
+    ) -> dict[str, Any]:
+        repository = require_catalogue()
+        return {
+            "items": await _in_thread(repository.clips, filter=filter, limit=limit, offset=offset),
+            "total": await _in_thread(repository.count_clips, filter=filter),
+        }
 
     @app.get("/api/clips/pending-approval", response_model=ClipListResponse, tags=["publishing"])
-    async def pending_approval_clips(limit: int = Query(default=100, ge=1, le=100)) -> dict[str, Any]:
-        return {"items": await _in_thread(require_catalogue().clips, pending_approval=True, limit=limit)}
+    async def pending_approval_clips(
+        limit: int = Query(default=100, ge=1, le=100), offset: int = Query(default=0, ge=0)
+    ) -> dict[str, Any]:
+        repository = require_catalogue()
+        return {
+            "items": await _in_thread(repository.clips, pending_approval=True, limit=limit, offset=offset),
+            "total": await _in_thread(repository.count_clips, pending_approval=True),
+        }
 
     @app.get("/api/clips/{clip_id}", response_model=ClipResponse, tags=["publishing"])
     async def get_clip(clip_id: UUID) -> Any:
@@ -787,12 +921,17 @@ def create_app(
 
     @app.get("/api/assets", response_model=AssetListResponse, tags=["assets"])
     async def list_assets(
-        status: AssetStatus | None = AssetStatus.ACTIVE, limit: int = Query(default=100, ge=1, le=500)
-    ) -> dict[str, list[dict[str, Any]]]:
+        status: AssetStatus | None = AssetStatus.ACTIVE,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
         if asset_repository is None:
             raise RuntimeError("Asset repository is not configured")
-        assets = await _in_thread(asset_repository.list, status=status, limit=limit)
-        return {"items": [asset_response(asset) for asset in assets]}
+        assets = await _in_thread(asset_repository.list, status=status, limit=limit, offset=offset, saved_only=True)
+        return {
+            "items": [asset_response(asset) for asset in assets],
+            "total": await _in_thread(asset_repository.count, status=status, saved_only=True),
+        }
 
     def asset_response(asset: Asset) -> dict[str, Any]:
         return {
@@ -971,6 +1110,7 @@ def settings_snapshot(settings: EnvironmentSettings) -> dict[str, Any]:
         },
         "research": {
             "max_article_bytes": 5000000,
+            "story_novelty_window_hours": 48,
             "feeds": [
                 ["BBC News - World", "https://feeds.bbci.co.uk/news/world/rss.xml"],
                 ["The Guardian - World", "https://www.theguardian.com/world/rss"],
@@ -989,11 +1129,13 @@ def settings_snapshot(settings: EnvironmentSettings) -> dict[str, Any]:
             "reuse_min_match_score": 0.6,
             "reuse_cooldown_days": 3,
             "min_image_short_side_px": 720,
+            "min_portrait_short_side_px": 480,
             "min_video_height_px": 720,
             "max_image_bytes": 20000000,
             "max_video_bytes": 300000000,
             "max_audio_bytes": 50000000,
             "candidates_per_search": 10,
+            "max_review_images_per_request": 10,
         },
         "captions": {
             "font_file": "NotoSans-Bold.ttf",
@@ -1016,6 +1158,9 @@ def settings_snapshot(settings: EnvironmentSettings) -> dict[str, Any]:
             "tail_seconds": 1.0,
             "narration_loudness_lufs": -14,
             "transition_seconds": 0.4,
+            "logo_file": "logo_letters.png",
+            "logo_opacity": 0.7,
+            "end_card_file": None,
         },
         "evaluation": {
             "semantic_enabled": True,
@@ -1030,6 +1175,7 @@ def settings_snapshot(settings: EnvironmentSettings) -> dict[str, Any]:
             "approval_required": True,
             "auto_publish_enabled": False,
             "auto_publish_after_minutes": 10,
+            "discovery_hashtags": ["News", "BreakingNews", "WorldNews"],
             "public_media_url_ttl_minutes": 60,
         },
         "budget": {

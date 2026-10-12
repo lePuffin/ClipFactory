@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from clipfactory.domain.models import ContentProfile, RunTrigger
+from clipfactory.domain.routing import revision_limit_raised
 from clipfactory.infrastructure.db.models import ContentProfileRow, EvaluationRow, LLMRequestRow, RunEventRow, RunRow
 from clipfactory.ports.runs import ActiveRunConflict, LLMBudgetExhausted, RunContinuationConflict, RunNotFound
 
@@ -153,6 +154,7 @@ class RunRepository:
             if run is None:
                 raise RunNotFound(str(run_id))
             result = _run_summary(run)
+            result["manual_url"] = run.manual_url
             result["profile_snapshot"] = run.profile_snapshot
             result["settings_snapshot"] = run.settings_snapshot
             result["events"] = [
@@ -217,7 +219,10 @@ class RunRepository:
                     raise RunNotFound(str(run_id))
                 if run.status != "failed" or run.failure_stage != expected_stage:
                     raise RunContinuationConflict("Run is no longer failed at the saved checkpoint stage")
-                if run.failure_code == "evaluation_failed_after_retries" or expected_stage == "publish":
+                exhausted = run.failure_code == "evaluation_failed_after_retries" and not revision_limit_raised(
+                    run.revision_retries_used, settings_snapshot
+                )
+                if exhausted or expected_stage == "publish":
                     raise RunContinuationConflict("Exhausted retries or publication failures cannot be continued")
                 active = session.scalar(select(RunRow).where(RunRow.status.in_(("queued", "running"))).limit(1))
                 if active is not None:

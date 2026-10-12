@@ -52,6 +52,7 @@ from clipfactory.infrastructure.providers.publishing.retrying import RetryingPub
 from clipfactory.infrastructure.providers.transcription.whisper_local import WhisperLocalTranscriptionProvider
 from clipfactory.infrastructure.providers.tts.google import GoogleTTSProvider
 from clipfactory.infrastructure.providers.wan_local import WanLocalVideoProvider
+from clipfactory.infrastructure.public_media import PublicMediaStaging
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.infrastructure.settings_validation import ProviderCallSettings, apply_runtime_environment
 from clipfactory.infrastructure.storage import LocalStorageProvider
@@ -166,6 +167,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
         selected_publishers,
         clock=lambda: datetime.now(UTC),
         public_url=public_url_factory,
+        staging=PublicMediaStaging(configured.public_media_dir) if public_url_factory is not None else None,
     )
     approval_service = ApprovalService(publishing_repository, publish_service, clock=lambda: datetime.now(UTC))
     metric_collector = MetricCollector(publishing_repository, selected_publishers)
@@ -184,6 +186,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
         video_providers=video_providers,
         graphics_providers=(HyperFramesVideoProvider(run_settings), ManimVideoProvider(run_settings)),
         candidate_preview=CandidatePreviews(http_provider, asset_repository, storage_provider, media_runner),
+        person_portraits=available_media_sources["wikimedia_commons"],
     )
     stage_handlers = {
         **research_stage_handlers(research_use_case, research_repository, run_repository),
@@ -240,6 +243,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
                 clock=lambda: datetime.now(UTC),
                 default_stage_timeout_seconds=1800,
                 prepare_run=prepare_run,
+                cleanup_run=production_service.cleanup_run,
             )
             application.state.workflow_runner = runner
             daily_scheduler = DailyRunScheduler(

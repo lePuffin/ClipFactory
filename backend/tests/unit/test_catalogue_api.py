@@ -395,3 +395,53 @@ def test_catalogue_repository_reads_pending_latest_metrics_and_cost_entries(
     assert approved["publications"][0]["latest_metrics"]["views"] == 900
     assert costs is not None
     assert costs["total"] == "1.0000"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-610")
+@pytest.mark.req("CF-REQ-613")
+def test_clip_pagination_counts_filtered_rows_before_slicing(catalogue_client) -> None:
+    client, sessions, published_id, pending_id = catalogue_client
+    first = client.get("/api/clips?limit=1&offset=0").json()
+    second = client.get("/api/clips?limit=1&offset=1").json()
+    assert first["total"] == second["total"] == 2
+    assert first["items"][0]["id"] == str(published_id)
+    assert second["items"][0]["id"] == str(pending_id)
+    assert client.get("/api/clips?offset=2").json() == {"items": [], "total": 2}
+    assert client.get("/api/clips?filter=published").json()["total"] == 1
+    assert client.get("/api/clips?filter=failed").json() == {"items": [], "total": 0}
+    assert client.get("/api/clips/pending-approval?limit=1&offset=1").json() == {"items": [], "total": 1}
+    with sessions.begin() as session:
+        clip = session.get(ClipRow, pending_id)
+        assert clip is not None
+        clip.status = "rejected"
+        session.add(PublicationRow(clip_id=published_id, platform="facebook", status="failed", mode="live", request={}))
+        session.add(PublicationRow(clip_id=published_id, platform="tiktok", status="failed", mode="live", request={}))
+    failed = client.get("/api/clips?filter=failed&limit=1&offset=1").json()
+    assert failed["total"] == 2
+    assert failed["items"][0]["id"] == str(pending_id)
+    assert client.get("/api/clips?filter=all").json()["total"] == 2
+    assert client.get("/api/clips?filter=published").json()["total"] == 1
+    assert client.get("/api/clips/pending-approval").json() == {"items": [], "total": 0}
+    with sessions.begin() as session:
+        clip = session.get(ClipRow, pending_id)
+        assert clip is not None
+        clip.status = "failed"
+    assert client.get("/api/clips?filter=failed").json()["total"] == 2
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-610")
+@pytest.mark.req("CF-REQ-613")
+@pytest.mark.parametrize("path", ["/api/clips", "/api/clips/pending-approval"])
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=bad", "offset=bad"])
+def test_clip_pagination_rejects_invalid_bounds(catalogue_client, path: str, query: str) -> None:
+    client, *_ = catalogue_client
+    assert client.get(f"{path}?{query}").status_code == 422
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-610")
+def test_clip_filter_rejects_unknown_value(catalogue_client) -> None:
+    client, *_ = catalogue_client
+    assert client.get("/api/clips?filter=unknown").status_code == 422

@@ -1,12 +1,27 @@
 """Provider-neutral pre-dispatch request accounting and limit control."""
 
-from typing import Any, Literal, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 from uuid import UUID
 
-from clipfactory.ports.llm import LLMResult
+from clipfactory.ports.llm import LLMModelRole, LLMResult
 
 
 class LLMGovernance(Protocol):
-    async def begin(self, run_id: UUID, task: str, role: Literal["default", "evaluation"]) -> UUID: ...
+    async def begin(
+        self,
+        run_id: UUID,
+        task: str,
+        role: LLMModelRole,
+        *,
+        on_wait: Callable[[str, float], Awaitable[None]] | None = None,
+    ) -> UUID: ...
 
-    async def finish(self, request_id: UUID, result: LLMResult[Any] | None, error_code: str | None) -> None: ...
+    async def finish(
+        self,
+        request_id: UUID,
+        result: LLMResult[Any] | None,
+        error_code: str | None,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None: ...

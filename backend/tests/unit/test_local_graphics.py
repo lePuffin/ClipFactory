@@ -20,6 +20,7 @@ from clipfactory.domain.graphics import (
     GraphicsError,
     GraphicsSpec,
     GroundedText,
+    reusable_render_duration,
     sample_function,
     validate_graphics_claims,
 )
@@ -70,6 +71,8 @@ def payload(template: str = "statistic") -> dict[str, Any]:
                 {"date": label("2026"), "label": label("Group B")},
             ],
         }
+    if template == "key_date":
+        return {"template": template, "title": title, "date": label("2025")}
     if template == "relationship_diagram":
         return {
             "template": template,
@@ -150,7 +153,9 @@ class FakeGraphics:
         )
 
 
-@pytest.mark.parametrize("template", ["statistic", "comparison", "timeline", "function_plot", "relationship_diagram"])
+@pytest.mark.parametrize(
+    "template", ["statistic", "comparison", "timeline", "key_date", "function_plot", "relationship_diagram"]
+)
 def test_supported_templates_are_bounded_and_grounded(template: str) -> None:
     validate_graphics_claims(spec(template), [claim()])
 
@@ -190,6 +195,12 @@ def test_old_draft_defaults_to_media() -> None:
 def test_executable_markup_shell_and_url_input_rejected(text: str) -> None:
     with pytest.raises(ValidationError):
         GroundedText(text=text, claim_ids=[CLAIM_ID])
+
+
+@pytest.mark.req("CF-REQ-263")
+@pytest.mark.parametrize("text", ["Starlink price $10 a month", "AT&T subscribers", "Jio & Airtel", "\u20b9840 plan"])
+def test_currency_and_ampersand_are_plain_factual_text(text: str) -> None:
+    assert GroundedText(text=text, claim_ids=[CLAIM_ID]).text == text
 
 
 @pytest.mark.parametrize("mutation", ["number", "other_item_number", "claim", "label", "rejected"])
@@ -754,3 +765,154 @@ async def test_missing_renderer_is_not_fake_success(tmp_path: Path) -> None:
     assert not provider.is_configured()
     with pytest.raises(ProviderError, match="configure"):
         await provider.generate(request(), tmp_path / "never.mp4")
+
+
+@pytest.mark.req("CF-REQ-263")
+@pytest.mark.parametrize(
+    ("kind", "expected_kind", "primary", "fallback"),
+    [("scientific", "infographic", True, False), ("media", "media", False, True)],
+)
+def test_a_mislabelled_kind_is_normalized_from_the_supported_template(
+    kind: str, expected_kind: str, primary: bool, fallback: bool
+) -> None:
+    draft = VisualDraft.model_validate(
+        {
+            "kind": kind,
+            "objective": "Explain",
+            "description": "Synthetic study",
+            "media_type": "video",
+            "category": "graphic",
+            "strategy": "generate_allowed",
+            "graphics_spec": payload(),
+        }
+    )
+    assert draft.kind == expected_kind
+    assert (draft.graphics_spec is not None) is primary
+    assert (draft.fallback_graphics_spec is not None) is fallback
+
+
+@pytest.mark.req("CF-REQ-263")
+@pytest.mark.parametrize("fallback", [False, True])
+def test_a_graphics_kind_without_a_template_becomes_media_without_new_content(fallback: bool) -> None:
+    draft = VisualDraft.model_validate(
+        {
+            "kind": "infographic",
+            "objective": "Explain",
+            "description": "Synthetic",
+            "media_type": "video",
+            "category": "graphic",
+            **({"fallback_graphics_spec": payload()} if fallback else {}),
+        }
+    )
+    assert draft.kind == "media"
+    assert draft.graphics_spec is None
+    assert (draft.fallback_graphics_spec is not None) is fallback
+
+
+@pytest.mark.req("CF-REQ-263")
+def test_a_graphics_visual_keeps_its_primary_and_drops_a_redundant_fallback() -> None:
+    draft = VisualDraft.model_validate(
+        {
+            "kind": "infographic",
+            "objective": "Explain",
+            "description": "Synthetic",
+            "media_type": "video",
+            "category": "graphic",
+            "graphics_spec": payload(),
+            "fallback_graphics_spec": payload(),
+        }
+    )
+    assert draft.kind == "infographic"
+    assert draft.graphics_spec is not None
+    assert draft.fallback_graphics_spec is None
+
+
+@pytest.mark.req("CF-REQ-263")
+def test_an_unsupported_template_still_fails() -> None:
+    with pytest.raises(ValidationError):
+        VisualDraft.model_validate(
+            {
+                "kind": "infographic",
+                "objective": "Explain",
+                "description": "Synthetic",
+                "media_type": "video",
+                "category": "graphic",
+                "graphics_spec": {**payload(), "template": "map"},
+            }
+        )
+
+
+@pytest.mark.req("CF-REQ-265")
+@pytest.mark.parametrize(
+    ("template", "rendered", "planned", "reusable"),
+    [
+        ("key_date", 4.0, 2.8, True),
+        ("key_date", 4.0, 2.0, False),
+        ("key_date", 2.8, 4.0, False),
+        ("timeline", 5.0, 4.0, False),
+        ("timeline", 5.0, 4.5, True),
+        ("comparison", 12.0, 6.0, False),
+        ("function_plot", 5.0, 4.0, False),
+        ("function_plot", 5.0, 5.02, True),
+    ],
+)
+def test_longer_render_is_reusable_only_once_its_entrance_has_settled(
+    template: str, rendered: float, planned: float, reusable: bool
+) -> None:
+    assert reusable_render_duration(spec(template), rendered, planned, 1 / 30) is reusable
+
+
+@pytest.mark.req("CF-REQ-265")
+async def test_retry_that_shortens_a_key_date_segment_reuses_the_identical_card(tmp_path: Path) -> None:
+    hyperframes = FakeGraphics("hyperframes")
+    assets, media = assets_and_media()
+    production, runs = MagicMock(), MagicMock()
+    segment: dict[str, Any] = {
+        "index": 0,
+        "narration_text": "The vote is on November 29.",
+        "objective": "Mark the date",
+        "motion": "none",
+        "planned_duration_seconds": 5,
+        "requirement": {
+            "kind": "infographic",
+            "graphics_spec": payload("key_date"),
+            "media_type": "video",
+            "category": "graphic",
+            "description": "A simple graphic showing the election date",
+            "subjects": [],
+            "tags": [],
+            "strategy": "generate_allowed",
+        },
+    }
+    plan = {"version": 1, "segments": [segment]}
+    production.current_visual_plan.return_value = plan
+    production.package_context.return_value = {"claims": [claim()]}
+    profile = ContentProfile()
+    runs.get.return_value = {"attempt": 1, "profile_snapshot": profile.model_dump(mode="json"), "settings_snapshot": {}}
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=assets,
+        evaluations=MagicMock(),
+        storage=LocalStorageProvider(tmp_path),
+        media=media,
+        clock=lambda: NOW,
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        video_providers=[],
+        graphics_providers=[hyperframes],
+    )
+    state: WorkflowState = {
+        "run_id": str(uuid4()),
+        "story_package_id": str(uuid4()),
+        "attempt": 1,
+        "trigger": "run_now",
+    }
+    await service.select_assets(state)
+    assets.list.return_value = [assets.save.call_args.args[0]]
+    segment["planned_duration_seconds"] = 2.8
+    segment.pop("selected_asset_id")
+    await service.select_assets({**state, "attempt": 2})
+    assert len(hyperframes.calls) == 1
+    assert segment["selection_reason"] == "reused"

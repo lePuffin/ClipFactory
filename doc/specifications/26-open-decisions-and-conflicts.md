@@ -7,6 +7,35 @@ any) and keep it behind the stated configuration or provider boundary.
 
 ## Open decisions
 
+Resolved owner retention conflict (2026-10-11): “external assets from the free
+Pixabay and Pexels etc shouldn't be saved, only generated media should be saved.”
+This supersedes permanent external storage/reuse in CF-REQ-200, CF-REQ-211 and
+CF-REQ-214 and the external-storage clause of ADR-011. External provider media,
+including Wikimedia/Wikidata portraits, is Run-scoped through targeted retries;
+remove files at production completion/approval or terminal failure, preserving
+retired metadata for attribution and cross-Run stock history. Generated/rendered
+and owner-imported media remain saved. No automatic bulk deletion of legacy
+stock files, migration or new retention configuration is authorised. Saved
+re-render requires its original visual inputs and therefore cannot replay a
+removed stock file; the composed Clip still supports publishing/Retry publish.
+
+
+Owner-approved named-profile retention decision (2026-10-11): inactive
+profiles are physically deletable (CF-REQ-550), including those used by prior
+Runs. Each Run already persists its immutable complete `profile_snapshot`;
+make `run.profile_id` nullable with `ON DELETE SET NULL` in an Alembic
+migration. Preserve snapshots and Run history; do not add hidden tombstones
+or a second durable store. The existing Content Profile columns and active
+unique partial index need no changes.
+
+Owner reliability decision (2026-10-09): schema-valid script drafts rejected
+by deterministic gates must be retained separately from accepted Scripts.
+For narration-only gate failures, retries correct indexed narration fields
+instead of regenerating unrelated graphics and metadata (CF-REQ-158–159).
+This addresses the observed repeated hook-limit failures followed by an
+unrelated invalid graphics response; it does not guarantee free upstream
+availability or authorize additional live calls.
+
 Format: question · why open · provisional choice · boundary that isolates it · who decides.
 Entries marked **Decided** record the owner's answer on the date stated and
 are reflected in the referenced requirements; they stay here for history.
@@ -41,9 +70,37 @@ are reflected in the referenced requirements; they stay here for history.
 
 - **Question:** Which model(s) to use via the OpenAI-compatible endpoint (OpenRouter initially)?
 - **Decided:** `google/gemma-4-31b-it:free` — a specific free, vision-capable OpenRouter model (not the `openrouter/free` router) so development is reproducible. Selected from OpenRouter's public model list on 2026-09-28 (free, image input, `response_format` support, 262k context); a live request has not yet been made. Fallback if retired: `qwen/qwen3.8-27b:free`. The model is configuration (`LLM_MODEL`, `LLM_MODEL_EVALUATION`); OpenAI, Luna, Terra or local models are later configuration/adapters behind `LLMProvider` with no application-logic change. Weak free models need schema repair (CF-REQ-758).
+
+Owner revision to OD-001 (2026-10-09): the `openrouter/free` router is permitted as an explicit owner-selected opt-in for `LLM_MODEL` or `LLM_MODEL_EVALUATION`; it is not the default. It is treated as free because OpenRouter routes it only to $0 models; other router IDs such as `openrouter/auto` remain blocked as potentially paid. Each call's answering model is recorded in its `llm_call_completed` Run Event. Trade-off accepted: calls within a Run may be answered by different models, so behaviour is less reproducible than with a pinned `:free` model.
 - **Boundary:** `LLMProvider`, configuration.
 
 Quality revision to OD-001 (2026-10-06): owner permits budgeted paid writing/vision models. Model-role identifiers remain configuration; capabilities, availability and prices must be verified before paid calls. Fixed historical free-model choices are not proof of current availability. Candidate and final visual review require image-capable models; unavailable evidence remains pending. No hard-coded vendor/model dependency is introduced.
+
+Owner refinement (2026-10-08): allow independently configured main/evaluation
+structured-output transports: strict schema (default), JSON-object mode or
+prompt-only JSON. The latter modes include versioned schema instructions and
+retain local validation and bounded governed repair (CF-REQ-758–759).
+This expands model eligibility, not verified compatibility; image-capable
+models remain required for visual review. Do not automatically downgrade on
+HTTP 400 or infer its cause from the status alone.
+
+Owner reliability refinement (2026-10-08): isolated free Dots probes accepted
+synthetic evaluation-sized input and the actual full evaluation, while
+other actual-payload probes returned AtlasCloud's opaque `bad request`.
+The accepted actual response still failed JSON parsing; the exact formatting
+was not retained in that probe. Owner approved deterministic whole-response
+JSON-fence handling for non-strict modes and one governed retry only for the
+precisely matched opaque AtlasCloud rejection (CF-REQ-758, CF-REQ-670).
+This is not a diagnosis of the upstream cause or permission to retry explicit
+permanent errors, alter editorial evidence or bypass validation.
+
+Reliability refinement based on live Runs (2026-10-09): live Runs using
+`openrouter/free` showed the opaque `Provider returned error` rejection could
+repeat after its single retry, while each request may be routed to a different
+free upstream. The free router may therefore retry this exact opaque response
+up to the already-configured `providers.max_call_retries`; AtlasCloud retains
+its single-retry rule. Ordinary and explicit permanent 400 errors remain
+non-retryable, and all calls remain governed and budgeted (CF-REQ-670).
 
 ### OD-002 — Target duration
 
@@ -67,7 +124,7 @@ Quality revision to OD-001 (2026-10-06): owner permits budgeted paid writing/vis
 
 - **Question:** Which generation services, if any?
 - **Decided:** Inspired by OpenMontage (not a dependency): local ComfyUI (workflow templates; images and video, incl. Wan workflows), native local Wan via diffusers (video), Higgsfield cloud (images and video). Order is a Content Profile setting; default `image: [comfyui, higgsfield]`, `video: [comfyui, wan_local, higgsfield]`. Generated media allowed by default, but never of real identifiable people (CF-REQ-215).
-- **Still open:** Higgsfield API contract, authentication and pricing (verify in Phase 5, OD-020). Reference GPU (RTX PRO 500 Blackwell laptop, ≈ 4–6 GB VRAM) is likely insufficient for Wan video; local adapters are implemented and tested with mocks/fakes, Higgsfield is the practical video path.
+- **Still open:** Higgsfield API contract, authentication and pricing (verify in Phase 5, OD-020). On 2026-10-08 the owner verified local Wan 2.1 1.3B generation on the RTX PRO 500 Blackwell laptop (about 6 GB VRAM) and accepted the recovered-prompt 832x480, 16 FPS, 25-step reference. Native portrait generation uses the same bounded recipe (CF-REQ-267); new-shot quality still requires evaluation.
 - **Boundary:** `ImageProvider`, `VideoProvider`.
 
 Owner revision (2026-10-07): if no suitable image or video is selected,
@@ -180,6 +237,13 @@ restrictions and final review remain unchanged (CF-REQ-208).
 
 - **OD-014 revision:** Keep one initial final-evaluation request, but cover every shot within configured model/budget capacity. Sparse legacy sampling is not blanket approval; uncovered or unsupported visual evidence remains pending under CF-REQ-416.
 - **OD-022:** Channel name/logo/palette, exact example videos and creative numeric defaults remain open. Provisional choice: neutral modern news-explainer template and the labelled provisional values in configuration. The owner approves branding and the diverse reference set before creative-template completion is claimed. Boundaries: Content Profile, template versions and Quality Review.
+
+Owner partial decision (2026-10-08): use the existing owner-provided
+`logo_inPulso_world.png` subtly at top-right on every future Clip, with 70%
+opacity. Show the latest publication date among Sources actually cited by
+the Script as `8 Oct 2026`, in the profile timezone. Preserve provenance;
+unknown publication dates are not invented. Archive-year overlays are
+explicitly deferred. Other OD-022 creative decisions remain open.
 - **OD-023:** Owner explicitly approved one additional batched visual-review request and paid models within EUR 1 per Clip/EUR 30 monthly. Five initial automatic-research calls, four for Manual URL, and eight total including retries/repairs; cache reuse may reduce initial calls. Boundaries: provider governance, accounting and versioned media judgments; ADR-018.
 
 ## Known conflicts

@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from threading import Event
 from typing import Any, Protocol
 from uuid import UUID
 
+from clipfactory.domain.routing import revision_limit_raised
 from clipfactory.ports.generation import GENERATION_ABORT
 from clipfactory.ports.runs import RunContinuationConflict
 from clipfactory.workflow.executor import StageFailure
@@ -74,12 +75,14 @@ class WorkflowRunner:
         clock: Callable[[], datetime],
         default_stage_timeout_seconds: float,
         prepare_run: Callable[[Mapping[str, Any]], None] | None = None,
+        cleanup_run: Callable[[UUID], Awaitable[None]] | None = None,
     ) -> None:
         self._runs = runs
         self._graph = graph
         self._clock = clock
         self._default_stage_timeout_seconds = default_stage_timeout_seconds
         self._prepare_run = prepare_run
+        self._cleanup_run = cleanup_run
         self.last_config: dict[str, Any] | None = None
         self._control_lock = asyncio.Lock()
         self._active: dict[UUID, tuple[asyncio.Task[None], Event]] = {}
@@ -113,7 +116,9 @@ class WorkflowRunner:
         async with self._control_lock:
             run = await asyncio.to_thread(self._runs.get, run_id)
             if run["status"] == "queued":
-                return await asyncio.to_thread(self._runs.stop_queued, run_id, self._clock())
+                result = await asyncio.to_thread(self._runs.stop_queued, run_id, self._clock())
+                await self._cleanup(run_id)
+                return result
             if run["status"] != "running":
                 raise RunContinuationConflict("Only queued or running Runs can be stopped")
             if run.get("current_stage") == "publish":
@@ -139,8 +144,13 @@ class WorkflowRunner:
         run = await asyncio.to_thread(self._runs.get, run_id)
         if run["status"] != "failed":
             raise RunContinuationConflict("Only failed Runs can be continued")
-        if run.get("failure_code") == "evaluation_failed_after_retries":
-            raise RunContinuationConflict("Revision retries are exhausted; start a new Run")
+        if run.get("failure_code") == "evaluation_failed_after_retries" and not revision_limit_raised(
+            int(run.get("revision_retries_used", 0)), settings_snapshot
+        ):
+            raise RunContinuationConflict(
+                "Revision retries are exhausted; raise workflow.max_revision_retries above "
+                f"{run.get('revision_retries_used', 0)} or start a new Run"
+            )
         stage = run.get("failure_stage")
         if not stage or stage == "publish":
             raise RunContinuationConflict("This failure cannot be safely continued; check publication outcomes")
@@ -168,6 +178,21 @@ class WorkflowRunner:
                     "interrupted",
                     "Run was interrupted and automatic resumption is disabled",
                     self._clock(),
+                )
+                await self._cleanup(UUID(run["run_id"]))
+
+    async def _cleanup(self, run_id: UUID) -> None:
+        if self._cleanup_run is not None:
+            try:
+                await self._cleanup_run(run_id)
+            except OSError:
+                logger.exception("External input cleanup failed for Run %s", run_id)
+                await asyncio.to_thread(
+                    self._runs.append_event,
+                    run_id,
+                    "asset_cleanup_failed",
+                    "External inputs were retired but file deletion failed; check server logs",
+                    level="error",
                 )
 
     async def _execute(self, run: dict[str, Any], *, resume: bool) -> None:
@@ -266,6 +291,9 @@ class WorkflowRunner:
             )
         finally:
             reset_stage_timeout(token)
+            detail = await asyncio.to_thread(self._runs.get, run_id)
+            if detail["status"] in {"completed", "failed"}:
+                await self._cleanup(run_id)
 
 
 class RunLifecycleService:

@@ -120,7 +120,49 @@ pixel count per frame, reducing encode time, storage and upload size.
 
 - **Description:** The immutable CompositionSpec shall include ordered visuals, editorial Overlay Cues, subtitles, narration/music/SFX Audio Cues, motion/keyframe presets, template versions and platform-safe layout identifiers.
 - **Behaviour:** Deterministic rendering consumes this contract only; basic graphics use local fonts/assets and FFmpeg, not generation providers. Required credits/disclosures remain intact. Every output records Story Package and render revision, input hashes and composition hash; deterministic planning does not create an external overlay-provider abstraction.
+- **Persistent identity (owner revision 2026-10-08):** Every future normal Run
+  renders the configured owner logo (`logo_letters.png` by default), top-right, fitted
+  within 112 x 112 px with 24 px margins at 720 px width, scaled with output
+  width. Preserve aspect ratio and existing alpha; apply 70% opacity by
+  default. Missing or invalid configured logo files fail composition explicitly.
+  A subtle top-left date reads exactly `8 Oct 2026` (day without leading zero,
+  English three-letter month, year). It uses the latest known publication
+  timestamp among verified evidence Sources of Claims actually cited by the
+  Script, displayed in the Content Profile timezone, never render/download time.
+  If all cited publication dates are unknown, omit the date with a Run warning.
+  Retain the chosen timestamp, Source IDs and overlay image hashes in Clip
+  metadata. Saved-package revisions preserve these persistent overlays;
+  an explicit revision logo replaces the default logo rather than duplicating it.
+  Archive years are deferred until verified media capture dates are available;
+  existing archive/illustrative disclosures remain unchanged.
+- **Branded ending (owner revision 2026-10-10):** An optional configured
+  reusable local MP4 occupies the final three seconds of the tail. The
+  owner end card centers `logo_inPulso_world.png`, displays "Follow for more",
+  and includes the exact spoken phrase "Keep up with the world. Follow InPulso."
+  over an original locally synthesized news-style sting. The owner authorized
+  one-time Google TTS generation using configured credentials; the speech is
+  baked into the reusable card, never generated again per Run. The owner
+  installation enables it for every new Run Now Clip. No Wan generation is
+  involved. When enabled, `tail_seconds` must
+  be at least three seconds; the ending replaces tail footage, not narration.
+  Captions, news-date/logo overlays and story music/SFX stop before the end
+  card. Its own audio is retained and peak-limited. The input is copied into
+  the Run work directory, its SHA-256 is included in the composition hash
+  and Clip metadata, and saved-package rerenders preserve that frozen input.
+  Missing, invalid or non-three-second end cards fail explicitly. The card
+  is branding, not fabricated Story footage or a factual title-card fallback.
+  The wordmark's existing alpha and white lettering are preserved;
+  transparent padding is trimmed.
+- **Acceptance:** A fixture with uncited newer Sources still displays the
+  latest cited publication date; date and logo span the full Clip timeline,
+  stay above captions and outside editorial panels, change the composition
+  hash when changed, and make zero provider calls. Logo alpha never exceeds
+  the configured opacity. Unknown dates are never substituted with today's date.
 - **Acceptance:** The same saved inputs yield the same command/spec hash; missing referenced media blocks rendering; changing an overlay updates the composition hash without changing narration bytes.
+- **Acceptance:** A real FFmpeg render ends with exactly three seconds of
+  branded picture/audio, without story overlays or narration over the card;
+  changing its digest changes the spec hash. Disabling it preserves existing
+  rendering. A saved rerender retains the frozen card without provider calls.
 - **Related:** CF-REQ-259–262, CF-REQ-324–325, CF-REQ-350, CF-REQ-357
 
 ### CF-REQ-361 — Saved-package preview and targeted rerender

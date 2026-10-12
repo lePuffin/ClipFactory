@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -41,12 +41,20 @@ class ResearchStageUseCase:
             excluded_topics=profile.excluded_topics,
             preferred_topics=profile.topics,
         )
+        now = datetime.now(UTC)
+        window_hours = float(configured.get("story_novelty_window_hours", 48))
+        covered = (
+            await asyncio.to_thread(self._repository.recently_covered, now - timedelta(hours=window_hours))
+            if window_hours > 0
+            else ()
+        )
         try:
             result = await self._research.execute(
                 run_id,
                 profile,
                 policy,
-                now=datetime.now(UTC),
+                now=now,
+                recently_covered=covered,
                 max_claim_input_chars=int(detail["settings_snapshot"].get("llm", {}).get("max_input_chars", 60_000)),
                 emit_events=False,
             )

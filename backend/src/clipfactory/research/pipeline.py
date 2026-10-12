@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
+from math import ceil
 from uuid import UUID, uuid4
 
 from clipfactory.domain.models import Claim, ContentProfile
 from clipfactory.ports.llm import LLMProvider
 from clipfactory.ports.news import NewsSource
-from clipfactory.ports.research import ResearchSnapshot, ResearchSourceRecord, ResearchStoryRecord
+from clipfactory.ports.research import CoveredStory, ResearchSnapshot, ResearchSourceRecord, ResearchStoryRecord
 from clipfactory.research.discovery import ByteFetcher, ResearchPolicy, ResearchResult, research_articles
 from clipfactory.research.grounding import GroundedSource, detect_syndication, independent_source_count
-from clipfactory.research.llm_tasks import extract_story_claims, rank_story_candidates
+from clipfactory.research.llm_tasks import RankedStory, extract_story_claims, rank_story_candidates
 from clipfactory.research.selection import ScoredStory, SelectionWeights, precluster_articles, score_stories
 
 
@@ -24,6 +26,15 @@ class ResearchFailure(RuntimeError):
 
 
 ProgressSink = Callable[[str, dict[str, object]], Awaitable[None]]
+
+MIN_CLAIMS = 3
+EVIDENCE_WORD_RATIO = 0.4
+
+
+def minimum_evidence_words(profile: ContentProfile) -> int:
+    """Accepted-Claim words needed to narrate the minimum duration without invented padding."""
+    minimum_narration_words = profile.duration.min_seconds * profile.voice.words_per_minute / 60
+    return ceil(minimum_narration_words * EVIDENCE_WORD_RATIO)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +50,55 @@ class GroundedStoryResult:
     fallback_index: int
 
 
+async def _apply_novelty(
+    ranked: list[RankedStory],
+    recently_covered: tuple[CoveredStory, ...],
+    report: Callable[..., Awaitable[None]],
+) -> list[RankedStory]:
+    """CF-REQ-109: drop covered evidence articles and reject candidates judged the same as a recent Story."""
+    covered_by_url = {url: story.title for story in recently_covered for url in story.canonical_urls}
+    checked: list[RankedStory] = []
+    for item in ranked:
+        title = item.candidate.title
+        candidate = item.candidate
+        kept = tuple(
+            (index, article)
+            for index, article in zip(candidate.article_indexes, candidate.articles, strict=True)
+            if article.canonical_url not in covered_by_url
+        )
+        if len(kept) < len(candidate.articles):
+            shared = next(
+                covered_by_url[a.canonical_url] for a in candidate.articles if a.canonical_url in covered_by_url
+            )
+            candidate = replace(
+                candidate,
+                article_indexes=tuple(index for index, _ in kept),
+                articles=tuple(article for _, article in kept),
+            )
+            if not kept:
+                await report(
+                    f"Skipping '{title}': recently_covered (all its articles were evidence for the recent Clip "
+                    f"'{shared}')",
+                    reason="recently_covered",
+                    covered_title=shared,
+                )
+                checked.append(RankedStory(candidate, replace(item.rating, recently_covered=True)))
+                continue
+            await report(
+                f"Removed {len(item.candidate.articles) - len(kept)} article(s) from '{title}' already used as "
+                f"evidence for the recent Clip '{shared}'",
+                reason="recently_covered",
+                covered_title=shared,
+            )
+        if item.rating.recently_covered:
+            await report(
+                f"Skipping '{title}': recently_covered (judged the same Story as a recent Clip)",
+                reason="recently_covered",
+            )
+        checked.append(RankedStory(candidate, item.rating))
+    return checked
+
+
 async def research_grounded_story(
     news_sources: tuple[NewsSource, ...],
     fetcher: ByteFetcher,
@@ -49,16 +109,30 @@ async def research_grounded_story(
     now: datetime,
     selection_weights: SelectionWeights | None = None,
     story_fallback_limit: int = 2,
-    recently_covered_titles: tuple[str, ...] = (),
+    recently_covered: tuple[CoveredStory, ...] = (),
     max_claim_input_chars: int = 60_000,
     progress: ProgressSink | None = None,
+    outage_retry_delays_seconds: tuple[float, ...] = (60.0, 180.0, 300.0),
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> GroundedStoryResult:
     async def report(message: str, **payload: object) -> None:
         if progress is not None:
             await progress(message, payload)
 
     await report(f"Collecting articles from {len(policy.feeds)} feeds")
-    research_result = await research_articles(news_sources, fetcher, policy, now=now)
+    excluded_urls = {url for story in recently_covered for url in story.canonical_urls}
+    research_result = await research_articles(news_sources, fetcher, policy, now=now, excluded_urls=excluded_urls)
+    for delay in outage_retry_delays_seconds:
+        if research_result.references_seen or not research_result.provider_warnings:
+            break
+        # Every source failed: treat it as a host connectivity outage and collect again later (CF-REQ-100).
+        await report(
+            f"Every news source failed; retrying collection in {delay:.0f} s",
+            provider_warnings=list(research_result.provider_warnings),
+            retry_in_seconds=delay,
+        )
+        await sleep(delay)
+        research_result = await research_articles(news_sources, fetcher, policy, now=now, excluded_urls=excluded_urls)
     await report(
         f"Fetched {len(research_result.articles)} usable articles from {research_result.references_seen} references "
         f"({research_result.articles_skipped} skipped)",
@@ -66,8 +140,26 @@ async def research_grounded_story(
         references_seen=research_result.references_seen,
         articles_skipped=research_result.articles_skipped,
     )
+    if research_result.provider_warnings:
+        await report(
+            f"{len(research_result.provider_warnings)} news source(s) failed: "
+            + "; ".join(research_result.provider_warnings)[:900],
+            provider_warnings=list(research_result.provider_warnings),
+        )
+    if research_result.articles_covered:
+        await report(
+            f"Skipped {research_result.articles_covered} article(s) already used as evidence for recent Clips",
+            reason="recently_covered",
+            articles_covered=research_result.articles_covered,
+        )
+    if not research_result.articles and research_result.articles_covered:
+        raise ResearchFailure("no_suitable_story", "Every retrieved article was evidence for a recent Clip")
     if not research_result.articles:
-        raise ResearchFailure("no_candidates", "No usable article candidates were retrieved")
+        detail = "; ".join(research_result.provider_warnings)[:900]
+        raise ResearchFailure(
+            "no_candidates",
+            "No usable article candidates were retrieved" + (f". Source errors: {detail}" if detail else ""),
+        )
 
     pre_groups = precluster_articles(research_result.articles)
     await report(
@@ -79,8 +171,9 @@ async def research_grounded_story(
         pre_groups,
         topics=profile.topics,
         excluded_topics=profile.excluded_topics,
-        recently_covered_titles=recently_covered_titles,
+        recently_covered_titles=tuple(story.title for story in recently_covered),
     )
+    ranked = await _apply_novelty(ranked, recently_covered, report)
     scored = score_stories(
         [item.candidate for item in ranked],
         [item.rating for item in ranked],
@@ -96,6 +189,7 @@ async def research_grounded_story(
         + "; ".join(f"{index}. {item.candidate.title} ({item.score:.2f})" for index, item in enumerate(scored[:3], 1))
     )
 
+    required_evidence_words = minimum_evidence_words(profile)
     fallbacks_used = 0
     for scored_story in scored:
         if fallbacks_used > story_fallback_limit:
@@ -120,11 +214,20 @@ async def research_grounded_story(
             story_summary=scored_story.candidate.summary,
         )
         accepted_claims = [claim for claim in claims if claim.status.value == "accepted"]
+        evidence_words = sum(len(claim.text.split()) for claim in accepted_claims)
+        shortfall = ""
+        if len(accepted_claims) < MIN_CLAIMS:
+            shortfall = f"; at least {MIN_CLAIMS} needed, trying the next Story"
+        elif evidence_words < required_evidence_words:
+            shortfall = (
+                f"; only {evidence_words} words of accepted evidence, {required_evidence_words} needed "
+                "to fill the minimum duration, trying the next Story"
+            )
         await report(
             f"'{title}': {len(accepted_claims)} Claims accepted, {len(claims) - len(accepted_claims)} rejected"
-            + ("" if len(accepted_claims) >= 3 else "; at least 3 needed, trying the next Story")
+            + shortfall
         )
-        if len(accepted_claims) >= 3:
+        if not shortfall:
             return GroundedStoryResult(
                 story_id=story_id,
                 title=refined_title,
@@ -137,7 +240,9 @@ async def research_grounded_story(
                 fallback_index=fallbacks_used,
             )
         fallbacks_used += 1
-    raise ResearchFailure("insufficient_claims", "No eligible Story produced at least three accepted Claims")
+    raise ResearchFailure(
+        "insufficient_claims", "No eligible Story produced enough accepted Claims to fill the minimum duration"
+    )
 
 
 def make_research_snapshot(

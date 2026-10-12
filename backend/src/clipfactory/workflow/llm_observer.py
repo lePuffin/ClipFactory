@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from clipfactory.ports.errors import ProviderError
-from clipfactory.ports.llm import ImageInput, LLMMessage, LLMProvider, LLMResult
+from clipfactory.ports.llm import ImageInput, LLMMessage, LLMModelRole, LLMProvider, LLMResult
 from clipfactory.workflow.graph import CURRENT_STAGE
 
 T = TypeVar("T", bound=BaseModel)
@@ -44,7 +44,7 @@ class ObservedLLMProvider:
         messages: list[LLMMessage],
         schema: type[T],
         *,
-        model_role: Literal["default", "evaluation"] = "default",
+        model_role: LLMModelRole = "default",
         images: list[ImageInput] | None = None,
         temperature: float = 0.2,
     ) -> LLMResult[T]:

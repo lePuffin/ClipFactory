@@ -534,6 +534,165 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/content-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContentProfileListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ContentProfileCreateRequest"];
+                };
+            };
+            responses: {
+                /** @description Success */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContentProfileItemResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ContentProfileUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContentProfileItemResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContentProfileItemResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -547,6 +706,7 @@ export interface components {
         AssetListResponse: {
             /** Items */
             items: components["schemas"]["AssetResponse"][];
+            total?: number;
         };
         /** AssetPatchRequest */
         AssetPatchRequest: {
@@ -664,6 +824,7 @@ export interface components {
         ClipListResponse: {
             /** Items */
             items: components["schemas"]["ClipResponse"][];
+            total?: number;
         };
         /** ClipPreviewResponse */
         ClipPreviewResponse: {
@@ -1190,6 +1351,31 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        ContentProfileItemResponse: {
+            id: string;
+            name: string;
+            is_active: boolean;
+            updated_at: string;
+            profile: {
+                [key: string]: unknown;
+            };
+        };
+        ContentProfileListResponse: {
+            items: components["schemas"]["ContentProfileItemResponse"][];
+        };
+        ContentProfileCreateRequest: {
+            name: string;
+            profile: {
+                [key: string]: unknown;
+            };
+            activate?: boolean;
+        };
+        ContentProfileUpdateRequest: {
+            name?: string;
+            profile?: {
+                [key: string]: unknown;
+            };
+        };
     };
     responses: never;
     parameters: never;
@@ -1427,6 +1613,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                offset?: number;
+                filter?: "all" | "published" | "failed";
             };
             header?: never;
             path?: never;
@@ -1458,6 +1646,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -2045,6 +2234,7 @@ export interface operations {
             query?: {
                 status?: components["schemas"]["AssetStatus"] | null;
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;

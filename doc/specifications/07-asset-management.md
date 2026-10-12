@@ -30,10 +30,24 @@ they do not enter media-provider fallback.
 
 ### CF-REQ-200 — Asset library
 
-- **Description:** Every stored media file used or produced by ClipFactory
-  shall be an `Asset` record with the metadata in the domain model.
+- **Description:** Every acquired or produced media file shall have an `Asset`
+  metadata record. Generated and rendered media are saved; external provider
+  downloads are Run-scoped production inputs, not a permanent media library.
+- **Rationale:** Owner decision (2026-10-11): free external media can be
+  downloaded again; only generated media needs permanent automatic retention.
+  Owner-imported library files are unaffected.
+- **Behaviour:** `GET /api/assets` accepts `limit` (default 100, 1–500),
+  `offset` (default 0, non-negative) and the existing `status` filter (default
+  `active`). External rows that are no longer active are excluded even with an
+  explicit retired filter; metadata remains available by ID. It returns `{"items": [...], "total": integer}`, preserving Asset
+  item fields. `total` counts all matching Assets before pagination. Ordering
+  is newest creation first with ID as a stable tie-breaker; an offset beyond
+  the final item returns an empty page with the same total.
 - **Acceptance:**
-  - Every file under the storage `assets/` prefix has exactly one Asset row, and vice versa (verified by an integration test).
+  - Every newly stored file under `assets/` has an Asset row; retired external
+    metadata may intentionally have no file. Legacy files are not bulk-deleted.
+  - The paginated library excludes retired external metadata and preserves
+    filtered totals and generated/imported media under the requested status.
 
 ### CF-REQ-201 — Mandatory provenance
 
@@ -65,12 +79,15 @@ they do not enter media-provider fallback.
   author, title/source and licence.
 - **Acceptance:**
   - A CC BY 4.0 fixture yields attribution text containing author, licence name and source URL.
+  - External provenance and attribution survive file removal and remain usable
+    for Publication descriptions and cross-Run stock source history.
 - **Related:** CF-REQ-161
 
 ### CF-REQ-204 — Reuse first
 
 - **Description:** For every Visual Segment, `select_assets` shall search the
-  library before contacting any external or generation provider.
+  saved library before contacting any external or generation provider. External
+  provider downloads are not cross-Run reuse candidates.
 - **Acceptance:**
   - When a suitable library Asset exists, no `MediaSourceProvider`, `ImageProvider` or `VideoProvider` call is made for that segment (verified with fakes counting calls).
 - **Related:** CF-REQ-205
@@ -89,7 +106,8 @@ they do not enter media-provider fallback.
   evaluation (CF-REQ-405, CF-REQ-415).
 - **Acceptance:**
   - A library Asset tagged `["parliament","uk"]` with subject `UK Parliament` matches a requirement with the same subject above threshold.
-  - A retired Asset is never returned.
+  - A retired Asset is never returned; external provider downloads are excluded
+    from cross-Run library matching even while active in their owning Run.
 - **Related:** CF-REQ-204, CF-REQ-251
 
 ### CF-REQ-206 — Reuse variety [Derived]
@@ -100,6 +118,8 @@ they do not enter media-provider fallback.
   matching.
 - **Acceptance:**
   - With two equal candidates, the one not used in the last 3 days is chosen.
+  - Removing external files does not remove metadata used to exclude previously
+    approved stock source URLs from future acquisition.
 
 ### CF-REQ-207 — External media acquisition
 
@@ -208,19 +228,28 @@ they do not enter media-provider fallback.
   - A response exceeding the size limit is aborted before completing the download.
 - **Related:** CF-NFR-104, CF-NFR-105
 
-### CF-REQ-211 — Store for future reuse
+### CF-REQ-211 — Store generated media for future reuse
 
-- **Description:** Acquired and generated Assets that pass validation shall be
-  stored with `reusable = true`, a description, normalised tags and subjects
-  (from provider metadata and the asset requirement), and an initial
-  `quality_score`.
+- **Description:** Generated and rendered Assets that pass validation shall be
+  saved with `reusable = true`, description, normalised tags, subjects and
+  initial `quality_score`. External provider downloads have `reusable = false`
+  and remain active only during their owning Run's production, including
+  targeted retries. A new Run downloads external media again when selected.
+- **Rationale:** Owner retention decision (2026-10-11) supersedes permanent
+  external acquisition storage; provenance history still prevents stock replay.
 - **Acceptance:**
-  - An Asset acquired in Run 1 is found by library search in Run 2 for the same requirement without external calls.
+  - A generated Asset produced in Run 1 is found by library search in Run 2
+    for the same requirement without external calls.
+  - A downloaded external Asset remains available for targeted retries in the
+    same Run, but is never reused from the library by another Run.
+  - Re-downloading identical retired external content restores an active,
+    non-reusable Run-scoped file without deleting its metadata history.
 
 ### CF-REQ-212 — Usage tracking
 
 - **Description:** When a Clip is approved, `AssetUsage` records shall be
-  final and `usage_count` / `last_used_at` of each used Asset updated.
+  final and `usage_count` / `last_used_at` of each used Asset updated, including
+  retired external metadata whose production input file has been removed.
 - **Acceptance:**
   - Assets used only by rejected Clips keep `usage_count` unchanged.
 
@@ -228,7 +257,8 @@ they do not enter media-provider fallback.
 
 - **Description:** The user shall be able to set an Asset's status to
   `quarantined` or `retired` and edit its tags and description. Only `active`
-  Assets are selectable.
+  Assets with available files are selectable. Retired external inputs must not
+  be reactivated for selection without a fresh download.
 - **Acceptance:**
   - After retiring an Asset via API, library search never returns it.
 - **Related:** CF-REQ-605
@@ -238,9 +268,29 @@ they do not enter media-provider fallback.
 - **Description:** Per-Run working files shall be deleted
   `retention.work_dir_retention_days` after the Run finishes, and rejected
   Clip files `retention.rejected_clip_retention_days` after rejection.
-  Reusable Assets and approved Clips are never deleted automatically.
+  Generated/rendered library Assets, owner-imported files and approved Clips
+  are never deleted automatically. External provider files (including stock
+  media and Wikimedia/Wikidata portraits) are removed when their owning Run
+  reaches a terminal status (`completed` or `failed`), or production reaches
+  `awaiting_approval`, an approved Clip or publication. Retire metadata rows
+  before deletion; retain provider, source URL/id, licence, attribution and usage.
+  Targeted retries while production is running retain all downloaded inputs.
+  Do not automatically bulk-delete stock files predating this policy.
+- **Failure:** File deletion errors are reported and metadata remains retired;
+  neither publishing nor Retry publish requires visual source files, only the
+  composed Clip (and its metadata). Continuing a failed Run at a stage that
+  requires removed visuals must reselect/re-download them or report the missing
+  input rather than silently selecting retired Assets.
+- **Saved re-render limitation:** `workflow/saved_news_render.py` still requires
+  source files. Removed stock inputs cause its existing errors, “Saved visual
+  is missing, inactive or unlicensed” / “Saved visual file is unavailable”.
+  The original composed Clip remains playable and publishable.
 - **Acceptance:**
   - A cleanup task with a fake clock removes an 8-day-old work directory and leaves reusable Assets intact.
+  - Run completion, production approval and failure remove only that Run’s
+    new external files and retire their rows; generated media and legacy stock
+    files remain intact. Cleanup is idempotent.
+  - A targeted production retry keeps its external inputs until production ends.
 
 ### CF-REQ-215 — Real people and generated media [Derived]
 
@@ -305,10 +355,10 @@ they do not enter media-provider fallback.
 
 ### CF-REQ-219 — Batched visual-candidate review
 
-- **Description:** Quality-mode `select_assets` shall make one structured `review_media_candidates` request for the bounded candidate set, using the configured image-capable review model through `LLMProvider`.
-- **Behaviour:** Input binds previews, scene/Claim intent and candidate IDs. Output records evidence-backed relevance, location/identity consistency, archive/illustrative status and framing suitability, with uncertainty. The review is not a source of new facts or authoritative identity. Code rejects unknown IDs and chooses eligible candidates deterministically. Missing evidence requires owner review; review failures do not approve unseen media.
-- **Failure:** Output errors follow bounded repair policy; quota, modality or cost failure preserves work and marks quality review pending. Every request counts against request and monetary limits.
-- **Acceptance:** True Mokha location imagery beats coffee for the Mokha fixture; an irrelevant first-provider result loses to a relevant later result; an unverified person remains pending; all candidate previews enter one initial request, not one request per image.
+- **Description:** Quality-mode `select_assets` shall review the bounded candidate set with structured `review_media_candidates` requests of at most `assets.max_review_images_per_request` preview images each (whole Visuals packed per request, never one request per image; a Visual whose own previews exceed the bound is reviewed in chunks whose rankings are concatenated in order), using the configured image-capable review model through `LLMProvider`.
+- **Behaviour:** Input binds previews, scene/Claim intent and candidate IDs. Output records evidence-backed relevance, location/identity consistency, archive/illustrative status and framing suitability, with uncertainty. The review is not a source of new facts or authoritative identity. Code rejects unknown IDs and chooses eligible candidates deterministically. Segments with the same Shot Intent may be offered the same candidate; a returned ID naming media that was also offered to the chosen segment is accepted for that segment, while media never offered to it is rejected. The prompt asks the reviewer to judge each segment by its own narration and to prefer different media for different segments. Missing evidence requires owner review; review failures do not approve unseen media. When no candidate preview for the reviewed Visuals can be loaded, the review call is skipped, no candidate is accepted, and the affected Visuals follow the asset failure rule (`missing_asset`, bounded reselection) instead of failing the Stage; the preview failure cause is logged. When the Visual Plan repeats a media Shot Intent from an earlier Visual and declares no subjects, tags or search queries, deterministic plan normalization tags that Visual with keywords from its own narration so each Visual searches its own candidate pool; the Shot Intent used for ranking and review is unchanged.
+- **Failure:** When the provider reports that the routed model accepts fewer images per prompt (`image_limit`, not transient and not counted toward the LLM circuit), the request is split in half and each part is reviewed separately, down to one image per request; other provider errors are not split. When one request still yields no usable answer after bounded repair (`llm_invalid_output`, or `image_limit` at one image), only that request's candidates stay unaccepted and their Visuals follow the asset failure rule; the Stage fails only when no request produced an accepted candidate. An opaque upstream rejection of one review request (`upstream_bad_request`, after its single same-request retry) is request-specific content rejection, not a modality or configuration failure: that request is neither split nor resent, its candidates stay unaccepted and its Visuals follow the asset failure rule (`missing_asset`, bounded reselection offers a different candidate set) even when it was the only request, and the cause is logged. Before failing closed, when the Run's `llm_model_evaluation_fallback` is non-empty and differs from the evaluation model, a request that ended in `upstream_bad_request` or an exhausted `http_500`/`http_502`/`http_503` is sent once, unchanged, to that fallback model (same images, schema validation and reference validation, CF-REQ-405 transport); only if the fallback also fails is the request treated as above. A fallback that ends in `llm_unavailable` (its own exhausted transient failures opened the fallback model's per-model circuit, CF-REQ-671; live Run 2fc25075) is such a fallback failure, not a Stage failure. Budget, circuit and network failures still fail the Stage. Output errors follow bounded repair policy; quota, modality or cost failure preserves work and marks quality review pending. Every request counts against request and monetary limits.
+- **Acceptance:** True Mokha location imagery beats coffee for the Mokha fixture; an irrelevant first-provider result loses to a relevant later result; an unverified person remains pending; candidate previews enter as few requests as the per-request image bound allows, never one request per image; 24 previews with a bound of 10 produce at most three requests; an unusable answer for one of two requests keeps the other request's accepted candidates. An opaque upstream rejection of the only review request without a configured fallback accepts no candidate, sends no further review request and routes the affected Visuals to `missing_asset` reselection instead of failing the Stage; with a configured fallback the same request is sent once to the fallback model and its validated choices are accepted, and a fallback failure behaves as without a fallback.
 - **Related:** CF-REQ-260, CF-REQ-666, CF-REQ-668–671
 
 ### CF-REQ-220 — Versioned reusable media judgments

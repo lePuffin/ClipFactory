@@ -180,6 +180,24 @@ class PublishingRepository:
                 "already_resolved": not pending,
             }
 
+    def reset_failed_publications(self, clip_id: UUID) -> dict[str, Any]:
+        with self.sessions.begin() as session:
+            clip = session.get(ClipRow, clip_id)
+            if clip is None:
+                raise LookupError(str(clip_id))
+            reset: list[str] = []
+            if clip.status == "approved":
+                for row in session.scalars(
+                    select(PublicationRow)
+                    .where(PublicationRow.clip_id == clip_id, PublicationRow.status == "failed")
+                    .with_for_update()
+                ):
+                    row.status = "pending"
+                    row.error_code = None
+                    row.error_message = None
+                    reset.append(row.platform)
+            return {"run_id": str(clip.run_id), "clip_status": clip.status, "reset": reset}
+
     def update_run_outcome(self, run_id: UUID, outcome: str) -> None:
         with self.sessions.begin() as session:
             run = session.get(RunRow, run_id)

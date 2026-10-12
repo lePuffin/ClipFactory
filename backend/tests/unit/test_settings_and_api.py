@@ -105,6 +105,14 @@ class Approvals:
         self.calls.append((clip_id, decision))
         return {"clip_id": str(clip_id), "decision": decision, "already_resolved": False}
 
+    async def retry_failed(self, clip_id: UUID) -> dict[str, Any]:
+        from clipfactory.publishing.approval import PublicationRetryConflict
+
+        self.calls.append((clip_id, "retry"))
+        if clip_id.int % 2:
+            raise PublicationRetryConflict("The Clip has no failed Publication to retry")
+        return {"clip_id": str(clip_id), "retried": ["instagram"], "outcome": "published"}
+
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-752")
@@ -127,6 +135,35 @@ class RunCreatorFake:
     def create(self, trigger: Any, *, manual_url: str | None, settings_snapshot: dict[str, Any]) -> dict[str, Any]:
         self.snapshots.append(settings_snapshot)
         return {"run_id": str(uuid4())}
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-758")
+@pytest.mark.req("CF-REQ-759")
+def test_output_modes_are_validated_saved_and_snapshotted_independently() -> None:
+    configuration, runs = Configuration(), RunCreatorFake()
+    baseline = settings(LLM_OUTPUT_MODE="json_schema", LLM_OUTPUT_MODE_EVALUATION="json_schema")
+    client = TestClient(create_app(baseline, configuration=configuration, run_creator=runs))
+    environment = client.get("/api/settings").json()["settings"]["environment"]
+    assert environment["llm_output_mode"] == environment["llm_output_mode_evaluation"] == "json_schema"
+    for key in ("llm_output_mode", "llm_output_mode_evaluation"):
+        for invalid in ("auto", "", None, 1):
+            assert client.put("/api/settings/environment", json={key: invalid}).status_code == 422
+        with pytest.raises(ValidationError):
+            settings(**{key.upper(): "auto"})
+    for main, evaluation in (("json_object", "prompt_json"), ("prompt_json", "json_schema")):
+        saved = {"llm_output_mode": main, "llm_output_mode_evaluation": evaluation}
+        assert client.put("/api/settings/environment", json=saved).status_code == 200
+        assert client.post("/api/runs").status_code == 202
+        snapshot = runs.snapshots[-1]["environment"]
+        assert snapshot["llm_output_mode"] == main
+        assert snapshot["llm_output_mode_evaluation"] == evaluation
+        target = baseline.model_copy()
+        apply_runtime_environment(target, baseline, snapshot)
+        assert target.llm_output_mode == main
+        assert target.llm_output_mode_evaluation == evaluation
+        apply_runtime_environment(target, baseline, {"llm_model": "old-snapshot"})
+        assert target.llm_output_mode == target.llm_output_mode_evaluation == "json_schema"
 
 
 @pytest.mark.unit
@@ -194,6 +231,31 @@ def test_wan_settings_bounds_and_run_snapshot(key: str, maximum: int) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.req("CF-REQ-267")
+@pytest.mark.req("CF-REQ-759")
+@pytest.mark.parametrize(
+    ("key", "valid", "invalid"),
+    [
+        ("wan_guidance_scale", 4.5, [0, 21]),
+        ("wan_flow_shift", 3.5, [0, 21]),
+        ("wan_max_long_side", 816, [63, 833, 831]),
+        ("wan_max_short_side", 464, [63, 481, 479]),
+        ("wan_encoding_crf", 10, [-1, 52]),
+        ("wan_negative_prompt", "oversaturated, static, blurry", ["", "x" * 2001]),
+    ],
+)
+def test_wan_reference_settings_are_validated_and_snapshotted(key, valid, invalid) -> None:
+    configuration = Configuration()
+    runs = RunCreatorFake()
+    client = TestClient(create_app(settings(), configuration=configuration, run_creator=runs))
+    for value in invalid:
+        assert client.put("/api/settings/environment", json={key: value}).status_code == 422
+    assert client.put("/api/settings/environment", json={key: valid}).status_code == 200
+    assert client.post("/api/runs").status_code == 202
+    assert runs.snapshots[-1]["environment"][key] == valid
+
+
+@pytest.mark.unit
 @pytest.mark.req("CF-REQ-753")
 def test_settings_api_reports_credential_presence_without_values() -> None:
     configured = settings(LLM_API_KEY="not-returned")
@@ -236,3 +298,20 @@ def test_approval_api_dispatches_valid_decision_and_rejects_invalid_decision() -
     assert approved.status_code == 200
     assert approvals.calls == [(clip_id, "approve")]
     assert invalid.status_code == 422
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-462")
+def test_publication_retry_api_dispatches_and_maps_conflict_to_409() -> None:
+    approvals = Approvals()
+    client = TestClient(create_app(settings(), approvals=approvals))
+    retryable = UUID(int=2)
+    nothing_failed = UUID(int=3)
+
+    retried = client.post(f"/api/clips/{retryable}/publications/retry")
+    conflict = client.post(f"/api/clips/{nothing_failed}/publications/retry")
+
+    assert retried.status_code == 200
+    assert retried.json()["retried"] == ["instagram"]
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "retry_not_allowed"

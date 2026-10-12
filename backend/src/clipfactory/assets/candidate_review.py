@@ -95,13 +95,19 @@ def _validated_choices(
     segment_indexes: Sequence[int],
 ) -> dict[int, list[MediaCandidate]]:
     chosen: dict[int, list[MediaCandidate]] = {index: [] for index in segment_indexes}
+    offered: dict[int, dict[str, MediaCandidate]] = {index: {} for index in segment_indexes}
+    for owner_segment, candidate in references.values():
+        offered.setdefault(owner_segment, {}).setdefault(candidate.url, candidate)
     for choice in result.choices:
         if choice.segment not in chosen:
             continue
         for reference in choice.ranked:
             owner = references.get(reference)
-            # Code, not the model, enforces that a choice belongs to the segment it was offered for.
-            if owner is None or owner[0] != choice.segment or owner[1] in chosen[choice.segment]:
+            # Code, not the model, enforces that a choice was offered to the segment it is chosen for. Segments
+            # with the same Shot Intent share candidates, so another segment's ID naming the same offered media
+            # is accepted and resolved to this segment's own candidate.
+            candidate = offered[choice.segment].get(owner[1].url) if owner is not None else None
+            if candidate is None or candidate in chosen[choice.segment]:
                 continue
-            chosen[choice.segment].append(owner[1])
+            chosen[choice.segment].append(candidate)
     return chosen

@@ -80,8 +80,12 @@ explicitly under CF-REQ-264. Their executable/install paths are listed above.
 | --- | --- | --- | --- |
 | `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | No | Any OpenAI-compatible endpoint |
 | `LLM_API_KEY` | — | Yes | |
-| `LLM_MODEL` | `google/gemma-4-31b-it:free` | No | Default model for all LLM tasks: a **specific** free, vision-capable OpenRouter model, never the `openrouter/free` router (OD-001). Fallback candidate if retired: `qwen/qwen3.8-27b:free` |
+| `LLM_MODEL` | `google/gemma-4-31b-it:free` | No | Default model for all LLM tasks: a **specific** free, vision-capable OpenRouter model by default. The owner may opt in to the `openrouter/free` router, which is less reproducible (OD-001 revision 2026-10-09); without price reservations only `:free` IDs and `openrouter/free` are dispatched. Fallback candidate if retired: `qwen/qwen3.8-27b:free` |
 | `LLM_MODEL_EVALUATION` | = `LLM_MODEL` | No | Model for `evaluate_clip`; must accept image input when `evaluation.visual_enabled` (later e.g. a Luna or Terra model, configuration only) |
+| `LLM_MODEL_EVALUATION_FALLBACK` | empty | No | Free vision-capable model used once per request for `evaluate_clip` and candidate review when the evaluation model ends in an opaque `upstream_bad_request` or an exhausted 5xx (CF-REQ-405, CF-REQ-219); empty disables the fallback |
+| `LLM_OUTPUT_MODE` | `json_schema` | No | Main-model transport: `json_schema`, `json_object` or `prompt_json`; local schema validation always applies |
+| `LLM_OUTPUT_MODE_EVALUATION` | `json_schema` | No | Independent transport for candidate/final visual review, even when the evaluation model inherits the main model |
+| `LLM_OUTPUT_MODE_EVALUATION_FALLBACK` | `prompt_json` | No | Transport for the `evaluate_clip` fallback model (CF-REQ-405); the default works with free models that do not advertise `response_format`/structured outputs, local schema validation still applies |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | `120` | No | |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Yes (path) | Google TTS service-account file (OD-006) |
 | `WHISPER_MODEL` | `large-v3-turbo` | No | faster-whisper model; configurable for benchmarking (OD-007) |
@@ -90,22 +94,28 @@ explicitly under CF-REQ-264. Their executable/install paths are listed above.
 | `PEXELS_API_KEY` | — | Yes | |
 | `PIXABAY_API_KEY` | — | Yes | |
 | `UNSPLASH_ACCESS_KEY` | — | Yes | Photos only; adapter must follow Unsplash API guidelines (download tracking, attribution) |
-| `WIKIMEDIA_USER_AGENT` | — (required when enabled) | No | Contact user agent required by Wikimedia API policy |
+| `WIKIMEDIA_USER_AGENT` | — (required when enabled) | No | Contact user agent required by Wikimedia API policy; sent on Commons/Wikidata API calls and on Commons media downloads |
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | No | Local ComfyUI server (owner-run) |
 | `COMFYUI_WORKFLOWS_DIR` | `${DATA_DIR}/comfyui-workflows` | No | Owner-supplied workflow JSON templates (CF-REQ-217) |
 | `WAN_MODEL` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | No | Native Wan via diffusers; optional dependency group `local-gen` |
 | `WAN_DEVICE` | `cuda` | No | `cuda`, `cpu` (CPU is impractically slow) |
 | `WAN_FPS` | `16` | No | Generated video frame rate, 1–60 |
-| `WAN_INFERENCE_STEPS` | `50` | No | Diffusion steps, 1–100; local-gen uses sequential CPU offload on CUDA and VAE tiling |
+| `WAN_INFERENCE_STEPS` | `25` | No | Diffusion steps, 1–100; owner accepted the recovered-prompt landscape reference at 25 (CF-REQ-267); new shots still require review |
 | `WAN_MAX_GENERATIONS_PER_RUN` | `2` | No | Maximum native Wan starts per Run, 0–100; 0 disables new calls (CF-REQ-266) |
+| `WAN_GUIDANCE_SCALE` | `5` | No | Classifier-free guidance, > 0–20 (CF-REQ-267) |
+| `WAN_FLOW_SHIFT` | `3` | No | UniPC flow shift, > 0–20; 480p reference recipe |
+| `WAN_MAX_LONG_SIDE` | `832` | No | Native inference long side, 64–832, multiple of 16 |
+| `WAN_MAX_SHORT_SIDE` | `480` | No | Native inference short side, 64–480, multiple of 16 |
+| `WAN_ENCODING_CRF` | `10` | No | H.264 CRF, 0–51; reference bitstream records CRF 10 |
+| `WAN_NEGATIVE_PROMPT` | Official Wan motion/quality suppression list | No | UTF-8 quality/motion negative prompt, 1–2000 characters, used alongside shot-specific exclusions |
 | `WAN_MODEL_LICENSE` | `Apache-2.0` | No | Default official checkpoint licence; owner must verify/update for a different checkpoint |
 | `GRAPHICS_FPS` | `30` | No | Local HyperFrames/Manim output frame rate, 1–60; editable in the Run-snapshot `environment` settings |
 | `GRAPHICS_TIMEOUT_SECONDS` | `180` | No | Bounded graphics subprocess time, 1–3600; editable in the Run-snapshot `environment` settings |
 | `HIGGSFIELD_API_KEY` | — | Yes | Higgsfield cloud API credentials (exact auth scheme verified in Phase 5, OD-005) |
 | `PUBLIC_MEDIA_BASE_URL` | — | No | Public HTTPS base URL of the owner's reverse proxy that forwards only `/public/media/` (CF-REQ-461) |
 | `MEDIA_URL_SIGNING_KEY` | — (required when `PUBLIC_MEDIA_BASE_URL` is set) | Yes | ≥ 32 random bytes, HMAC key for signed media URLs (CF-NFR-114) |
-| `YOUTUBE_CLIENT_SECRETS_FILE` | — | Yes (path) | OAuth client; token stored under `${DATA_DIR}/secrets/` (OD-009) |
-| `INSTAGRAM_ACCESS_TOKEN` | — | Yes | |
+| `YOUTUBE_CLIENT_SECRETS_FILE` | — | Yes (path) | OAuth client; the token `youtube_token.json` (with refresh token) is read beside this file, falling back to `${DATA_DIR}/secrets/` (OD-009) |
+| `INSTAGRAM_ACCESS_TOKEN` | — | Yes | Instagram API with Instagram Login user token (`graph.instagram.com`) |
 | `INSTAGRAM_USER_ID` | — | No | |
 | `TIKTOK_CLIENT_KEY` | — | Yes | |
 | `TIKTOK_CLIENT_SECRET` | — | Yes | |
@@ -149,6 +159,10 @@ Per-Run overrides of non-secret environment variables (CF-REQ-759, CF-REQ-760). 
 | --- | --- | --- | --- |
 | `llm_model` | `LLM_MODEL` | non-empty | `LLMProvider` |
 | `llm_model_evaluation` | `LLM_MODEL_EVALUATION` | empty = `llm_model` | `evaluate_clip` |
+| `llm_model_evaluation_fallback` | `LLM_MODEL_EVALUATION_FALLBACK` | empty = no fallback | `evaluate_clip` and candidate-review rejection fallback |
+| `llm_output_mode` | `LLM_OUTPUT_MODE` | `json_schema`, `json_object`, `prompt_json` | Main-model LLM tasks |
+| `llm_output_mode_evaluation` | `LLM_OUTPUT_MODE_EVALUATION` | `json_schema`, `json_object`, `prompt_json` | Candidate/final visual review |
+| `llm_output_mode_evaluation_fallback` | `LLM_OUTPUT_MODE_EVALUATION_FALLBACK` | `json_schema`, `json_object`, `prompt_json` | `evaluate_clip` fallback review |
 | `llm_request_timeout_seconds` | `LLM_REQUEST_TIMEOUT_SECONDS` | 1–600 | `LLMProvider` |
 | `whisper_model` | `WHISPER_MODEL` | non-empty | `TranscriptionProvider` |
 | `whisper_device` | `WHISPER_DEVICE` | `auto`, `cpu`, `cuda` | `TranscriptionProvider` |
@@ -156,6 +170,12 @@ Per-Run overrides of non-secret environment variables (CF-REQ-759, CF-REQ-760). 
 | `wan_fps` | `WAN_FPS` | 1–60 | `VideoProvider` |
 | `wan_inference_steps` | `WAN_INFERENCE_STEPS` | 1–100 | `VideoProvider` |
 | `wan_max_generations_per_run` | `WAN_MAX_GENERATIONS_PER_RUN` (`2`) | 0–100 | CF-REQ-266; durable usage across Retry/Continue, 0 disables new Wan calls |
+| `wan_guidance_scale` | `WAN_GUIDANCE_SCALE` (`5`) | > 0–20 | CF-REQ-267 |
+| `wan_flow_shift` | `WAN_FLOW_SHIFT` (`3`) | > 0–20 | CF-REQ-267 |
+| `wan_max_long_side` | `WAN_MAX_LONG_SIDE` (`832`) | 64–832, multiple of 16 | CF-REQ-267 |
+| `wan_max_short_side` | `WAN_MAX_SHORT_SIDE` (`480`) | 64–480, multiple of 16 | CF-REQ-267 |
+| `wan_encoding_crf` | `WAN_ENCODING_CRF` (`10`) | 0–51 | CF-REQ-267; reference H.264 encoding quality |
+| `wan_negative_prompt` | `WAN_NEGATIVE_PROMPT` | 1–2000 characters | CF-REQ-267 |
 | `graphics_fps` | `GRAPHICS_FPS` | 1–60 | HyperFrames/Manim graphics render |
 | `graphics_timeout_seconds` | `GRAPHICS_TIMEOUT_SECONDS` | 1–3600 | Per-render subprocess bound; silent stage-watchdog heartbeats renew the stage deadline only while work is active |
 
@@ -173,7 +193,7 @@ Per-Run overrides of non-secret environment variables (CF-REQ-759, CF-REQ-760). 
 | --- | --- | --- | --- |
 | `max_call_retries` | `3` | 0–10 | CF-NFR-010 |
 | `call_retry_base_delay_seconds` | `2` | 0.1–60 | Exponential backoff with jitter |
-| `call_retry_max_delay_seconds` | `60` | 1–600 | Also caps honoured `Retry-After` |
+| `call_retry_max_delay_seconds` | `60` | 1–600 | Caps honoured `Retry-After`; LLM 429s without a positive retry hint wait this full cooldown (CF-REQ-670) |
 | `default_timeout_seconds` | `60` | 1–600 | Non-LLM HTTP calls |
 | `llm_max_schema_repairs` | `1` | 0–5 | CF-REQ-758 — each repair is a real request and counts against the LLM request limits |
 
@@ -185,7 +205,7 @@ requests/day; verify against the account, OD-021).
 
 | Key | Default | Range | Used by |
 | --- | --- | --- | --- |
-| `requests_per_minute` | `20` | 1–10 000 | CF-REQ-667 |
+| `requests_per_minute` | `20` | 1–10 000 | Account-wide rolling ceiling; baseline per-model spacing is 60 / limit seconds, adaptively slowed by 429s (CF-REQ-667) |
 | `requests_per_day` | `50` | 1–1 000 000 | CF-REQ-668 |
 | `daily_reset_timezone` | `UTC` | IANA | CF-REQ-668 |
 | `target_requests_per_clip` | `5` | 1–20 | CF-REQ-666 (quality-mode target, reported) |
@@ -203,7 +223,7 @@ requests/day; verify against the account, OD-021).
 | `feeds` | curated list (see below) | | `RssNewsSource` |
 | `near_duplicate_threshold` | `0.8` | 0.5–1.0 | CF-REQ-104 (Provisional) |
 | `max_additional_sources` | `5` | 0–20 | CF-REQ-110 |
-| `story_novelty_window_days` | `7` | 0–90 | CF-REQ-109 [Derived] |
+| `story_novelty_window_hours` | `48` | 0–2160 | CF-REQ-109 [Derived] |
 | `selection_weights` | `{profile_relevance: 0.30, newsworthiness: 0.25, independent_sources: 0.20, source_quality: 0.15, recency: 0.10}` | sum = 1.0 | CF-REQ-107 (Provisional) |
 | `publisher_quality` | mapping `publisher domain → tier` (`high` / `standard` / `low` / `blocked`); starter entries for the starter feeds are `high` | | CF-REQ-103 |
 | `max_article_bytes` | `5_000_000` | | CF-NFR-104 |
@@ -298,11 +318,13 @@ Preview limits are Provisional; modality/request capacity and remaining budget a
 | `reuse_min_match_score` | `0.6` | CF-REQ-205 (Provisional) |
 | `reuse_cooldown_days` | `3` | CF-REQ-206 [Derived] |
 | `min_image_short_side_px` | `720` | CF-REQ-210 |
+| `min_portrait_short_side_px` | `480` | CF-REQ-268 (Wikidata portraits are often crops) |
 | `min_video_height_px` | `720` | CF-REQ-210 |
 | `max_image_bytes` | `20_000_000` | CF-NFR-104 |
 | `max_video_bytes` | `300_000_000` | CF-NFR-104 |
 | `max_audio_bytes` | `50_000_000` | CF-NFR-104 |
 | `candidates_per_search` | `10` | CF-REQ-207 |
+| `max_review_images_per_request` | `10` | CF-REQ-219 (free vision upstreams reject large multi-image prompts) |
 
 ### `captions`
 
@@ -339,6 +361,19 @@ resolution (OD-011, decided). At 720×1280: side margins 43 px, text width
 | `tail_seconds` | `1.0` | CF-REQ-354 |
 | `narration_loudness_lufs` | `-14` | CF-REQ-356 |
 | `transition_seconds` | `0.4` | CF-REQ-355 |
+| `logo_file` | `logo_letters.png` (owner-provided, relative to launch directory or absolute) | CF-REQ-360 |
+| `logo_opacity` | `0.7` (greater than 0, at most 1) | CF-REQ-360 |
+| `end_card_file` | `null` (disabled); owner installation uses `branding/outro.mp4` | CF-REQ-360 |
+
+An enabled end card is exactly three seconds and requires `tail_seconds >= 3`.
+The owner installation sets `tail_seconds = 3`; the end card replaces the tail,
+so it is included in the existing narration-based duration budget.
+
+Persistent identity layout uses the existing 112 px logo bound and 24 px
+top/right margins at 720 px output width. The news-date label uses a 22 px
+font at 44 px left/32 px top, scaled with output width. Dates are based only
+on cited verified Source publication timestamps, in the profile timezone;
+English month abbreviations are fixed and independent of host locale.
 
 ### `evaluation`
 
@@ -360,6 +395,7 @@ resolution (OD-011, decided). At 720×1280: side margins 43 px, text width
 | `approval_required` | `true` | CF-REQ-459, owner review during quality rollout |
 | `auto_publish_enabled` | `false` | CF-REQ-460, explicit opt-in only after benchmark approval |
 | `auto_publish_after_minutes` | `10` (range 1–10080) | CF-REQ-460 |
+| `discovery_hashtags` | `["News", "BreakingNews", "WorldNews"]` (0–5 items) | CF-REQ-160, broad discovery tags appended up to the 8-hashtag limit |
 | `public_media_url_ttl_minutes` | `60` (range 5–1440) | CF-REQ-461, CF-NFR-114 |
 
 ### `budget`
@@ -524,8 +560,9 @@ unused, but selecting a visual that requires it fails explicitly.
   use is required and must resolve; an unconfigured optional renderer is
   reported as unavailable and is not claimed ready.
   `PUBLIC_MEDIA_DIR` is optional: an unavailable directory or mount produces
-  a redacted `WARN`, not a failed required check. The current signed media
-  endpoint serves Clip files from `DATA_DIR`, not this optional directory.
+  a redacted `WARN`, not a failed required check. When available at publish
+  time it receives short-lived staged Clip copies (CF-REQ-461); otherwise
+  the signed media endpoint serves Clip files from `DATA_DIR`.
 - **Acceptance:**
   - With Dragonfly stopped, output names `Dragonfly` as failed, exits 1 and
     does not contact the configured LLM endpoint.
@@ -571,11 +608,46 @@ unused, but selecting a visual that requires it fails explicitly.
 - **Behaviour:** On validation failure the provider wrapper re-asks with the
   validation errors, up to `providers.llm_max_schema_repairs` times; schema
   repairs are separate from call retries.
+  The OpenAI-compatible adapter merges adjacent same-role messages (for
+  example a schema-repair hint after the user prompt, or the output-format
+  preamble before the task instructions) so requests alternate roles as
+  strict chat templates require.
+  The owner selects independent main/evaluation output modes in Settings /
+  Environment. `json_schema` sends the existing strict schema response format;
+  `json_object` sends JSON-object response format plus versioned schema
+  instructions; `prompt_json` sends those instructions without any
+  `response_format`. All modes validate the complete response using the same
+  Pydantic schema and existing business validators. JSON-object and prompt-only
+  modes may unwrap exactly one whole-response Markdown fence labelled `json`
+  or unlabelled, retaining the original answer for audit. Surrounding prose,
+  multiple fences, incomplete JSON and schema-invalid answers remain errors,
+  never heuristically extracted, patched or replaced with fabricated defaults.
+  Strict-schema mode does not unwrap fences. HTTP errors never automatically
+  downgrade the selected mode. Image input and request governance are unchanged.
+  When `LLM_BASE_URL` is OpenRouter and a `response_format` is sent, the
+  request also carries `provider.require_parameters: true`, so OpenRouter
+  routes only to endpoints that honour the output contract. This matters most
+  for the `openrouter/free` router: in Runs since 2026-10-09 about half of all
+  failed `review_media_candidates` calls came from a routed endpoint without
+  structured-output support and with a one-image limit (HTTP 502
+  `ResourceExhausted` / `Failed to apply prompt replacement for mm_items`).
+  The field is not sent to other OpenAI-compatible servers.
 - **Failure:** After the limit, the stage fails with error code
   `llm_invalid_output` and the validation errors in the Run Event payload.
 - **Acceptance:**
   - A fake LLM returning invalid JSON once then valid JSON succeeds with `llm_max_schema_repairs=1` and records 2 requests.
   - Returning invalid JSON twice with `llm_max_schema_repairs=1` fails the stage with `llm_invalid_output`.
+  - Both modes default independently to `json_schema`; unknown mode values
+    fail environment/API validation. Saved modes reach new/continued Runs via
+    their effective snapshots; snapshots without these keys use environment defaults.
+  - Mocked HTTP verifies all three wire formats, independent role selection,
+    preserved image input and unchanged caller messages. JSON/prompt-only
+    modes unwrap whole-response JSON fences without changing their contents
+    and reject prose, malformed and schema-invalid answers; bounded repairs still
+    count as real governed requests and retain the selected mode.
+  - Mocked HTTP verifies that an OpenRouter request with `response_format`
+    carries `provider.require_parameters: true`, and that `prompt_json` or a
+    non-OpenRouter base URL omits `provider`.
 - **Related:** CF-NFR-010, [provider-architecture](architecture/provider-architecture.md#llmprovider)
 
 ### CF-REQ-759 — Environment values editable per Run
@@ -584,6 +656,9 @@ unused, but selecting a visual that requires it fails explicitly.
 - **Behaviour:** Only values that differ from the environment are stored, so later `.env` edits still apply to keys the owner has not overridden. Run Now, Manual URL and scheduled Runs snapshot the effective section; before executing a Run the backend applies that snapshot to the providers, falling back to the environment for missing keys. Credentials and provider endpoints (`LLM_API_KEY`, `LLM_BASE_URL`, …), deployment variables and provider selection remain environment-only and require a restart.
 - **Acceptance:**
   - With `LLM_MODEL=a` in `.env`, `GET /api/settings` shows `environment.llm_model = a`; after saving `b`, the next Run's snapshot contains `b` and the LLM provider uses `b`.
+  - Main/evaluation output modes are independent dropdowns with descriptions
+    of provider enforcement versus local validation. Saved modes are included
+    in effective Run snapshots, without changing model selection.
   - Wan FPS and inference steps are editable under Settings / Environment.
     New and explicitly continued Runs apply the effective snapshot to Wan,
     including an already-loaded pipeline; changing steps/FPS does not reload

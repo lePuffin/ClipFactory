@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -22,8 +23,10 @@ class Font:
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-361")
 @pytest.mark.req("CF-REQ-417")
+@pytest.mark.req("CF-REQ-360")
+@pytest.mark.parametrize("with_end_card", [False, True])
 @pytest.mark.asyncio
-async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(tmp_path):
+async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(tmp_path, with_end_card):
     storage = LocalStorageProvider(tmp_path)
     await storage.put_bytes("assets/photo.jpg", b"fake image")
     await storage.put_bytes("cache/tts/voice.wav", b"retained narration")
@@ -32,6 +35,18 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
     logo_path = tmp_path / "brand.png"
     logo.save(logo_path, format="PNG")
     await storage.put_file(logo_path, "assets/brand.png")
+    identity = [
+        {
+            "kind": kind,
+            "path": str(logo_path),
+            "sha256": hashlib.sha256(logo_path.read_bytes()).hexdigest(),
+            "x": x,
+            "y": 24,
+            "width": 112,
+            "height": 56,
+        }
+        for kind, x in [("logo", 584), ("news_date", 44)]
+    ]
     asset = Asset(
         media_type="image",
         category="photo",
@@ -58,17 +73,25 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
     )
     profile = ContentProfile().model_dump(mode="json")
     stored = []
+    card_path = tmp_path / "frozen-card.mp4"
+    card_path.write_bytes(b"frozen ending")
+    card_metadata = {
+        "path": str(card_path),
+        "sha256": hashlib.sha256(card_path.read_bytes()).hexdigest(),
+    }
 
     class Repository:
         def context(self, clip_id):
             return {
                 "profile": profile,
-                "settings": {},
+                "settings": {"composition": {"tail_seconds": 3}} if with_end_card else {},
                 "package": {"claims": [], "source_attributions": ["Fixture Source"]},
                 "sources": [],
                 "clip": {
                     "metadata": {
                         "narration": {"narration_key": "cache/tts/voice.wav", "duration_seconds": 70},
+                        "identity_overlays": identity,
+                        "end_card": card_metadata if with_end_card else None,
                         "word_timings": [
                             {
                                 "text": "word",
@@ -82,7 +105,7 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
                             {
                                 "selected_asset_id": str(asset.id),
                                 "start_seconds": 0,
-                                "end_seconds": 71.3,
+                                "end_seconds": 73.3 if with_end_card else 71.3,
                                 "motion": "ken_burns",
                                 "transition_in": "cut",
                             }
@@ -107,6 +130,11 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
             return (b"", b"")
 
         async def probe(self, media_path):
+            if media_path.name == "end-card.mp4":
+                return {
+                    "format": {"duration": "3"},
+                    "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+                }
             return {"format": {"duration": "71.3"}, "streams": []}
 
         async def decode(self, media_path):
@@ -132,10 +160,11 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
     )
     with Image.open(mark_input) as rendered_logo:
         assert rendered_logo.mode == "RGBA"
-        assert rendered_logo.size == (112, 56)
-        assert rendered_logo.getchannel("A").getextrema()[0] == 0
+        assert rendered_logo.size == (112, 112)
+        assert rendered_logo.getchannel("A").getbbox() is not None
     filter_graph = command[command.index("-filter_complex") + 1]
-    assert "overlay=x=584:y=24:eof_action=pass:enable='between(t,0,71.3)'" in filter_graph
+    expected_duration = "73.3" if with_end_card else "71.3"
+    assert f"overlay=x=584:y=24:eof_action=pass:enable='between(t,0,{expected_duration})'" in filter_graph
     assert result["status"] == "pending_review"
     assert (
         result["research_calls"]
@@ -149,6 +178,24 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
     assert len([overlay for overlay in result["request"]["overlays"]]) == 0
     assert await storage.exists(result["storage_key"])
     assert len(stored) == 1
+    assert result["identity_overlays"][0] == identity[1]
+    assert result["identity_overlays"][1]["asset_id"] == str(logo_asset.id)
+    assert str(logo_path) in command
+    assert filter_graph.count("overlay=x=584:y=24") == 1
+    default = await renderer.execute(SavedNewsRenderRequest(base_clip_id=uuid4()))
+    assert default["identity_overlays"] == identity
+    command = media.command
+    assert command is not None
+    assert command.count(str(logo_path)) == 2
+    if with_end_card:
+        assert default["end_card"]["sha256"] == card_metadata["sha256"]
+        assert await asyncio.to_thread(Path(default["end_card"]["path"]).read_bytes) == b"frozen ending"
+        card_path.write_bytes(b"changed ending")
+        with pytest.raises(ValueError, match="Saved end card"):
+            await renderer.execute(SavedNewsRenderRequest(base_clip_id=uuid4()))
+    logo_path.write_bytes(b"changed")
+    with pytest.raises(ValueError, match="persistent identity image changed"):
+        await renderer.execute(SavedNewsRenderRequest(base_clip_id=uuid4()))
 
 
 @pytest.mark.unit

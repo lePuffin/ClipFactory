@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,30 @@ def test_composition_spec_hash_and_command_are_deterministic() -> None:
     second = make_spec()
     assert first.sha256() == second.sha256()
     assert build_ffmpeg_command(first) == build_ffmpeg_command(second)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-360")
+def test_end_card_replaces_three_tail_seconds_after_subtitles_and_audio_mix() -> None:
+    base = make_spec()
+    spec = replace(
+        base,
+        tail_seconds=3,
+        segments=(replace(base.segments[0], duration_seconds=73.3),),
+        end_card_path=Path("/data/branding/outro.mp4"),
+        end_card_sha256="a" * 64,
+    )
+    command = build_ffmpeg_command(spec)
+    graph = command[command.index("-filter_complex") + 1]
+    assert str(spec.end_card_path) in command
+    assert "[storyvideo]trim=duration=70.3" in graph
+    assert "[storyaudio]atrim=duration=70.3" in graph
+    assert "concat=n=2:v=1:a=0[vout]" in graph
+    assert "concat=n=2:v=0:a=1[aout]" in graph
+    assert graph.index("subtitles=") < graph.index("[storyvideo]trim=")
+    assert replace(spec, end_card_sha256="b" * 64).sha256() != spec.sha256()
+    with pytest.raises(ValueError, match="three tail seconds"):
+        build_ffmpeg_command(replace(spec, tail_seconds=1))
 
 
 @pytest.mark.unit

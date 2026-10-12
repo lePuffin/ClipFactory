@@ -112,11 +112,17 @@ class ProductionRepository:
                     )
                 ).all()
             )
+            source_publications = dict(
+                session.execute(
+                    select(SourceRow.id, SourceRow.published_at).where(SourceRow.id.in_(publishers_by_source))
+                ).all()
+            )
             return {
                 **_package_summary(package),
                 "title": story.title,
                 "summary": story.summary,
                 "claims": claims,
+                "source_publications": source_publications,
                 "source_attributions": [f"{publisher}: {url}" for publisher, url in attributions],
                 "claim_publishers": {
                     claim.id: list(
@@ -163,6 +169,8 @@ class ProductionRepository:
                 "social_metadata": script.social_metadata.model_dump(mode="json"),
                 "visual_draft": [item.model_dump(mode="json") for item in script.visuals],
                 "editorial_overlays": [item.model_dump(mode="json") for item in script.editorial_overlays],
+                "people": [item.model_dump(mode="json") for item in script.people],
+                "buzz_lines": [item.model_dump(mode="json") for item in script.buzz_lines],
             }
             session.add(ScriptVersionRow(story_package_id=package_id, version=version, value=value))
             package.updated_at = now

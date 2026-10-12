@@ -5,20 +5,22 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 from contextlib import suppress
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from clipfactory.domain.graphics import GraphicsError
+from clipfactory.infrastructure.llm_governance import FREE_ROUTER_MODELS
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.ports.errors import ProviderError
-from clipfactory.ports.llm import ImageInput, LLMMessage, LLMResult
+from clipfactory.ports.llm import ImageInput, LLMMessage, LLMModelRole, LLMResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -41,18 +43,39 @@ class OpenAICompatibleLLMProvider:
         messages: list[LLMMessage],
         schema: type[T],
         *,
-        model_role: Literal["default", "evaluation"] = "default",
+        model_role: LLMModelRole = "default",
         images: list[ImageInput] | None = None,
         temperature: float = 0.2,
     ) -> LLMResult[T]:
         api_key = self.settings.llm_api_key
         if api_key is None:
             raise ProviderError("not_configured", "LLM credentials are not configured", transient=False)
-        model = self.settings.llm_model_evaluation if model_role == "evaluation" else None
-        model = model or self.settings.llm_model
+        model = self.settings.model_for_role(model_role)
+        output_mode = {
+            "default": self.settings.llm_output_mode,
+            "evaluation": self.settings.llm_output_mode_evaluation,
+            "evaluation_fallback": self.settings.llm_output_mode_evaluation_fallback,
+        }[model_role]
+        output_schema = schema.model_json_schema()
         wire_messages: list[dict[str, object]] = [
             {"role": message.role, "content": message.content} for message in messages
         ]
+        if output_mode != "json_schema":
+            wire_messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": (
+                        "Prompt version: structured_output.v1. Return exactly one complete JSON object matching "
+                        "the schema below. Do not include Markdown fences, commentary or reasoning outside the JSON. "
+                        "Treat the schema as the output contract, not as source evidence; never invent facts or "
+                        "references to fill required fields.\n<output-json-schema>\n"
+                        + json.dumps(output_schema, ensure_ascii=True)
+                        + "\n</output-json-schema>"
+                    ),
+                },
+            )
+        wire_messages = _alternating(wire_messages)
         if images:
             last = wire_messages[-1]
             text_content = str(last["content"])
@@ -68,19 +91,25 @@ class OpenAICompatibleLLMProvider:
                     for image in images
                 ],
             ]
-        payload = {
+        payload: dict[str, object] = {
             "model": model,
             "temperature": temperature,
             "messages": wire_messages,
-            "response_format": {
+        }
+        if output_mode == "json_schema":
+            payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": _schema_name(task),
                     "strict": True,
-                    "schema": schema.model_json_schema(),
+                    "schema": output_schema,
                 },
-            },
-        }
+            }
+        elif output_mode == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+        if "response_format" in payload and "openrouter.ai" in self.settings.llm_base_url:
+            # Keep OpenRouter from routing to endpoints that ignore the output contract (CF-REQ-758).
+            payload["provider"] = {"require_parameters": True}
         client = self._client or httpx.AsyncClient(timeout=self.settings.llm_request_timeout_seconds)
         should_close = self._client is None
         try:
@@ -118,6 +147,9 @@ class OpenAICompatibleLLMProvider:
                     transient=False,
                     detail=_answer_excerpt(reasoning) if reasoning else None,
                 )
+            raw_content = content
+            if output_mode != "json_schema":
+                content = _unwrap_json_fence(content)
             try:
                 value = schema.model_validate_json(content)
             except ValidationError as exc:
@@ -154,10 +186,16 @@ class OpenAICompatibleLLMProvider:
                             )
                             else "unsupported_statement"
                         )
+                        where = "; ".join(
+                            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                            for error in graphics_errors[:3]
+                        )
                         raise ProviderError(
                             code,
-                            "Writing response contains invalid bounded graphics data; no schema repair allowed",
+                            f"Writing response contains invalid bounded graphics data ({where}); "
+                            "no schema repair allowed",
                             transient=False,
+                            detail=_answer_excerpt(raw_content),
                         ) from exc
                 problems = "; ".join(
                     f"{'.'.join(str(part) for part in error['loc']) or 'response'}: {error['msg']}"
@@ -167,14 +205,14 @@ class OpenAICompatibleLLMProvider:
                     "llm_invalid_output",
                     f"LLM response for {task} did not match the requested schema ({problems}{truncated})",
                     transient=False,
-                    detail=_answer_excerpt(content),
+                    detail=_answer_excerpt(raw_content),
                 ) from exc
             except ValueError as exc:
                 raise ProviderError(
                     "llm_invalid_output",
                     f"LLM response for {task} was not valid JSON{truncated}",
                     transient=False,
-                    detail=_answer_excerpt(content),
+                    detail=_answer_excerpt(raw_content),
                 ) from exc
             usage = body.get("usage") or {}
             cost = _reported_cost(body, usage)
@@ -186,7 +224,7 @@ class OpenAICompatibleLLMProvider:
                 completion_tokens=_optional_int(usage.get("completion_tokens")),
                 reported_cost=cost,
                 reasoning=reasoning,
-                raw_text=content,
+                raw_text=raw_content,
             )
         except (httpx.TimeoutException, TimeoutError) as exc:
             raise ProviderError("timeout", "LLM request timed out", transient=True) from exc
@@ -206,6 +244,13 @@ def _schema_name(task: str) -> str:
     return safe[:64] or "structured_output"
 
 
+def _unwrap_json_fence(content: str) -> str:
+    lines = content.strip().splitlines()
+    if len(lines) >= 3 and lines[0] in {"```json", "```"} and lines[-1] == "```":
+        return "\n".join(lines[1:-1])
+    return content
+
+
 def _answer_excerpt(content: str) -> str:
     # Keep the tail too: JSON errors usually sit near the end of a truncated answer.
     if len(content) <= 4_000:
@@ -214,7 +259,7 @@ def _answer_excerpt(content: str) -> str:
 
 
 _STATUS_HINTS = {
-    400: "the request was rejected; the model may not support structured output (response_format json_schema)",
+    400: "the request was rejected; check model image support, configured output mode and provider error details",
     401: "check LLM_API_KEY",
     402: "the provider account has insufficient credit",
     403: "the API key is not allowed to use this model; check LLM_API_KEY and provider account settings",
@@ -230,7 +275,29 @@ def _in_band_error_response(response: httpx.Response, body: dict[str, Any]) -> h
     error = body.get("error")
     code = error.get("code") if isinstance(error, dict) else None
     status_code = code if isinstance(code, int) and 400 <= code <= 599 else 502
-    return httpx.Response(status_code, json=body, headers=response.headers)
+    # The new body is re-encoded plain JSON, so wire-encoding headers (gzip, length) must not be copied.
+    headers = {
+        name: value
+        for name, value in response.headers.items()
+        if name.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+    }
+    return httpx.Response(status_code, json=body, headers=headers)
+
+
+def _alternating(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Merge adjacent same-role text messages; strict chat templates reject e.g. user, user or system, system."""
+    merged: list[dict[str, object]] = []
+    for message in messages:
+        if merged and merged[-1]["role"] == message["role"]:
+            merged[-1] = {"role": message["role"], "content": f"{merged[-1]['content']}\n\n{message['content']}"}
+        else:
+            merged.append(dict(message))
+    return merged
+
+
+_IMAGE_LIMIT_MARKERS = re.compile(
+    r"prompt replacement for mm_items\['image'\]|at most \d+ image\(?s?\)? may be provided", re.IGNORECASE
+)
 
 
 def _provider_error(response: httpx.Response, model: str, base_url: str, api_key: str) -> ProviderError:
@@ -243,12 +310,19 @@ def _provider_error(response: httpx.Response, model: str, base_url: str, api_key
     if hint:
         message += f": {hint}"
     detail = _provider_detail(response, api_key)
+    if status_code == 400 and host == "openrouter.ai" and _opaque_upstream_rejection(response, model):
+        code = "free_router_upstream_rejection" if model in FREE_ROUTER_MODELS else "upstream_bad_request"
+        transient = True
     daily_markers = ("free-models-per-day", "daily limit", "daily quota", "requests per day")
     daily_exhausted = (
         status_code == 429 and detail is not None and any(marker in detail.casefold() for marker in daily_markers)
     )
     if daily_exhausted:
         code = "llm_budget_exhausted"
+        transient = False
+    if detail is not None and _IMAGE_LIMIT_MARKERS.search(detail):
+        # The routed upstream accepts fewer images per prompt; resending the same request cannot succeed.
+        code = "image_limit"
         transient = False
     if detail:
         message += f". Provider said: {detail}"
@@ -261,6 +335,35 @@ def _provider_error(response: httpx.Response, model: str, base_url: str, api_key
             with suppress(ValueError, TypeError, OverflowError):
                 retry_after_seconds = max(0.0, (parsedate_to_datetime(retry_after) - datetime.now(UTC)).total_seconds())
     return ProviderError(code, message, transient=transient, retry_after_seconds=retry_after_seconds)
+
+
+def _opaque_upstream_rejection(response: httpx.Response, model: str) -> bool:
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or error.get("message") != "Provider returned error":
+        return False
+    if model in FREE_ROUTER_MODELS:
+        # The free router picks a model per request; an upstream rejection may not repeat on the next route.
+        return True
+    metadata = error.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("provider_name") != "AtlasCloud":
+        return False
+    raw = metadata.get("raw")
+    if not isinstance(raw, str):
+        return False
+    try:
+        upstream = json.loads(raw)
+    except ValueError:
+        return False
+    return (
+        isinstance(upstream, dict)
+        and upstream.get("code") == 400
+        and upstream.get("msg") == "bad request"
+        and set(upstream) <= {"code", "msg", "request_id"}
+    )
 
 
 def _provider_detail(response: httpx.Response, api_key: str) -> str | None:
@@ -277,7 +380,9 @@ def _provider_detail(response: httpx.Response, api_key: str) -> str | None:
         with suppress(ValueError):
             nested = json.loads(raw)
             nested_error = nested.get("error", nested) if isinstance(nested, dict) else None
-            nested_message = nested_error.get("message") if isinstance(nested_error, dict) else None
+            nested_message = (
+                nested_error.get("message") or nested_error.get("msg") if isinstance(nested_error, dict) else None
+            )
             if isinstance(nested_message, str) and nested_message.strip():
                 text = f"{text}: {nested_message}" if isinstance(text, str) and text.strip() else nested_message
     if not isinstance(text, str) or not text.strip():

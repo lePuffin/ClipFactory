@@ -72,7 +72,9 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
   `[min_seconds, max_seconds]`.
 - **Failure:** Issue `narration_too_short` / `narration_too_long` with the
   delta in seconds and a `revise_script` Action stating how many words to add
-  or remove (`delta × wpm / 60`, rounded up).
+  or remove (`delta × wpm / 60`, rounded up). The instruction states that
+  length changes only by adding or removing accepted facts or necessary
+  context, never with filler adverbs (CF-REQ-158 `filler_padding`).
 - **Acceptance:**
   - 57.0 s narration + 1.3 s padding (58.3 s) fails; the Action requests ≥ 5 more words at 150 wpm.
   - 72.0 s narration passes.
@@ -97,8 +99,15 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
 - **Initial provider (OD-007, decided):** local faster-whisper with model
   `large-v3-turbo`; the model name is configuration
   (`WHISPER_MODEL`) so alternatives can be benchmarked.
+- **Hallucination controls:** The local decoder shall not condition each
+  window on previously decoded text, shall apply voice-activity filtering, and
+  shall discard decoded segments whose average log-probability is below −1.0
+  (Whisper's own decode-failure threshold). Narration is a clean TTS render,
+  so low-confidence invented text (typically after the final word) is decoder
+  hallucination, not speech, and must not inflate WER.
 - **Acceptance:**
   - The fake transcription provider returns the script words with evenly spaced timestamps.
+  - A decoded segment with average log-probability below −1.0 contributes no recognised words; the decoder is invoked without previous-text conditioning and with VAD.
   - Word timestamps are monotonically non-decreasing and within the audio duration.
 
 ### CF-REQ-311 — Alignment to script

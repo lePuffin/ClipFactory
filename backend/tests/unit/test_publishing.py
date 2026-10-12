@@ -6,6 +6,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from clipfactory.domain.models import Platform
+from clipfactory.infrastructure.providers.publishing.platforms import (
+    _description,  # pyright: ignore[reportPrivateUsage]
+)
 from clipfactory.infrastructure.providers.publishing.retrying import RetryingPublisher
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.publishing import PlatformMetrics, PublicationRequest, PublicationResult
@@ -87,12 +90,14 @@ class Publisher:
         self.outcomes = outcomes or [PublicationResult("post-1", "https://example/post-1")]
         self.configured = configured
         self.calls = 0
+        self.requests: list[PublicationRequest] = []
 
     def is_configured(self) -> bool:
         return self.configured
 
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult:
-        del request, clip_file
+        del clip_file
+        self.requests.append(request)
         outcome = self.outcomes[min(self.calls, len(self.outcomes) - 1)]
         self.calls += 1
         if isinstance(outcome, ProviderError):
@@ -216,6 +221,55 @@ async def test_approval_gate_holds_without_timeout_or_platform_call() -> None:
     assert publisher.calls == 0
 
 
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-160")
+@pytest.mark.asyncio
+async def test_publication_appends_default_discovery_hashtags_without_duplicates() -> None:
+    store = Store()
+    store.context_value["social_metadata"]["hashtags"] = ["#Ebola", "#DRC", "news"]
+    publisher = Publisher()
+    await PublishService(store, Storage(), {Platform.YOUTUBE: publisher}, clock=lambda: NOW).execute(
+        uuid4(), store.clip_id
+    )
+
+    assert publisher.requests[0].hashtags == ("Ebola", "DRC", "news", "BreakingNews", "WorldNews")
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-160")
+@pytest.mark.asyncio
+async def test_publication_keeps_generated_hashtags_first_within_eight() -> None:
+    store = Store()
+    store.context_value["social_metadata"]["hashtags"] = [f"Tag{index}" for index in range(7)]
+    store.context_value["settings"]["publishing"]["discovery_hashtags"] = ["News", "World News"]
+    publisher = Publisher()
+    await PublishService(store, Storage(), {Platform.YOUTUBE: publisher}, clock=lambda: NOW).execute(
+        uuid4(), store.clip_id
+    )
+
+    assert publisher.requests[0].hashtags == (*[f"Tag{index}" for index in range(7)], "News")
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-161")
+def test_caption_appends_hashtags_disclosure_and_attributions() -> None:
+    request = PublicationRequest(
+        clip_id=uuid4(),
+        title="Title",
+        description="Two facts. Follow for more.",
+        hashtags=("Ebola", "News"),
+        source_attributions=("Reuters: https://example.test/a",),
+        asset_attributions=("Photo by Jane, CC BY 4.0",),
+        contains_synthetic_media=False,
+        synthetic_voice=True,
+    )
+
+    assert _description(request) == (
+        "Two facts. Follow for more.\n\n#Ebola #News\n\nContains synthetic media and/or voice.\n\n"
+        "Sources: Reuters: https://example.test/a\n\nCredits: Photo by Jane, CC BY 4.0"
+    )
+
+
 def _request() -> PublicationRequest:
     return PublicationRequest(
         clip_id=uuid4(),
@@ -227,3 +281,29 @@ def _request() -> PublicationRequest:
         contains_synthetic_media=False,
         synthetic_voice=False,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.req("CF-REQ-456")
+@pytest.mark.asyncio
+async def test_publish_and_retry_publish_read_only_composed_clip(tmp_path: Path) -> None:
+    store, publisher = Store(), Publisher()
+    store.context_value["social_metadata"]["asset_attributions"] = ["Author — CC BY 4.0"]
+    requested: list[str] = []
+    clip = tmp_path / "final.mp4"
+    clip.write_bytes(b"composed-fixture")
+
+    class ClipOnlyStorage:
+        def local_path(self, key: str) -> Path:
+            assert key == "clips/final.mp4"
+            requested.append(key)
+            return clip
+
+    service = PublishService(store, ClipOnlyStorage(), {Platform.YOUTUBE: publisher}, clock=lambda: NOW)
+    for _ in range(2):
+        result = await service.execute(uuid4(), store.clip_id)
+        assert result["outcome"] == "published"
+    assert requested == ["clips/final.mp4", "clips/final.mp4"]
+    assert publisher.calls == 2
+    assert all(request.asset_attributions == ("Author — CC BY 4.0",) for request in publisher.requests)

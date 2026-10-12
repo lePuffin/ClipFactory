@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from urllib.parse import unquote, urlparse
 
 import uvicorn
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from clipfactory.bootstrap import create_application, seed_defaults, upgrade_database
 from clipfactory.infrastructure.logging_setup import configure_logging
@@ -28,6 +28,10 @@ from clipfactory.infrastructure.preflight import (
     render_results,
 )
 from clipfactory.infrastructure.settings import EnvironmentSettings
+from clipfactory.infrastructure.wan_test import run_wan_test
+from clipfactory.ports.errors import ProviderError
+from clipfactory.ports.generation import VideoGenerationRequest
+from clipfactory.ports.media import MediaProcessError
 from clipfactory.workflow.saved_news_render import SavedNewsRenderRequest
 
 _MODEL_VALIDATION_HINTS = {
@@ -112,13 +116,43 @@ def main(argv: Sequence[str] | None = None, *, dependencies: CliDependencies | N
     render_parser.add_argument("recipe", type=Path)
     audio_parser = subparsers.add_parser("import-audio", help="import a licensed music/SFX manifest")
     audio_parser.add_argument("manifest", type=Path)
+    wan_parser = subparsers.add_parser("wan-test", help="test only local Wan; no server, Run, database or cloud calls")
+    wan_parser.add_argument("--prompt", required=True)
+    wan_parser.add_argument("--output", required=True, type=Path)
+    wan_parser.add_argument("--width", type=int, default=832)
+    wan_parser.add_argument("--height", type=int, default=480)
+    wan_parser.add_argument("--seconds", type=float, default=5)
+    wan_parser.add_argument("--seed", type=int, default=42)
+    wan_parser.add_argument("--fps", type=int)
+    wan_parser.add_argument("--steps", type=int)
+    wan_parser.add_argument("--guidance", type=float)
+    wan_parser.add_argument("--flow-shift", type=float)
+    wan_parser.add_argument("--negative-prompt", default="")
+    wan_parser.add_argument("--dry-run", action="store_true", help="print recipe without loading or generating")
+    wan_parser.add_argument("--allow-download", action="store_true", help="allow missing model weight download")
     args = parser.parse_args(argv)
     if args.command is None:
         args.command = "run"
     services = dependencies or default_dependencies()
 
     try:
-        settings = services.settings_factory()
+        settings = (
+            EnvironmentSettings(DATABASE_URL=SecretStr("sqlite://"))
+            if args.command == "wan-test" and dependencies is None
+            else services.settings_factory()
+        )
+        if args.command == "wan-test":
+            overrides = {
+                alias: getattr(args, option)
+                for option, alias in (
+                    ("fps", "WAN_FPS"),
+                    ("steps", "WAN_INFERENCE_STEPS"),
+                    ("guidance", "WAN_GUIDANCE_SCALE"),
+                    ("flow_shift", "WAN_FLOW_SHIFT"),
+                )
+                if getattr(args, option) is not None
+            }
+            settings = EnvironmentSettings.model_validate({**settings.model_dump(by_alias=True), **overrides})
     except ValidationError as exc:
         print("FAIL Configuration: invalid", file=sys.stderr)
         for error in exc.errors(include_input=False):
@@ -143,6 +177,28 @@ def main(argv: Sequence[str] | None = None, *, dependencies: CliDependencies | N
         return 1
 
     try:
+        if args.command == "wan-test":
+            try:
+                if not 0 <= args.seed < 2**32:
+                    raise ValueError("Wan seed must be between 0 and 4294967295")
+                asyncio.run(
+                    run_wan_test(
+                        settings,
+                        VideoGenerationRequest(
+                            args.prompt, args.negative_prompt, args.width, args.height, args.seconds, args.seed
+                        ),
+                        args.output,
+                        dry_run=args.dry_run,
+                        allow_download=args.allow_download,
+                    )
+                )
+            except (ProviderError, MediaProcessError) as exc:
+                print(f"Wan test failed ({exc.code}): {exc}", file=sys.stderr)
+                return 1
+            except (OSError, ValueError) as exc:
+                print(f"Wan test failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+                return 1
+            return 0
         if args.command == "import-audio":
             from datetime import UTC, datetime
 

@@ -12,7 +12,7 @@ from PIL import Image
 
 from clipfactory.infrastructure.media.runner import MediaRunner
 from clipfactory.infrastructure.providers.wan_local import WanLocalVideoProvider
-from clipfactory.infrastructure.settings import EnvironmentSettings
+from clipfactory.infrastructure.settings import WAN_NEGATIVE_PROMPT, EnvironmentSettings
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.generation import GENERATION_ABORT, VideoGenerationRequest
 
@@ -39,6 +39,7 @@ def mock_runtime(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 def fake_pipeline() -> MagicMock:
     pipeline = MagicMock()
+    pipeline.scheduler.from_config.return_value = pipeline.scheduler
 
     def inference(**kwargs: object) -> SimpleNamespace:
         callback = kwargs.get("callback_on_step_end")
@@ -83,7 +84,11 @@ async def test_wan_lazily_downloads_to_data_cache_and_reuses_loaded_pipeline(tmp
     pipeline.enable_sequential_cpu_offload.assert_called_once()
     pipeline.vae.enable_tiling.assert_called_once()
     assert pipeline.call_count == 2
-    assert first.parameters == {"width": 80, "height": 80, "num_frames": 5, "fps": 4, "num_inference_steps": 2}
+    assert first.parameters["num_frames"] == 4
+    assert first.parameters["inference_num_frames"] == 5
+    assert first.parameters["width"] == first.parameters["height"] == 80
+    assert first.parameters["fps"] == 4
+    assert first.parameters["num_inference_steps"] == 2
     assert first.license == "Apache-2.0"
     assert torch.Generator.call_args.kwargs == {"device": "cpu"}
     assert media.ffmpeg.await_count == 2
@@ -138,10 +143,16 @@ async def test_wan_updated_runtime_steps_and_fps_reach_loaded_pipeline(tmp_path,
     provider = WanLocalVideoProvider(runtime, media, pipeline_factory=factory)
     request = VideoGenerationRequest("Grid", "", 64, 80, 1, 1)
     await provider.generate(request, tmp_path / "first.mp4")
-    apply_runtime_environment(runtime, baseline, {"wan_inference_steps": 25, "wan_fps": 8})
+    apply_runtime_environment(
+        runtime,
+        baseline,
+        {"wan_inference_steps": 25, "wan_fps": 8, "wan_guidance_scale": 4.5, "wan_flow_shift": 2.5},
+    )
     result = await provider.generate(request, tmp_path / "second.mp4")
     assert pipeline.call_args.kwargs["num_inference_steps"] == 25
     assert result.parameters["fps"] == 8
+    assert pipeline.call_args.kwargs["guidance_scale"] == 4.5
+    assert pipeline.scheduler.from_config.call_args.kwargs == {"flow_shift": 2.5}
     assert media.ffmpeg.call_args.args[0][2] == "8"
     factory.assert_called_once()
 
@@ -267,15 +278,86 @@ async def test_wan_errors_are_actionable_and_no_placeholder_is_returned(tmp_path
 @pytest.mark.integration
 @pytest.mark.req("CF-REQ-208")
 @pytest.mark.req("CF-REQ-210")
-async def test_wan_mock_inference_encodes_a_real_decodable_video(tmp_path, monkeypatch) -> None:
+@pytest.mark.req("CF-REQ-267")
+@pytest.mark.parametrize(
+    ("width", "height", "fps", "seconds", "frames"),
+    [(64, 80, 4, 1, 4), (832, 480, 16, 5, 80)],
+)
+async def test_wan_mock_inference_encodes_a_real_decodable_video(
+    tmp_path, monkeypatch, width, height, fps, seconds, frames
+) -> None:
     mock_runtime(monkeypatch)
     media = MediaRunner()
     provider = WanLocalVideoProvider(
-        settings(tmp_path, WAN_DEVICE="cpu"), media, pipeline_factory=MagicMock(return_value=fake_pipeline())
+        settings(tmp_path, WAN_DEVICE="cpu", WAN_FPS=fps),
+        media,
+        pipeline_factory=MagicMock(return_value=fake_pipeline()),
     )
-    output = await provider.generate(VideoGenerationRequest("Grid", "", 64, 80, 1, 1), tmp_path / "output.mp4")
+    output = await provider.generate(
+        VideoGenerationRequest("Grid", "", width, height, seconds, 1), tmp_path / "output.mp4"
+    )
     probe = await media.probe(output.path)
     await media.decode(output.path)
     stream = next(item for item in probe["streams"] if item["codec_type"] == "video")
-    assert (stream["width"], stream["height"], stream["nb_frames"]) == (64, 80, "5")
-    assert float(probe["format"]["duration"]) == 1.25
+    assert (stream["width"], stream["height"], stream["nb_frames"]) == (width, height, str(frames))
+    assert float(probe["format"]["duration"]) == seconds
+    assert stream["r_frame_rate"] == f"{fps}/1"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-267")
+async def test_reference_recipe_is_explicit_and_trims_inference_frame(tmp_path, monkeypatch) -> None:
+    torch = mock_runtime(monkeypatch)
+    pipeline = fake_pipeline()
+    media = MagicMock()
+    media.ffmpeg = AsyncMock()
+    provider = WanLocalVideoProvider(
+        settings(tmp_path, WAN_FPS=16, WAN_INFERENCE_STEPS=25),
+        media,
+        pipeline_factory=MagicMock(return_value=pipeline),
+    )
+    result = await provider.generate(
+        VideoGenerationRequest(
+            "A paper boat floating through a rain-filled city gutter at night.", "", 832, 480, 5, 42
+        ),
+        tmp_path / "paper-boat.mp4",
+    )
+    call = pipeline.call_args.kwargs
+    assert (call["width"], call["height"], call["num_frames"], call["num_inference_steps"]) == (832, 480, 81, 25)
+    assert call["guidance_scale"] == 5
+    assert call["negative_prompt"] == WAN_NEGATIVE_PROMPT
+    torch.Generator.return_value.manual_seed.assert_called_once_with(42)
+    pipeline.vae.to.assert_called_once_with(dtype=torch.float32)
+    pipeline.scheduler.from_config.assert_called_once_with(pipeline.scheduler.config, flow_shift=3)
+    assert result.parameters["num_frames"] == 80
+    assert result.parameters["inference_num_frames"] == 81
+    args = media.ffmpeg.call_args.args[0]
+    assert args[args.index("-frames:v") + 1] == "80"
+    assert args[args.index("-crf") + 1] == "10"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-267")
+@pytest.mark.parametrize(
+    ("width", "height", "expected"),
+    [(720, 1280, (464, 832)), (832, 480, (832, 480)), (1920, 1080, (832, 464)), (80, 64, (80, 64))],
+)
+def test_native_geometry_is_bounded_without_changing_orientation(tmp_path, width, height, expected) -> None:
+    provider = WanLocalVideoProvider(settings(tmp_path), MagicMock())
+    recipe = provider.generation_recipe(VideoGenerationRequest("Natural moving scene", "", width, height, 5, 42))
+    assert (recipe["width"], recipe["height"]) == expected
+    assert recipe["requested_width"] == width
+    assert recipe["requested_height"] == height
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-267")
+async def test_offline_test_never_downloads_missing_weights(tmp_path, monkeypatch) -> None:
+    mock_runtime(monkeypatch)
+    factory = MagicMock(side_effect=FileNotFoundError("Missing weights"))
+    provider = WanLocalVideoProvider(settings(tmp_path), MagicMock(), pipeline_factory=factory, allow_download=False)
+    with pytest.raises(ProviderError) as error:
+        await provider.generate(VideoGenerationRequest("Boat", "", 832, 480, 5, 42), tmp_path / "output.mp4")
+    assert error.value.code == "generation_model_cache_missing"
+    assert factory.call_count == 1
+    assert factory.call_args.kwargs["local_files_only"] is True

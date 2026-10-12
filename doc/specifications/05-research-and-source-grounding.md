@@ -56,13 +56,28 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
   3. Rank remaining references by publisher tier (high > standard > low),
      then keyword overlap with profile topics, then recency; take the top N.
 - **Failure:** Zero usable references ⇒ Run fails at `research` with
-  `failure_code = no_candidates`. A failing `NewsSource` is logged as a
-  warning event and the others are still used; if all fail, `no_candidates`.
+  `failure_code = no_candidates`. Each configured feed is queried
+  independently: a failing feed or `NewsSource` is recorded as a warning Run
+  Event naming the source/feed, error type and short message, and the other
+  feeds are still used. Transient feed errors (DNS resolution, connection or
+  timeout, HTTP 429/5xx) are retried at most twice per feed with 5 s and 15 s
+  delays; other errors are not retried. When every feed and `NewsSource`
+  fails and no reference at all was collected (a host connectivity outage,
+  e.g. the machine resuming from sleep at the scheduled time; live scheduled
+  Run 5a3c271a lost DNS for every feed at 05:00), the whole collection is
+  repeated after 60 s, 180 s and 300 s, with a progress Run Event before each
+  wait, before failing. If all still fail, `no_candidates`, and the
+  failure message lists each feed error. RSS 2.0, RSS 1.0 (RDF) and Atom
+  feeds are parsed.
 - **Acceptance:**
   - With 50 fixture references and `max_candidate_articles = 20`, exactly 20 are fetched.
   - A reference from a blocked publisher is never fetched.
   - A reference 30 h old with `max_article_age_hours = 24` is discarded.
   - One of two `NewsSource`s raising an error still yields candidates from the other.
+  - One failing feed never discards references from the other feeds; its warning names the feed.
+  - A DNS failure that clears on the third attempt yields the feed's references.
+  - When every feed fails, collection is repeated after 60, 180 and 300 s (fake sleep) and succeeds if connectivity returns; after the last failure the Run fails with `no_candidates`. One failing feed among working feeds causes no collection repeat.
+  - RDF and Atom fixture feeds yield references with publication times.
 - **Related:** CF-REQ-103, CF-REQ-108, [provider-architecture](architecture/provider-architecture.md#newssource)
 
 ### CF-REQ-101 — Article retrieval and text extraction
@@ -187,16 +202,39 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
 ### CF-REQ-109 — Story novelty [Derived]
 
 - **Description:** A Story candidate shall be ineligible when it is judged the
-  same Story as one covered by an approved Clip within
-  `research.story_novelty_window_days`.
-- **Rationale:** Daily Runs would otherwise repeatedly cover the same
-  dominant Story.
-- **Behaviour:** Compare by shared Source `canonical_url`s first; otherwise
-  include the titles of recently covered Stories in the clustering/selection
-  prompt and require the LLM to flag duplicates.
+  same Story as one covered by a successfully completed Run whose
+  `finished_at` lies within `research.story_novelty_window_hours`, so that
+  repeated Runs on the same day never produce two Clips about the same Story.
+- **Rationale:** Daily and repeated Run Now executions would otherwise cover
+  the same dominant Story again. Failed, cancelled or still-running Runs
+  produced no Clip, so their Stories do not count as covered (owner decision
+  2026-10-11).
+- **Behaviour:** Before ranking, the research stage loads the selected Story
+  title of every Run with status `completed` finished inside the window,
+  together with the `canonical_url`s of the Sources cited as verified
+  evidence by that Story's accepted Claims (not every article grouped with
+  it, because grouping places unrelated leftover articles in candidates).
+  Covered evidence articles are removed from each ranked candidate
+  deterministically; a candidate left with no articles is rejected. The
+  covered titles are passed to the `rank_stories` prompt, which instructs the
+  LLM to set `recently_covered` for the same event (including follow-up
+  reporting of it); flagged candidates are rejected. Each removal and
+  rejection is reported in the Run's progress events with reason
+  `recently_covered`. A window of `0` disables the rule.
+  Covered evidence URLs are also excluded during discovery (CF-REQ-100),
+  before references are ranked and capped at `max_candidate_articles`, and a
+  fetched article whose canonical URL is covered is skipped, so already-used
+  evidence never consumes the fetch budget. URLs are compared without query
+  string, fragment or trailing slash. When every eligible article was covered
+  evidence, the Run fails with `no_suitable_story` (reason
+  `recently_covered`) without a ranking request.
 - **Acceptance:**
-  - A candidate sharing a Source URL with a Clip approved 2 days earlier is rejected with reason `recently_covered` when the window is 7.
-  - With the window set to 0, the same candidate is eligible.
+  - A candidate whose only article is evidence of a Run completed 20 hours earlier is rejected with reason `recently_covered` when the window is 48.
+  - A candidate containing that covered article plus a new article stays eligible with only the new article.
+  - Articles grouped with a covered Story but not cited by its accepted Claims do not count as covered.
+  - The same candidate is eligible when the covering Run failed, or completed 49 hours earlier, or the window is 0.
+  - Covered titles are passed to `rank_stories`, and a candidate flagged `recently_covered` by the LLM is not selected.
+  - With `max_candidate_articles = 1`, a higher-ranked reference whose URL (ignoring query string) is covered evidence is not fetched and the next fresh reference is fetched instead.
 - **Related:** CF-REQ-107
 
 ### CF-REQ-110 — Additional source gathering
@@ -270,30 +308,59 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
 - **Behaviour:** When Sources disagree (the LLM flags contradicting Claims),
   both Claims may be accepted only as `statement_attributed` Claims that name
   their Source; otherwise the less-supported Claim is rejected with reason
-  `contradicted`.
+  `contradicted`. Claims that are page furniture rather than reported facts
+  (publication or modification timestamps, bylines and media credits such as
+  "Video by: …", correspondent teasers such as "Our correspondent tells us
+  more", runtime labels such as "Video Duration 30:36", AI-illustration
+  disclaimers, programme production credits such as "X is an Al Jazeera
+  Originals Production.", or text with fewer than two words outside dates and numbers) are
+  rejected in code with reason `page_metadata`, and sentence fragments whose
+  first letter is lower-case ("with a cyberattack disrupting the primary
+  vote.", "an allegation he denies.") are rejected with reason `fragment`
+  because they are not atomic Claims (CF-REQ-112), before CF-REQ-117 counts
+  the accepted Claims (observed in Run a511576a, where four of five accepted
+  Claims were page metadata).
 - **Acceptance:**
   - `unsupported` Claims are always `rejected`.
   - Contradictory figures from two Sources end as two attributed Claims or one rejected Claim, never two unattributed accepted Claims.
+  - "Video Duration 30 minutes 36 seconds 30:36", "The illustrations in this video have been created by artists aided by AI-powered software." and "True Crime Reports is an Al Jazeera Originals Production." are `page_metadata` (all three were accepted and two were narrated in Run d7e7a13b); a reported fact about AI-generated images or a joint film production is not.
+  - "Keywords for this article …" and the reworded timestamp "The event was published on 11 Oct 2026" (accepted in Run 46f45fff) are `page_metadata`; "with a cyberattack disrupting the primary vote." and "guest Joseph Downing, Senior Lecturer …" are `rejected` with `fragment` (Run 5feb3c43 narrated all three, leaving the model to pad the script with unsupported filler); "A cyberattack disrupted the Socialist primary vote on Thursday." stays `accepted`.
+  - "Issued on: 11/10/2026 - 10:37", "Modified: 11/10/2026 - 10:37", "Video by: Sarah MORRIS" and "Our correspondent Sarah Morris tells us more." are `rejected` with `page_metadata`; "Sanchez began campaigning on Saturday for a snap vote" stays `accepted`.
 - **Related:** CF-REQ-116
 
 ### CF-REQ-116 — Attribution of single-source claims
 
 - **Description:** A script segment that uses a `single_source` or
   `statement_attributed` Claim shall attribute it to its Source by publisher
-  name (e.g. "according to Reuters").
+  name in its structured `attribution` field. Spoken publisher attribution
+  (e.g. "according to Reuters") is introduced once and is not repeated for
+  later Claims from that publisher. Each publisher may be named at most once
+  in the complete narration; source fields, overlays and description credits
+  remain separate and retain the evidence provenance.
 - **Acceptance:**
   - The script gate fails a segment that cites a `single_source` Claim without an `attribution`.
+  - Zero or one spoken mention of a known publisher passes the repetition
+    check; two or more fail with `repeated_attribution`, including mentions
+    within one segment. Case, whitespace and an optional leading "The" do not
+    evade the limit. Different publishers each have their own one-mention limit.
 - **Related:** CF-REQ-158, CF-REQ-400
 
 ### CF-REQ-117 — Minimum grounded content
 
 - **Description:** `extract_claims` shall fail the Story when fewer than 3
-  accepted Claims exist.
+  accepted Claims exist, or when the accepted Claim texts together contain
+  fewer words than 40 % of the minimum narration word count
+  (`ceil(0.4 × duration.min_seconds × voice.words_per_minute / 60)`, 60 words
+  with the defaults). A thinner Story cannot fill the minimum duration
+  without unsupported commentary (CF-REQ-158).
 - **Behaviour:** The workflow selects the next eligible Story candidate if
   one exists (at most 2 fallbacks per Run); otherwise the Run fails with
   `insufficient_claims`.
 - **Acceptance:**
   - A fixture Story with 2 accepted Claims triggers fallback to the next candidate and emits a `story_selected` event for it.
+  - A fixture Story with 3 accepted Claims totalling 12 words is skipped with
+    a progress message naming the 12 available and 60 required evidence
+    words; with no other candidate the Run fails with `insufficient_claims`.
 - **Related:** CF-REQ-107
 
 ### CF-REQ-118 — Research persistence

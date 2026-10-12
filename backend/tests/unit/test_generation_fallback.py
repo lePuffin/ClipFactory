@@ -1,17 +1,24 @@
 import asyncio
+import importlib
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from PIL import Image
 
 from clipfactory.assets.generation import generate_video_asset
-from clipfactory.domain.models import Asset, AssetOrigin, ContentProfile, Provenance, Stage
+from clipfactory.domain.models import ActionType, Asset, AssetOrigin, ContentProfile, Provenance, Stage
+from clipfactory.infrastructure.media.runner import MediaRunner
+from clipfactory.infrastructure.providers.wan_local import WanLocalVideoProvider
+from clipfactory.infrastructure.settings import EnvironmentSettings
+from clipfactory.infrastructure.settings_validation import apply_runtime_environment
 from clipfactory.infrastructure.storage import LocalStorageProvider
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.generation import GENERATION_ABORT, GeneratedMedia, GenerationProgress, VideoGenerationRequest
@@ -67,17 +74,122 @@ def fake_inspector() -> MagicMock:
     return media
 
 
+@pytest.mark.integration
+@pytest.mark.req("CF-REQ-208")
+@pytest.mark.req("CF-REQ-210")
+@pytest.mark.req("CF-REQ-267")
+@pytest.mark.req("CF-REQ-759")
+async def test_production_imports_native_portrait_wan_with_reference_recipe(tmp_path, monkeypatch) -> None:
+    values: dict[str, Any] = {"_env_file": None, "DATABASE_URL": "sqlite://", "DATA_DIR": tmp_path}
+    baseline = EnvironmentSettings(**values)
+    runtime = baseline.model_copy()
+    apply_runtime_environment(runtime, baseline, {})
+    torch = MagicMock()
+    torch.cuda.is_available.return_value = True
+    original_import = importlib.import_module
+    monkeypatch.setattr(importlib, "import_module", lambda name: torch if name == "torch" else original_import(name))
+    pipeline = MagicMock()
+    pipeline.scheduler.from_config.return_value = pipeline.scheduler
+
+    def inference(**kwargs: Any) -> SimpleNamespace:
+        frame = Image.new("RGB", (kwargs["width"], kwargs["height"]), (20, 40, 60))
+        return SimpleNamespace(frames=[[frame] * kwargs["num_frames"]])
+
+    pipeline.side_effect = inference
+    factory = MagicMock(return_value=pipeline)
+    media = MediaRunner()
+    provider = WanLocalVideoProvider(runtime, media, pipeline_factory=factory)
+    run_id, package_id = uuid4(), uuid4()
+    prompt = "A folded paper boat drifts slowly, stable folds, soft streetlight, low vertical framing."
+    plan = {
+        "version": 1,
+        "segments": [
+            {
+                "index": 0,
+                "narration_text": "An illustrative boat",
+                "objective": "Illustrate water flow",
+                "planned_duration_seconds": 5,
+                "requirement": {
+                    "media_type": "video",
+                    "category": "broll",
+                    "description": "paper boat water",
+                    "generation_prompt": prompt,
+                    "subjects": [],
+                    "tags": ["water"],
+                    "strategy": "reuse_first",
+                },
+            }
+        ],
+    }
+    production, runs, evaluations = MagicMock(), MagicMock(), MagicMock()
+    production.current_visual_plan.return_value = plan
+    runs.get.return_value = {
+        "attempt": 1,
+        "profile_snapshot": ContentProfile().model_dump(mode="json"),
+        "settings_snapshot": {},
+    }
+    assets = fake_assets()
+    storage = LocalStorageProvider(tmp_path)
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=assets,
+        evaluations=evaluations,
+        storage=storage,
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        media=media,
+        clock=lambda: NOW,
+        video_providers=[provider],
+    )
+    await service.select_assets(
+        {"run_id": str(run_id), "story_package_id": str(package_id), "attempt": 1, "trigger": "run_now"}
+    )
+    call = pipeline.call_args.kwargs
+    assert call["prompt"] == prompt
+    assert (call["width"], call["height"], call["num_frames"]) == (464, 832, 81)
+    assert call["num_inference_steps"] == 25
+    assert call["guidance_scale"] == 5
+    assert pipeline.scheduler.from_config.call_args.kwargs == {"flow_shift": 3}
+    selected = assets.save.call_args.args[0]
+    assert selected.provenance.origin == AssetOrigin.GENERATED
+    assert selected.provenance.generation["prompt"] == prompt
+    parameters = selected.provenance.generation["parameters"]
+    assert (parameters["fps"], parameters["num_frames"], parameters["encoding_crf"]) == (16, 80, 10)
+    assert (parameters["requested_width"], parameters["requested_height"]) == (720, 1280)
+    assert (selected.width, selected.height) == (464, 832)
+    output = storage.local_path(selected.storage_key)
+    probe = await media.probe(output)
+    await media.decode(output)
+    assert probe["streams"][0]["nb_frames"] == "80"
+    assert float(probe["format"]["duration"]) == 5
+    assert evaluations.save.call_args.args[0].passed
+    assert plan["segments"][0]["selected_asset_id"] == str(selected.id)
+    factory.assert_called_once()
+    runs.reserve_generation_start.assert_called_once()
+
+
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-208")
 @pytest.mark.req("CF-REQ-210")
 @pytest.mark.req("CF-REQ-215")
 @pytest.mark.req("CF-REQ-656")
 @pytest.mark.req("CF-REQ-604")
+@pytest.mark.req("CF-REQ-267")
 @pytest.mark.parametrize("media_type", ["image", "video"])
 @pytest.mark.parametrize("candidate_state", ["empty", "rejected", "accepted"])
 @pytest.mark.parametrize("strategy", ["generate_allowed", "reuse_first"])
+@pytest.mark.parametrize(
+    "generation_prompt", [None, "A substation under soft light with moving cables and a steady camera."]
+)
 async def test_missing_media_falls_back_to_generated_video_with_provenance(
-    tmp_path: Path, media_type: str, candidate_state: str, strategy: str, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    media_type: str,
+    candidate_state: str,
+    strategy: str,
+    generation_prompt: str | None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_id, package_id = uuid4(), uuid4()
     plan: dict[str, Any] = {
@@ -99,6 +211,8 @@ async def test_missing_media_falls_back_to_generated_video_with_provenance(
             }
         ],
     }
+    if generation_prompt is not None:
+        plan["segments"][0]["requirement"]["generation_prompt"] = generation_prompt
     production, runs, evaluations = MagicMock(), MagicMock(), MagicMock()
     production.current_visual_plan.return_value = plan
     runs.get.return_value = {
@@ -163,6 +277,12 @@ async def test_missing_media_falls_back_to_generated_video_with_provenance(
         assert plan["segments"][0]["generated"] is False
         return
     assert len(provider.calls) == 1
+    assert (provider.calls[0].width, provider.calls[0].height) == (720, 1280)
+    assert "Illustrative background, not real event footage" not in provider.calls[0].prompt
+    if generation_prompt is None:
+        assert "Naturalistic cinematic footage" in provider.calls[0].prompt
+    else:
+        assert provider.calls[0].prompt == generation_prompt
     selected = assets.save.call_args.args[0]
     assert selected.media_type == "video"
     assert selected.provenance.origin == AssetOrigin.GENERATED
@@ -187,7 +307,10 @@ async def test_missing_media_falls_back_to_generated_video_with_provenance(
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-208")
 @pytest.mark.req("CF-REQ-215")
-@pytest.mark.parametrize("restriction", ["disabled", "strategy", "person", "profile_order", "provider_failure"])
+@pytest.mark.req("CF-REQ-267")
+@pytest.mark.parametrize(
+    "restriction", ["disabled", "strategy", "person", "profile_order", "provider_failure", "map", "chart"]
+)
 @pytest.mark.parametrize("strategy", ["generate_allowed", "reuse_first"])
 async def test_generation_respects_permissions_and_failure_remains_blocking(
     tmp_path: Path, restriction: str, strategy: str
@@ -210,7 +333,7 @@ async def test_generation_respects_permissions_and_failure_remains_blocking(
                 "requirement": {
                     "media_type": "image",
                     "category": "photo",
-                    "description": "Energy",
+                    "description": f"Energy {restriction}" if restriction in {"map", "chart"} else "Energy",
                     "subjects": ["Ada Lovelace"] if restriction == "person" else [],
                     "tags": [],
                     "strategy": "acquire_only" if restriction == "strategy" else strategy,
@@ -474,6 +597,7 @@ async def test_composition_derives_synthetic_disclosure_from_used_assets(
         clock=lambda: NOW,
     )
     monkeypatch.setattr(service, "_editorial_overlays", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(service, "_identity_overlays", AsyncMock(return_value=([], [])))
     monkeypatch.setattr(service, "_sound_cues", AsyncMock(return_value=()))
     monkeypatch.setattr(
         "clipfactory.workflow.production_stages.reconcile_visual_timing", lambda segments, words, **kwargs: segments
@@ -485,3 +609,80 @@ async def test_composition_derives_synthetic_disclosure_from_used_assets(
     metadata = production.save_clip.call_args.kwargs["metadata"]["social_metadata"]
     assert metadata["contains_synthetic_media"] is generated
     assert metadata["synthetic_voice"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-266")
+@pytest.mark.parametrize(
+    ("previous_action", "previous_segment", "expected"),
+    [
+        (None, None, "missing_asset"),
+        ("reselect_asset", 0, "unsourceable_visual"),
+        ("reselect_asset", 3, "missing_asset"),
+        ("revise_script", 0, "missing_asset"),
+    ],
+)
+async def test_a_visual_unmet_after_its_reselection_escalates_to_a_visual_rewrite(
+    tmp_path: Path, previous_action: str | None, previous_segment: int | None, expected: str
+) -> None:
+    profile = ContentProfile.model_validate({"visual_style": {"allow_generated_media": False}})
+    plan = {
+        "version": 1,
+        "segments": [
+            {
+                "index": 0,
+                "script_segment_index": 2,
+                "narration_text": "City dominated",
+                "objective": "Standings",
+                "description": "digital points table",
+                "planned_duration_seconds": 5,
+                "requirement": {
+                    "media_type": "image",
+                    "category": "photo",
+                    "description": "digital points table",
+                    "subjects": [],
+                    "tags": [],
+                    "strategy": "acquire_only",
+                },
+            }
+        ],
+    }
+    production, runs, evaluations = MagicMock(), MagicMock(), MagicMock()
+    production.current_visual_plan.return_value = plan
+    runs.get.return_value = {"attempt": 2, "profile_snapshot": profile.model_dump(mode="json"), "settings_snapshot": {}}
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=fake_assets(),
+        evaluations=evaluations,
+        storage=LocalStorageProvider(tmp_path),
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        media=fake_inspector(),
+        clock=lambda: NOW,
+    )
+    pending = (
+        [{"type": previous_action, "instructions": "x", "refs": {"segment_index": previous_segment}}]
+        if previous_action
+        else []
+    )
+    await service.select_assets(
+        {
+            "run_id": str(uuid4()),
+            "story_package_id": str(uuid4()),
+            "attempt": 2,
+            "trigger": "run_now",
+            "pending_actions": pending,
+        }
+    )
+    evaluation = evaluations.save.call_args.args[0]
+    assert [issue.code for issue in evaluation.issues] == [expected]
+    if expected == "unsourceable_visual":
+        assert evaluation.actions[0].type == ActionType.REVISE_SCRIPT
+        assert evaluation.actions[0].target_stage == Stage.WRITE_SCRIPT
+        assert evaluation.issues[0].refs == {"segment_index": 0, "script_segment_index": 2}
+        assert "digital points table" in evaluation.issues[0].message
+        assert "narration text unchanged" in evaluation.issues[0].message
+    else:
+        assert evaluation.actions[0].type == ActionType.RESELECT_ASSET

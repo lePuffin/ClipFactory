@@ -9,6 +9,9 @@ from typing import Any, Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
+LLMModelRole = Literal["default", "evaluation", "evaluation_fallback"]
+# Evaluation-model failures that a configured evaluation fallback model may answer instead (CF-REQ-405, CF-REQ-219).
+EVALUATION_FALLBACK_ERRORS = frozenset({"upstream_bad_request", "http_500", "http_502", "http_503"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +48,7 @@ class LLMProvider(Protocol):
         messages: list[LLMMessage],
         schema: type[T],
         *,
-        model_role: Literal["default", "evaluation"] = "default",
+        model_role: LLMModelRole = "default",
         images: list[ImageInput] | None = None,
         temperature: float = 0.2,
     ) -> LLMResult[T]: ...

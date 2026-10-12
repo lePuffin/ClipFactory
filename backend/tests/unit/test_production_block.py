@@ -9,8 +9,10 @@ import pytest
 from clipfactory.assets.candidate_review import SegmentCandidates
 from clipfactory.assets.music import select_music
 from clipfactory.domain.models import (
+    ActionType,
     Asset,
     AssetOrigin,
+    AssetStatus,
     ContentProfile,
     MusicInfo,
     MusicPolicy,
@@ -31,8 +33,10 @@ from clipfactory.planning.script import (
     VisualDraft,
 )
 from clipfactory.planning.visuals import build_visual_plan
+from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.llm import ImageInput, LLMMessage, LLMResult
 from clipfactory.ports.media_sources import MediaCandidate
+from clipfactory.workflow.executor import StageFailure
 from clipfactory.workflow.production_stages import ProductionStageService, production_stage_handlers
 
 
@@ -353,3 +357,199 @@ async def test_composition_blocks_a_legacy_plain_card_in_a_retained_plan(monkeyp
     assert result["last_evaluation_ids"] == [str(evaluation.id)]
     production.save_clip.assert_not_called()
     media.ffmpeg.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-256")
+@pytest.mark.asyncio
+async def test_composition_rejects_footage_too_short_to_continue_without_replaying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id, package_id = uuid4(), uuid4()
+    clip = Asset(
+        media_type="video",
+        category="media",
+        storage_key="assets/stock.mp4",
+        sha256="c" * 64,
+        mime_type="video/mp4",
+        description="Short stock clip",
+        size_bytes=100,
+        width=1080,
+        height=1920,
+        duration_seconds=6.0,
+        provenance=Provenance(
+            origin=AssetOrigin.EXTERNAL, provider="pexels", license="Pexels", source_url="https://example.test/v.mp4"
+        ),
+    )
+    production, runs, assets, evaluations = (MagicMock() for _ in range(4))
+    pieces = [
+        {"index": 0, "plan_segment_index": 4, "source_offset_seconds": 0.0, "start_seconds": 0.0, "end_seconds": 4.5},
+        {"index": 1, "plan_segment_index": 4, "source_offset_seconds": 4.5, "start_seconds": 4.5, "end_seconds": 9.0},
+    ]
+    production.current_visual_plan.return_value = {
+        "version": 1,
+        "segments": [{**piece, "selected_asset_id": str(clip.id)} for piece in pieces],
+    }
+    production.artifact.return_value = {"duration_seconds": 70.0, "words": []}
+    runs.get.return_value = {
+        "attempt": 1,
+        "profile_snapshot": ContentProfile().model_dump(mode="json"),
+        "settings_snapshot": {},
+    }
+    assets.get.return_value = clip
+    storage = MagicMock()
+    storage.exists = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "clipfactory.workflow.production_stages.reconcile_visual_timing", lambda segments, words, **kwargs: segments
+    )
+    media = MagicMock()
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=assets,
+        evaluations=evaluations,
+        storage=storage,
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        media=media,
+        clock=lambda: datetime(2026, 10, 7, tzinfo=UTC),
+    )
+    await service.compose_clip(
+        {"run_id": str(run_id), "trigger": "run_now", "story_package_id": str(package_id), "attempt": 1}
+    )
+    evaluation = evaluations.save.call_args.args[0]
+    assert [issue.code for issue in evaluation.issues] == ["asset_too_short"]
+    assert evaluation.actions[0].type == ActionType.RESELECT_ASSET
+    assert evaluation.actions[0].refs == {"segment_index": 4, "rejected_asset_id": str(clip.id)}
+    media.ffmpeg.assert_not_called()
+
+
+class ModeratingLLM:
+    """Primary evaluation model rejects the frames opaquely; the fallback model answers."""
+
+    name = "fake"
+
+    def __init__(self, primary_code: str = "upstream_bad_request") -> None:
+        self.calls: list[tuple[str, int]] = []
+        self.primary_code = primary_code
+
+    async def generate_structured(
+        self,
+        task: str,
+        messages: list[LLMMessage],
+        schema: type[Any],
+        *,
+        model_role: str = "default",
+        images: list[ImageInput] | None = None,
+        temperature: float = 0.2,
+    ) -> LLMResult[Any]:
+        del messages, schema, temperature
+        assert task == "evaluate_clip"
+        self.calls.append((model_role, len(images or [])))
+        if model_role == "evaluation":
+            raise ProviderError(self.primary_code, "Provider returned error", transient=True)
+        result = SemanticEvaluationResult.model_validate({"issues": [], "scores": {}})
+        return cast(LLMResult[Any], LLMResult(result, "fake", "fallback-vision"))
+
+
+def _evaluation_service(llm: ModeratingLLM, environment: dict[str, Any]) -> tuple[ProductionStageService, MagicMock]:
+    production, runs, evaluations, media = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    segments = [
+        {"index": index, "start_seconds": index * 5.0, "end_seconds": index * 5.0 + 5, "selected_asset_id": None}
+        for index in range(3)
+    ]
+    production.clip.return_value = {
+        "storage_key": "clips/x.mp4",
+        "metadata": {"visual_segments": segments, "captions": [], "social_metadata": {}, "wer": 0.0},
+    }
+    production.package_context.return_value = {"title": "T", "summary": "S", "claims": []}
+    production.current_script.return_value = {"segments": []}
+    runs.get.return_value = {
+        "attempt": 1,
+        "profile_snapshot": ContentProfile().model_dump(mode="json"),
+        "settings_snapshot": {"evaluation": {"visual_frame_count": 3}, "environment": environment},
+    }
+    media.extract_frame = AsyncMock(return_value=b"jpeg")
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=MagicMock(),
+        evaluations=evaluations,
+        storage=MagicMock(),
+        llm=llm,
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        media=media,
+        clock=lambda: datetime(2026, 10, 11, tzinfo=UTC),
+        candidate_preview=AsyncMock(),
+    )
+    return service, runs
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-405")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary_code", ["upstream_bad_request", "http_502"])
+async def test_opaque_evaluation_rejection_retries_once_with_the_configured_fallback_model(primary_code: str) -> None:
+    llm = ModeratingLLM(primary_code)
+    service, runs = _evaluation_service(
+        llm, {"llm_model": "writer", "llm_model_evaluation": "vision", "llm_model_evaluation_fallback": "backup"}
+    )
+    state = {"run_id": str(uuid4()), "clip_id": str(uuid4()), "story_package_id": str(uuid4()), "attempt": 1}
+
+    result = await service.evaluate_clip(cast(Any, state))
+
+    assert llm.calls == [("evaluation", 3), ("evaluation_fallback", 3)]
+    assert result["last_evaluation_ids"]
+    events = [call.args[1] for call in runs.append_event.call_args_list]
+    assert "evaluation_model_fallback" in events
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-405")
+@pytest.mark.parametrize("fallback", [None, "vision"])
+@pytest.mark.asyncio
+async def test_opaque_evaluation_rejection_without_a_distinct_fallback_fails_the_run(fallback: str | None) -> None:
+    llm = ModeratingLLM()
+    service, _ = _evaluation_service(
+        llm, {"llm_model": "writer", "llm_model_evaluation": "vision", "llm_model_evaluation_fallback": fallback}
+    )
+    state = {"run_id": str(uuid4()), "clip_id": str(uuid4()), "story_package_id": str(uuid4()), "attempt": 1}
+
+    with pytest.raises(StageFailure) as caught:
+        await service.evaluate_clip(cast(Any, state))
+
+    assert caught.value.code == "llm_unavailable"
+    assert llm.calls == [("evaluation", 3)]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.asyncio
+async def test_approved_production_retires_external_inputs_before_publication() -> None:
+    llm = ModeratingLLM()
+    service, _ = _evaluation_service(
+        llm, {"llm_model": "writer", "llm_model_evaluation": "vision", "llm_model_evaluation_fallback": "backup"}
+    )
+    run_id = uuid4()
+    external = Asset(
+        media_type="image",
+        category="photo",
+        storage_key=f"assets/external-runs/{run_id}/photo.png",
+        sha256="a" * 64,
+        mime_type="image/png",
+        size_bytes=4,
+        description="photo",
+        reusable=False,
+        provenance=Provenance(
+            origin=AssetOrigin.EXTERNAL, provider="fake", license="CC0", source_url="https://example.org/photo"
+        ),
+    )
+    service.assets.external_for_run.return_value = [external]
+    service.storage.delete = AsyncMock()
+    await service.evaluate_clip(
+        cast(Any, {"run_id": str(run_id), "clip_id": str(uuid4()), "story_package_id": str(uuid4()), "attempt": 1})
+    )
+    service.assets.update.assert_called_once_with(external.id, status=AssetStatus.RETIRED)
+    service.storage.delete.assert_awaited_once_with(external.storage_key)

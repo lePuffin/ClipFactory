@@ -180,3 +180,70 @@ def test_package_context_maps_each_claim_to_its_evidence_publishers(tmp_path) ->
 
     assert context["claim_publishers"] == {claim.id: ["Wire News"]}
     engine.dispose()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-109")
+def test_recently_covered_lists_only_completed_runs_finished_inside_the_window(tmp_path) -> None:
+    from datetime import timedelta
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'novelty.db'}")
+    Base.metadata.create_all(engine)
+    sessions = create_session_factory(engine)
+    runs = RunRepository(sessions)
+    repository = ResearchRepository(sessions)
+    now = datetime(2026, 10, 11, 12, tzinfo=UTC)
+
+    def record(source_id: UUID, name: str, digest: str) -> ResearchSourceRecord:
+        url = f"https://news.example/{name}"
+        return ResearchSourceRecord(
+            source_id,
+            url,
+            url,
+            "News",
+            "News",
+            name,
+            "Officials confirmed the event.",
+            digest,
+            "high",
+            now,
+            now,
+            None,
+            None,
+        )
+
+    def covered_run(name: str, status: str, finished_hours_ago: float) -> None:
+        run_id = UUID(runs.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
+        source_id, leftover_id, story_id = uuid4(), uuid4(), uuid4()
+        sources = (
+            record(source_id, name, name.ljust(64, "x")[:64]),
+            record(leftover_id, f"{name}-leftover", name.ljust(64, "y")[:64]),
+        )
+        story = ResearchStoryRecord(
+            story_id, "selected", name, "Summary.", "general", 0.8, {}, "", None, (source_id, leftover_id)
+        )
+        claim = Claim(
+            story_id=story_id,
+            text="Officials confirmed the event.",
+            kind=ClaimKind.FACT,
+            evidence=[Evidence(source_id=source_id, excerpt="Officials confirmed the event", verified=True)],
+            support_level=SupportLevel.SINGLE_SOURCE,
+            status=ClaimStatus.ACCEPTED,
+        )
+        repository.persist(ResearchSnapshot(run_id, sources, (story,), story_id, (claim,), (claim.id,)))
+        with sessions.begin() as session:
+            row = session.get(RunRow, run_id)
+            assert row is not None
+            row.status = status
+            row.finished_at = now - timedelta(hours=finished_hours_ago)
+
+    covered_run("completed-yesterday", "completed", 20)
+    covered_run("failed-today", "failed", 2)
+    covered_run("completed-too-early", "completed", 49)
+
+    covered = repository.recently_covered(now - timedelta(hours=48))
+
+    assert [story.title for story in covered] == ["completed-yesterday"]
+    # Articles grouped with the Story but not cited by its accepted Claims are not covered.
+    assert covered[0].canonical_urls == frozenset({"https://news.example/completed-yesterday"})
+    engine.dispose()

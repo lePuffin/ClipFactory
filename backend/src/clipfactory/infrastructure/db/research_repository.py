@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
@@ -14,7 +16,7 @@ from clipfactory.infrastructure.db.models import (
     StoryRow,
     StorySourceRow,
 )
-from clipfactory.ports.research import ResearchSnapshot, ResearchSourceRecord, SelectedStoryContext
+from clipfactory.ports.research import CoveredStory, ResearchSnapshot, ResearchSourceRecord, SelectedStoryContext
 
 
 class ResearchRunMissing(LookupError):
@@ -92,6 +94,35 @@ class ResearchRepository:
             for claim in snapshot.claims:
                 self._persist_claim(session, claim, snapshot.selected_story_id, source_ids)
             run.selected_story_id = snapshot.selected_story_id
+
+    def recently_covered(self, since: datetime) -> tuple[CoveredStory, ...]:
+        with self.sessions() as session:
+            stories = list(
+                session.execute(
+                    select(StoryRow.id, StoryRow.title)
+                    .join(RunRow, RunRow.id == StoryRow.run_id)
+                    .where(
+                        RunRow.status == "completed",
+                        RunRow.finished_at >= since,
+                        StoryRow.status == "selected",
+                    )
+                    .order_by(RunRow.finished_at.desc())
+                )
+            )
+            covered: list[CoveredStory] = []
+            for story_id, title in stories:
+                urls = session.scalars(
+                    select(SourceRow.canonical_url)
+                    .join(ClaimEvidenceRow, ClaimEvidenceRow.source_id == SourceRow.id)
+                    .join(ClaimRow, ClaimRow.id == ClaimEvidenceRow.claim_id)
+                    .where(
+                        ClaimRow.story_id == story_id,
+                        ClaimRow.status == "accepted",
+                        ClaimEvidenceRow.verified.is_(True),
+                    )
+                )
+                covered.append(CoveredStory(title, frozenset(urls)))
+            return tuple(covered)
 
     def summary(self, run_id) -> dict[str, object] | None:
         with self.sessions() as session:
