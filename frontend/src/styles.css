@@ -257,7 +257,13 @@ select option { background: var(--panel); color: var(--paper); }
 .review-card .approval-countdown { margin-top: 0; }
 .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: auto; padding-top: 6px; }
 .clip-list { display: grid; gap: 17px; }
-.clip-card { display: grid; grid-template-columns: 210px minmax(0, 1fr); padding: 18px; gap: 20px; }
+.clip-card { position: relative; display: grid; grid-template-columns: 210px minmax(0, 1fr); padding: 18px; gap: 20px; }
+.clip-card-copy > .section-head { padding-right: 38px; }
+.publication-panel { position: relative; }
+.publication-panel > .section-head { padding-right: 38px; }
+.clip-preview-container { min-width: 0; }
+.clip-delete { position: absolute; top: 12px; right: 12px; color: var(--coral); }
+.clip-actions-bar.delete-only { margin: 0; padding: 0; border: 0; }
 .clip-preview { display: block; width: 100%; max-height: 360px; aspect-ratio: 9 / 16; object-fit: contain; background: #090b0b; }
 .asset-preview { margin-bottom: 24px; }
 .asset-preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }

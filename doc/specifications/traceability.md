@@ -190,7 +190,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with saved-profile select, save-as-new, edit, activate and delete | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
 | [CF-REQ-608](15-ui-and-dashboard.md) | Run Now with explicit profile selection | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-609](15-ui-and-dashboard.md) | Manual URL input | `frontend` | Vitest, Playwright | CF-AC-015 | Not started |
-| [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (All/Published/Failed tabs, 20 per page, green Published badge) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
+| [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (previews with errors, publication-aware approval actions, corner delete icon, All/Published/Failed tabs) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-611](15-ui-and-dashboard.md) | Safe rendering of external text | `frontend` | Vitest, Playwright | CF-AC-018 | Not started |
 | [CF-REQ-612](15-ui-and-dashboard.md) | Cost display (Overview budget uses two decimal places) | `frontend` | Vitest, Playwright | CF-AC-023 | In progress |
 | [CF-REQ-613](15-ui-and-dashboard.md) | Approval of pending Clips, one-per-row Review Board and paginated queue API | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-010 | In progress |

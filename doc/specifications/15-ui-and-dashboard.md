@@ -252,15 +252,21 @@ Global header: product name, current Run indicator, **Run Now** button,
   Publication status, link and latest metrics, in three tabs — **All**,
   **Published** and **Failed** — mapped to the `filter` parameter, 20 Clips
   per page. A `published` status badge is shown in green. Each Clip card
-  features individual **Approve**, **Reject**, and **Delete** actions placed
-  directly below the platform states. Approving or rejecting submits the
+  features individual **Approve** and **Reject** actions directly below the
+  platform states only while a Publication awaits approval and no Publication
+  is already published. Delete is an accessible trash icon in the top-right
+  corner of the card or detail panel. Approving or rejecting submits the
   publication decision, and deleting removes the Clip, its render revisions,
   scheduled publish tasks, and storage media.
 - **Acceptance:**
   - Switching tab resets to page 1 and requests the matching filter;
     pagination controls reflect `total`.
   - Seeking in the preview player issues range requests that the API serves with 206.
-  - Approve, Reject, and Delete actions are available on each Clip card.
+  - Published Clips show no Approve or Reject buttons, including when the
+    Clip remains `approved` but a Publication is `published`.
+  - Pending approval Clips retain Approve and Reject; every card has an
+    icon-only Delete button with an accessible label and confirmation.
+  - Unavailable preview media shows an explicit error rather than a blank player.
 
 ### CF-REQ-611 — Safe rendering of external text
 
@@ -296,7 +302,8 @@ Global header: product name, current Run indicator, **Run Now** button,
 
 - **Description:** When Clips are `awaiting_approval`, each Clip in the Clips
   workspace shall display explicit Approve and Reject buttons directly beneath
-  its platform statuses. The navigation provides a dedicated **Goals** tab
+  its platform statuses, unless a Publication is already published. The
+  navigation provides a dedicated **Goals** tab
   (`/goals`), titled **Obtain Monetization**, displaying platform subscriber/follower
   milestones, watch hours/views, and regulatory policy restrictions including
   EU AI Act Article 50 transparency disclosure ("AI Generated" badge in the

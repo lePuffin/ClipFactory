@@ -349,6 +349,8 @@ describe("ClipFactory production pages", () => {
     expect(screen.getByRole("button", { name: "Approve Board fixture" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject Board fixture" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete Board fixture" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Board fixture" })).toHaveTextContent("");
+    expect(screen.getByRole("button", { name: "Delete Board fixture" })).toHaveClass("clip-delete");
 
     await user.click(screen.getByRole("button", { name: "Approve Board fixture" }));
     expect(await screen.findByText("Board fixture approved.")).toBeInTheDocument();
@@ -356,6 +358,46 @@ describe("ClipFactory production pages", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete Board fixture" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/clips/clip-9", expect.objectContaining({ method: "DELETE" })));
+  });
+
+  it.each(["/clips", "/clips/clip-9", "/clips/approval"])("CF-REQ-610 CF-REQ-613 hides decisions for published Clips at %s", async (route) => {
+    const clip = {
+      id: "clip-9", run_id: "run-9", status: "approved", story_title: "Published fixture",
+      created_at: "2026-10-13T06:00:00Z", cost_total: "0.1", social_metadata: {},
+      preview: { media_url: "/api/clips/clip-9/media", duration_seconds: 60, width: 720, height: 1280, fps: 30 },
+      publications: [
+        { id: "pub-1", platform: "youtube", status: "published", mode: "live" },
+        { id: "pub-2", platform: "instagram", status: "awaiting_approval", mode: "live" },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url === "/api/budget" ? { currency: "EUR" } :
+        url === "/api/clips/clip-9" ? clip : { items: [clip], total: 1 }), { status: 200 });
+    }));
+    render(<MemoryRouter initialEntries={[route]}><App /></MemoryRouter>);
+    await screen.findByLabelText("Preview Published fixture");
+    expect(screen.queryByRole("button", { name: "Approve Published fixture" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject Published fixture" })).not.toBeInTheDocument();
+    if (route !== "/clips/approval") {
+      expect(screen.getByRole("button", { name: "Delete Published fixture" })).toHaveTextContent("");
+    }
+  });
+
+  it("CF-REQ-610 reports unavailable Clip media and clears the error when metadata loads", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/budget" ? { currency: "EUR" } : { items: [{
+        id: "clip-9", run_id: "run-9", status: "approved", story_title: "Missing media",
+        created_at: "2026-10-13", cost_total: "0", publications: [],
+        preview: { media_url: "/api/clips/clip-9/media", duration_seconds: 60, width: 720, height: 1280, fps: 30 },
+      }], total: 1 }), { status: 200 })));
+    render(<MemoryRouter initialEntries={["/clips"]}><App /></MemoryRouter>);
+    const video = await screen.findByLabelText("Preview Missing media");
+    fireEvent.error(video);
+    expect(screen.getByRole("alert")).toHaveTextContent("Clip video could not be loaded");
+    fireEvent.loadedMetadata(video);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve Missing media" })).not.toBeInTheDocument();
   });
 
   it("CF-REQ-610 CF-REQ-612 lists Clips with previews, cost, Publications, links, and metrics", async () => {

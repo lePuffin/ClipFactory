@@ -104,7 +104,10 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-013 — Dashboard and live progress
 
 - Starting Run Now from the UI shows stage-by-stage progress via SSE without reload, survives a reconnect without duplicate/missing events, and the dashboard shows recent Runs, 7-day totals with "Estimated revenue", and the next scheduled Run.
-- **Requirements:** CF-REQ-600–602, CF-REQ-608, CF-REQ-852
+- Clips support range-streamed preview playback, report unavailable media,
+  hide approval controls after publication, and provide a labelled trash
+  icon in the top-right corner with deletion confirmation.
+- **Requirements:** CF-REQ-600–602, CF-REQ-608, CF-REQ-610, CF-REQ-613, CF-REQ-852
 - **Verified by:** E2E-6 (Playwright)
 
 ### CF-AC-014 — Settings and Content Profile

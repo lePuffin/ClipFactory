@@ -423,7 +423,7 @@ export function PendingApprovals() {
     {message && <p className="form-message" role="status">{message}</p>}
     {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : resource.data.items.length ? <div className="pending-list">{resource.data.items.map((clip) => <article className="pending-item" key={clip.id}>
       <ClipPreview clip={clip} />
-      <div className="pending-copy"><h3>{clip.story_title || "Untitled Clip"}</h3><p>{metadataSummary(clip.social_metadata)}</p><PublicationBadges clip={clip} /><Countdown dueAt={clip.auto_publish_due_at} /><div className="approval-actions"><button className="command-button" disabled={busy === clip.id} aria-label={`Approve ${clip.story_title || "Clip"}`} onClick={() => void decide(clip, "approve")}><Check size={15} />Approve</button><button className="danger-button" disabled={busy === clip.id} aria-label={`Reject ${clip.story_title || "Clip"}`} onClick={() => void decide(clip, "reject")}><X size={15} />Reject</button></div></div>
+      <div className="pending-copy"><h3>{clip.story_title || "Untitled Clip"}</h3><p>{metadataSummary(clip.social_metadata)}</p><PublicationBadges clip={clip} />{canApproveClip(clip) && <><Countdown dueAt={clip.auto_publish_due_at} /><div className="approval-actions"><button className="command-button" disabled={busy === clip.id} aria-label={`Approve ${clip.story_title || "Clip"}`} onClick={() => void decide(clip, "approve")}><Check size={15} />Approve</button><button className="danger-button" disabled={busy === clip.id} aria-label={`Reject ${clip.story_title || "Clip"}`} onClick={() => void decide(clip, "reject")}><X size={15} />Reject</button></div></>}</div>
     </article>)}</div> : <Empty message="No Clips are awaiting approval." />}
   </section>;
 }
@@ -585,9 +585,16 @@ function PlatformGoalCard({ platform }: { platform: PlatformGoal }) {
   );
 }
 
+function canApproveClip(clip: Clip): boolean {
+  return clip.status === "approved"
+    && clip.publications.some((publication) => publication.status === "awaiting_approval")
+    && !clip.publications.some((publication) => publication.status === "published");
+}
+
 function ClipActions({ clip, onModified }: { clip: Clip; onModified?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const canDecide = canApproveClip(clip);
 
   async function handleDecision(decision: "approve" | "reject") {
     setBusy(decision);
@@ -619,8 +626,8 @@ function ClipActions({ clip, onModified }: { clip: Clip; onModified?: () => void
   }
 
   return (
-    <div className="clip-actions-bar" aria-label={`Actions for ${clip.story_title || "Clip"}`}>
-      <div className="clip-actions-buttons">
+    <div className={`clip-actions-bar${canDecide || message ? "" : " delete-only"}`} aria-label={`Actions for ${clip.story_title || "Clip"}`}>
+      {canDecide && <div className="clip-actions-buttons">
         <button
           className="command-button action-approve"
           disabled={busy !== null}
@@ -637,15 +644,16 @@ function ClipActions({ clip, onModified }: { clip: Clip; onModified?: () => void
         >
           <X size={14} />Reject
         </button>
-        <button
-          className="danger-button action-delete"
+      </div>}
+      <button
+          className="icon-button clip-delete"
           disabled={busy !== null}
           aria-label={`Delete ${clip.story_title || "Clip"}`}
+          title={`Delete ${clip.story_title || "Clip"}`}
           onClick={() => void handleDelete()}
         >
-          <Trash2 size={14} />Delete
+          <Trash2 size={16} />
         </button>
-      </div>
       {message && <span className="clip-action-feedback" role="status">{message}</span>}
     </div>
   );
@@ -677,7 +685,11 @@ function RetryPublishButton({ clip, onRetried }: { clip: Clip; onRetried: () => 
 }
 
 function ClipPreview({ clip }: { clip: Clip }) {
-  return <video className="clip-preview" aria-label={`Preview ${clip.story_title || "Clip"}`} controls preload="metadata" src={clip.preview.media_url} />;
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  return <div className="clip-preview-container">
+    <video key={clip.preview.media_url} className="clip-preview" aria-label={`Preview ${clip.story_title || "Clip"}`} controls preload="metadata" src={clip.preview.media_url} onError={() => setFailedUrl(clip.preview.media_url)} onLoadedMetadata={() => setFailedUrl(null)} />
+    {failedUrl === clip.preview.media_url && <p className="form-message" role="alert">Clip video could not be loaded. Check that the media exists in the configured storage directory, then refresh.</p>}
+  </div>;
 }
 
 function PublicationList({ clip }: { clip: Clip }) {
