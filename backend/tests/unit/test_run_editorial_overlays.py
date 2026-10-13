@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 from pydantic import ValidationError
 
 from clipfactory.composition.spec import CompositionSpec, VisualInput
@@ -264,10 +264,16 @@ def test_end_card_requires_reserved_tail() -> None:
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-360")
-def test_owner_wordmark_crops_padding_and_preserves_white_letters() -> None:
+def test_wordmark_crops_padding_and_preserves_white_letters(tmp_path: Path) -> None:
     import io
 
-    source = Path(__file__).resolve().parents[3] / "branding/inpulso_world/logo_letters.png"
+    source = tmp_path / "wordmark.png"
+    wordmark = Image.new("RGBA", (300, 160), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(wordmark)
+    for x in range(50, 250, 40):
+        draw.rectangle((x, 50, x + 39, 57), fill="white")
+        draw.rectangle((x, 50, x + 7, 97), fill="white")
+    wordmark.save(source)
     content, width, height = render_brand_mark(source, 112, 0.7)
     assert width == 112
     assert 25 <= height <= 30

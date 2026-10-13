@@ -79,6 +79,7 @@ def settings(tmp_path: Path) -> EnvironmentSettings:
     data_dir.mkdir()
     public_dir.mkdir()
     values: dict[str, Any] = {
+        "_env_file": None,
         "APP_ENV": "test",
         "DATABASE_URL": "postgresql+psycopg://unused:database-password@localhost/unused",
         "DRAGONFLY_URL": "redis://localhost:6379/0",
@@ -159,7 +160,7 @@ def test_doctor_redacts_invalid_configuration(tmp_path: Path, capsys) -> None:
     deps = dependencies(tmp_path, FakePreflight(), recorded_events)
 
     def invalid_settings() -> EnvironmentSettings:
-        values: dict[str, Any] = {"PORT": "not-a-port"}
+        values: dict[str, Any] = {"_env_file": None, "DATABASE_URL": "sqlite://", "PORT": "not-a-port"}
         return EnvironmentSettings(**values)
 
     deps = replace(deps, settings_factory=invalid_settings)
@@ -178,12 +179,17 @@ def test_cli_names_model_validation_error_without_leaking_values(
 ) -> None:
     events: list[str] = []
     configured = dependencies(tmp_path, FakePreflight(), events)
-    configured = replace(
-        configured,
-        settings_factory=lambda: EnvironmentSettings(
-            PUBLIC_MEDIA_BASE_URL="https://private.example.invalid", MEDIA_URL_SIGNING_KEY=None
-        ),
-    )
+
+    def invalid_settings() -> EnvironmentSettings:
+        values: dict[str, Any] = {
+            "_env_file": None,
+            "DATABASE_URL": "sqlite://",
+            "PUBLIC_MEDIA_BASE_URL": "https://private.example.invalid",
+            "MEDIA_URL_SIGNING_KEY": None,
+        }
+        return EnvironmentSettings(**values)
+
+    configured = replace(configured, settings_factory=invalid_settings)
 
     assert main([command], dependencies=configured) == 1
     output = capsys.readouterr().err
@@ -201,10 +207,16 @@ def test_cli_names_unsupported_provider_without_echoing_selection(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     configured = dependencies(tmp_path, FakePreflight(), [])
-    configured = replace(
-        configured,
-        settings_factory=lambda: EnvironmentSettings(LLM_PROVIDER="secret-provider-selection"),
-    )
+
+    def invalid_settings() -> EnvironmentSettings:
+        values: dict[str, Any] = {
+            "_env_file": None,
+            "DATABASE_URL": "sqlite://",
+            "LLM_PROVIDER": "secret-provider-selection",
+        }
+        return EnvironmentSettings(**values)
+
+    configured = replace(configured, settings_factory=invalid_settings)
 
     assert main(["doctor"], dependencies=configured) == 1
     assert capsys.readouterr().err == (

@@ -11,6 +11,13 @@ Every category is mandatory in v1.0; coverage thresholds come later
 the same name (`unit`, `integration`, `pipeline`, `llm_contract`, `rendering`,
 `failure_recovery`) or the matching folder for frontend tests.
 
+The GitHub Actions baseline uses Ubuntu 24.04, Python 3.13 and Node.js 22.
+Backend checks install FFmpeg/FFprobe and DejaVu fonts because some assembly
+and encoding regression tests exercise local media tools. Tests supply their
+own settings and generated media; no owner `.env`, branding or private
+deployment artifacts are required. Documentation must describe private
+artifact paths as text, not repository links that fail in a clean checkout.
+
 | Category | What it proves | Examples |
 | --- | --- | --- |
 | **Unit** | Pure rules and components in isolation | Duration bounds, scoring, routing table rows, word budget, caption layout, frame sampling times, ducking envelope, music selection, cost estimation, limiter arithmetic, React components |
