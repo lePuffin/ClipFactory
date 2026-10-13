@@ -9,6 +9,10 @@ database/
 data/
 *.log
 
+# Owner-specific branding assets; retain generic authoring instructions
+/branding/*
+!/branding/README.md
+
 # Python
 __pycache__/
 *.py[cod]

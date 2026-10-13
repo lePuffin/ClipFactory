@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, model_validator
 
 from clipfactory.assets.importing import AssetImportError, ImportProvenance, import_asset_file
-from clipfactory.domain.models import Asset, AssetStatus, ContentProfile, RunTrigger
+from clipfactory.domain.models import Asset, AssetStatus, ContentProfile, RunTrigger, Schedule, ScheduleRule
 from clipfactory.infrastructure.http import SafeHTTPClient, UnsafeURL
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.infrastructure.settings_validation import (
@@ -114,6 +114,12 @@ class RunCreatedResponse(BaseModel):
 class ManualURLRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     url: str
+    profile_id: UUID | None = None
+
+
+class RunNowRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    profile_id: UUID | None = None
 
 
 class RunEventListResponse(BaseModel):
@@ -178,6 +184,54 @@ class NamedProfileUpdateRequest(BaseModel):
             if getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
         return self
+
+
+class ProfileScheduleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    local_time: str
+    timezone: str = "Europe/Lisbon"
+
+
+class ScheduleRuleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    local_time: Annotated[str, StringConstraints(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")]
+    enabled: bool = True
+
+
+class ScheduleRuleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    local_time: Annotated[str, StringConstraints(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")] | None = None
+    enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def reject_explicit_null(self) -> ScheduleRuleUpdateRequest:
+        for field in self.model_fields_set:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+
+
+class ProfileToggleActiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    is_active: bool
+
+
+class ProfileScheduleResponse(BaseModel):
+    profile_id: UUID
+    profile_name: str
+    rule_id: UUID | None
+    is_active: bool
+    local_time: str | None
+    enabled: bool
+    schedule: dict[str, Any]
+    task_id: UUID | None
+    due_at: datetime | None
+    status: Literal["pending", "disabled", "idle"]
+
+
+class ProfileScheduleListResponse(BaseModel):
+    items: list[ProfileScheduleResponse]
 
 
 class NamedProfileResponse(BaseModel):
@@ -293,6 +347,46 @@ class RunCostsResponse(BaseModel):
     entries: list[CostEntryResponse]
 
 
+class GoalMetricResponse(BaseModel):
+    id: str
+    label: str
+    current: float | int
+    target: float | int
+    target_tier1: float | int | None = None
+    unit: str
+    pct: float
+
+
+class GoalRestrictionResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    status: str
+
+
+class PlatformGoalResponse(BaseModel):
+    platform: str
+    name: str
+    program: str
+    status: str
+    published_clips: int
+    progress_pct: float
+    metrics: list[GoalMetricResponse]
+    restrictions: list[GoalRestrictionResponse]
+
+
+class GoalDataResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    updated_at: datetime
+    platforms: list[PlatformGoalResponse]
+
+
+class GoalsResponse(BaseModel):
+    goal: GoalDataResponse
+
+
 def _default_health(settings: EnvironmentSettings) -> dict[str, bool | str | None]:
     data_dir = settings.data_dir.expanduser().resolve()
     writable = data_dir.exists() and data_dir.is_dir()
@@ -331,6 +425,7 @@ def create_app(
     catalogue: Any = None,
     budget_reader: Any = None,
     dashboard_reader: Any = None,
+    schedule_repository: Any = None,
     clock: Clock | None = None,
     saved_news_renderer: Any = None,
     render_revision_reader: Any = None,
@@ -350,6 +445,15 @@ def create_app(
     async def effective_settings() -> dict[str, Any]:
         defaults = settings_snapshot(settings)
         return await _in_thread(configuration.settings, defaults) if configuration else defaults
+
+    async def reconcile_profile_schedules() -> None:
+        if schedule_repository is not None:
+            effective = await effective_settings()
+            await _in_thread(
+                schedule_repository.reconcile,
+                current_time(),
+                int(effective["scheduler"]["missed_run_grace_minutes"]),
+            )
 
     @app.middleware("http")
     async def require_api_token(request: Request, call_next: Callable[..., Any]) -> Any:
@@ -498,24 +602,151 @@ def create_app(
 
     @app.post("/api/content-profiles", response_model=NamedProfileResponse, status_code=201, tags=["settings"])
     async def create_named_profile(request: NamedProfileCreateRequest) -> Any:
-        return await _in_thread(
+        res = await _in_thread(
             require_configuration().create_profile, request.name, request.profile, activate=request.activate
         )
+        await reconcile_profile_schedules()
+        return res
 
     @app.put("/api/content-profiles/{profile_id}", response_model=NamedProfileResponse, tags=["settings"])
     async def update_named_profile(profile_id: UUID, request: NamedProfileUpdateRequest) -> Any:
-        return await _in_thread(
+        res = await _in_thread(
             require_configuration().update_profile, profile_id, name=request.name, profile=request.profile
         )
+        await reconcile_profile_schedules()
+        return res
+
+    @app.put("/api/content-profiles/{profile_id}/schedule", response_model=NamedProfileResponse, tags=["settings"])
+    async def update_profile_schedule(profile_id: UUID, request: ProfileScheduleUpdateRequest) -> Any:
+        profiles = await _in_thread(require_configuration().profiles)
+        target = next((p for p in profiles if str(p["id"]) == str(profile_id)), None)
+        if target is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "profile_not_found", "message": "Content Profile was not found"}},
+            )
+        profile_obj = ContentProfile.model_validate(target["profile"])
+        updated_schedule = Schedule(
+            enabled=request.enabled,
+            local_time=request.local_time,
+            timezone=request.timezone or "Europe/Lisbon",
+        )
+        updated_profile = profile_obj.model_copy(update={"schedule": updated_schedule})
+        res = await _in_thread(require_configuration().update_profile, profile_id, profile=updated_profile)
+        await reconcile_profile_schedules()
+        return res
+
+    @app.post("/api/content-profiles/{profile_id}/schedules", tags=["settings"])
+    async def add_schedule_rule(profile_id: UUID, request: ScheduleRuleCreateRequest) -> Any:
+        profiles = await _in_thread(require_configuration().profiles)
+        target = next((p for p in profiles if str(p["id"]) == str(profile_id)), None)
+        if target is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "profile_not_found", "message": "Content Profile was not found"}},
+            )
+        profile_obj = ContentProfile.model_validate(target["profile"])
+        existing_rules = profile_obj.schedule_rules()
+        new_rule = ScheduleRule(local_time=request.local_time, enabled=request.enabled)
+        existing_rules.append(new_rule)
+        updated_profile = profile_obj.model_copy(update={"schedules": existing_rules})
+        await _in_thread(require_configuration().update_profile, profile_id, profile=updated_profile)
+        await reconcile_profile_schedules()
+        return {"status": "created", "rule": new_rule.model_dump(mode="json")}
+
+    @app.put("/api/content-profiles/{profile_id}/schedules/{rule_id}", tags=["settings"])
+    async def update_schedule_rule(profile_id: UUID, rule_id: UUID, request: ScheduleRuleUpdateRequest) -> Any:
+        profiles = await _in_thread(require_configuration().profiles)
+        target = next((p for p in profiles if str(p["id"]) == str(profile_id)), None)
+        if target is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "profile_not_found", "message": "Content Profile was not found"}},
+            )
+        profile_obj = ContentProfile.model_validate(target["profile"])
+        existing_rules = profile_obj.schedule_rules()
+        found = False
+        updated_rules = []
+        for r in existing_rules:
+            if str(r.id) == str(rule_id):
+                found = True
+                updated_rules.append(
+                    r.model_copy(
+                        update={
+                            k: v
+                            for k, v in [("local_time", request.local_time), ("enabled", request.enabled)]
+                            if v is not None
+                        }
+                    )
+                )
+            else:
+                updated_rules.append(r)
+        if not found:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "rule_not_found", "message": "Schedule rule was not found"}},
+            )
+        updated_profile = profile_obj.model_copy(update={"schedules": updated_rules})
+        await _in_thread(require_configuration().update_profile, profile_id, profile=updated_profile)
+        await reconcile_profile_schedules()
+        return {"status": "updated"}
+
+    @app.delete("/api/content-profiles/{profile_id}/schedules/{rule_id}", tags=["settings"])
+    async def delete_schedule_rule(profile_id: UUID, rule_id: UUID) -> Any:
+        profiles = await _in_thread(require_configuration().profiles)
+        target = next((p for p in profiles if str(p["id"]) == str(profile_id)), None)
+        if target is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "profile_not_found", "message": "Content Profile was not found"}},
+            )
+        profile_obj = ContentProfile.model_validate(target["profile"])
+        existing_rules = profile_obj.schedule_rules()
+        updated_rules = [r for r in existing_rules if str(r.id) != str(rule_id)]
+        if len(updated_rules) == len(existing_rules):
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "rule_not_found", "message": "Schedule rule was not found"}},
+            )
+        updated_profile = profile_obj.model_copy(update={"schedules": updated_rules})
+        await _in_thread(require_configuration().update_profile, profile_id, profile=updated_profile)
+        await reconcile_profile_schedules()
+        return Response(status_code=204)
 
     @app.post("/api/content-profiles/{profile_id}/activate", response_model=NamedProfileResponse, tags=["settings"])
     async def activate_named_profile(profile_id: UUID) -> Any:
-        return await _in_thread(require_configuration().activate_profile, profile_id)
+        res = await _in_thread(require_configuration().activate_profile, profile_id, is_active=True)
+        await reconcile_profile_schedules()
+        return res
+
+    @app.post("/api/content-profiles/{profile_id}/deactivate", response_model=NamedProfileResponse, tags=["settings"])
+    async def deactivate_named_profile(profile_id: UUID) -> Any:
+        res = await _in_thread(require_configuration().deactivate_profile, profile_id)
+        await reconcile_profile_schedules()
+        return res
+
+    @app.post(
+        "/api/content-profiles/{profile_id}/toggle-active",
+        response_model=NamedProfileResponse,
+        tags=["settings"],
+    )
+    async def toggle_active_named_profile(profile_id: UUID, request: ProfileToggleActiveRequest) -> Any:
+        res = await _in_thread(require_configuration().activate_profile, profile_id, is_active=request.is_active)
+        await reconcile_profile_schedules()
+        return res
 
     @app.delete("/api/content-profiles/{profile_id}", status_code=204, tags=["settings"])
     async def delete_named_profile(profile_id: UUID) -> Response:
         await _in_thread(require_configuration().delete_profile, profile_id)
+        await reconcile_profile_schedules()
         return Response(status_code=204)
+
+    @app.get("/api/schedules", response_model=ProfileScheduleListResponse, tags=["settings"])
+    async def get_schedules() -> dict[str, Any]:
+        if schedule_repository is not None:
+            items = await _in_thread(schedule_repository.all_schedules)
+            return {"items": items}
+        return {"items": []}
 
     @app.get("/api/content-profile", response_model=ContentProfile, tags=["settings"])
     async def get_content_profile() -> dict[str, Any]:
@@ -626,6 +857,21 @@ def create_app(
             return JSONResponse(status_code=404, content=not_found)
         return await _stream_media_file(path, file_stat.st_size, "video/mp4", request)
 
+    @app.delete("/api/clips/{clip_id}", status_code=204, tags=["publishing"])
+    async def delete_clip(clip_id: UUID) -> Response:
+        repository = require_catalogue()
+        storage_key = await _in_thread(repository.delete_clip, clip_id)
+        if storage_key is None:
+            return JSONResponse(
+                status_code=404, content={"error": {"code": "clip_not_found", "message": "Clip was not found"}}
+            )
+        if storage_provider is not None:
+            try:
+                await storage_provider.delete(storage_key)
+            except Exception:
+                logger.warning("Failed to delete storage file for clip %s key %s", clip_id, storage_key)
+        return Response(status_code=204)
+
     @app.post("/api/render-revisions", status_code=201, tags=["quality"], response_model=RenderRevisionResponse)
     async def render_revision(request: SavedNewsRenderRequest) -> Any:
         if saved_news_renderer is None:
@@ -707,6 +953,18 @@ def create_app(
             raise RuntimeError("Analytics persistence is not configured")
         return {"items": await _in_thread(analytics.snapshots, publication_id)}
 
+    @app.get("/api/goals", response_model=GoalsResponse, tags=["metrics"])
+    async def get_goals() -> Any:
+        repository = require_catalogue()
+        now = datetime.now(UTC)
+        return await _in_thread(repository.monetization_goals, now)
+
+    @app.post("/api/goals/refresh", response_model=GoalsResponse, tags=["metrics"])
+    async def refresh_goals() -> Any:
+        repository = require_catalogue()
+        now = datetime.now(UTC)
+        return await _in_thread(repository.monetization_goals, now)
+
     def require_run_reader() -> RunReader:
         if run_reader is None:
             raise RuntimeError("Run persistence is not configured")
@@ -717,13 +975,16 @@ def create_app(
             raise RuntimeError("Run creation is not configured")
         return run_creator
 
-    async def create_run(trigger: RunTrigger, manual_url: str | None = None) -> Response | dict[str, str]:
+    async def create_run(
+        trigger: RunTrigger, manual_url: str | None = None, profile_id: UUID | None = None
+    ) -> Response | dict[str, str]:
         try:
             created = await _in_thread(
                 require_run_creator().create,
                 trigger,
                 manual_url=manual_url,
                 settings_snapshot=await effective_settings(),
+                profile_id=profile_id,
             )
         except ActiveRunConflict as exc:
             active_run_id = str(exc.active_run_id) if exc.active_run_id else None
@@ -745,8 +1006,8 @@ def create_app(
         return {"run_id": created["run_id"]}
 
     @app.post("/api/runs", response_model=RunCreatedResponse, status_code=202, tags=["runs"])
-    async def start_run_now() -> Response | dict[str, str]:
-        return await create_run(RunTrigger.RUN_NOW)
+    async def start_run_now(request: RunNowRequest | None = None) -> Response | dict[str, str]:
+        return await create_run(RunTrigger.RUN_NOW, profile_id=request.profile_id if request else None)
 
     @app.post("/api/runs/manual-url", response_model=RunCreatedResponse, status_code=202, tags=["runs"])
     async def start_manual_url(request: ManualURLRequest) -> Response | dict[str, str]:
@@ -755,7 +1016,7 @@ def create_app(
             await validate(request.url)
         except (UnsafeURL, ValueError) as exc:
             return JSONResponse(status_code=422, content={"error": {"code": "invalid_manual_url", "message": str(exc)}})
-        return await create_run(RunTrigger.MANUAL_URL, request.url)
+        return await create_run(RunTrigger.MANUAL_URL, request.url, request.profile_id)
 
     @app.post("/api/runs/{run_id}/continue", response_model=RunCreatedResponse, status_code=202, tags=["runs"])
     async def continue_failed_run(run_id: UUID) -> Any:
@@ -1158,7 +1419,7 @@ def settings_snapshot(settings: EnvironmentSettings) -> dict[str, Any]:
             "tail_seconds": 1.0,
             "narration_loudness_lufs": -14,
             "transition_seconds": 0.4,
-            "logo_file": "logo_letters.png",
+            "logo_file": "branding/inpulso_world/logo_letters.png",
             "logo_opacity": 0.7,
             "end_card_file": None,
         },

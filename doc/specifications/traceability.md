@@ -129,7 +129,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-357](10-composition.md) | Reproducibility | `composition` | Unit, Integration | CF-AC-012 | Not started |
 | [CF-REQ-358](10-composition.md) | Atomic output | `composition`, `infrastructure.media` | Unit, Integration | CF-AC-012 | Not started |
 | [CF-REQ-359](10-composition.md) | Composition failures | `composition`, `infrastructure.media` | Unit, Integration | CF-AC-012 | Not started |
-| [CF-REQ-360](10-composition.md) | Layered composition with cited-news date, wordmark and optional frozen three-second branded ending | `composition`, `production`, `workflow` | Unit, Integration | CF-AC-028, CF-AC-030 | In progress |
+| [CF-REQ-360](10-composition.md) | Layered composition with cited-news date, profile-scoped wordmark and reusable frozen three-second branded ending | `composition`, `production`, `workflow`, `infrastructure` | Unit, Integration | CF-AC-028, CF-AC-030 | In progress |
 | [CF-REQ-361](10-composition.md) | Saved-package preview and targeted rerender | `composition`, `assets`, `api`, `cli` | Unit, Integration, E2E | CF-AC-030 | In progress |
 | [CF-REQ-362](10-composition.md) | Platform-safe presentation variants | `composition`, `publishing` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-400](11-evaluation-and-retry.md) | Evaluation result structure | `evaluation` | Unit, Integration, E2E | CF-AC-008 | Not started |
@@ -173,7 +173,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-506](13-analytics.md) | Snapshot immutability | `analytics` | Unit, Integration | CF-AC-011 | Not started |
 | [CF-REQ-507](13-analytics.md) | Capability-aware engagement metrics | `analytics`, `publishing`, `frontend` | Unit, Contract, Vitest | CF-AC-032 | Not started |
 | [CF-REQ-508](13-analytics.md) | Versioned creative comparisons | `analytics`, `frontend` | Unit, Integration | CF-AC-032 | Not started |
-| [CF-REQ-550](14-content-profiles.md) | Named profiles with single active profile | `domain`, `api`, `infrastructure.db` | Unit, Integration | CF-AC-014 | Implemented |
+| [CF-REQ-550](14-content-profiles.md) | Named profiles, multiple activation and scoped accounts | `domain`, `api`, `infrastructure.db`, `publishing`, `analytics` | Unit, Integration | CF-AC-014 | Implemented |
 | [CF-REQ-551](14-content-profiles.md) | Profile validation | `domain`, `api` | Unit, Integration | CF-AC-014 | Implemented |
 | [CF-REQ-552](14-content-profiles.md) | Configurable duration policy | `domain`, `planning`, `production`, `evaluation` | Unit, Review | CF-AC-014 | Not started |
 | [CF-REQ-553](14-content-profiles.md) | Supported categories | `domain`, `api` | Unit, Integration | CF-AC-014 | Not started |
@@ -188,7 +188,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-605](15-ui-and-dashboard.md) | Asset library with inline media previews, storage locations and 20-per-page pagination | `frontend`, `api` | Vitest, Playwright | CF-AC-005 | In progress |
 | [CF-REQ-606](15-ui-and-dashboard.md) | Settings (collapsible groups, readable fixed-choice dropdowns, open-ended inputs, credential presence) | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
 | [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with saved-profile select, save-as-new, edit, activate and delete | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
-| [CF-REQ-608](15-ui-and-dashboard.md) | Run Now | `frontend` | Vitest, Playwright | CF-AC-013 | Not started |
+| [CF-REQ-608](15-ui-and-dashboard.md) | Run Now with explicit profile selection | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-609](15-ui-and-dashboard.md) | Manual URL input | `frontend` | Vitest, Playwright | CF-AC-015 | Not started |
 | [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (All/Published/Failed tabs, 20 per page, green Published badge) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-611](15-ui-and-dashboard.md) | Safe rendering of external text | `frontend` | Vitest, Playwright | CF-AC-018 | Not started |
@@ -196,7 +196,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-613](15-ui-and-dashboard.md) | Approval of pending Clips, one-per-row Review Board and paginated queue API | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-010 | In progress |
 | [CF-REQ-614](15-ui-and-dashboard.md) | Storyboard and version-bound quality review UI | `frontend`, `api` | Vitest, Playwright, Integration | CF-AC-030–031 | In progress |
 | [CF-REQ-650](16-scheduling-and-runs.md) | Run triggers | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
-| [CF-REQ-651](16-scheduling-and-runs.md) | Daily schedule | `workflow.scheduler` | Unit, Integration, E2E | CF-AC-016 | Not started |
+| [CF-REQ-651](16-scheduling-and-runs.md) | Independent local daily schedule rules | `workflow.scheduler`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | Implemented |
 | [CF-REQ-652](16-scheduling-and-runs.md) | Single active Run | `workflow`, `infrastructure.db` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-653](16-scheduling-and-runs.md) | Run snapshot | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-654](16-scheduling-and-runs.md) | Stage execution | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |

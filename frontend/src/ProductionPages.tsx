@@ -1,8 +1,8 @@
-import { ArrowUpRight, BarChart3, Check, ExternalLink, RefreshCw, Save, Settings2, X } from "lucide-react";
+import { AlertCircle, ArrowUpRight, BarChart3, Check, Clock, ExternalLink, Plus, RefreshCw, Save, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useParams } from "react-router-dom";
 
-import { ApiError, decideApproval, retryPublications, type BudgetSummary, type Clip, type ClipList, type JsonObject, updateContentProfile, updateSettings, createContentProfile, saveContentProfile, activateContentProfile, deleteContentProfile, type ContentProfileItem, type ContentProfileList } from "./api/client";
+import { ApiError, decideApproval, retryPublications, deleteClip, refreshGoals, type BudgetSummary, type Clip, type ClipList, type GoalsResponse, type PlatformGoal, type JsonObject, updateContentProfile, updateSettings, createContentProfile, saveContentProfile, activateContentProfile, deleteContentProfile, toggleActiveProfile, addProfileScheduleRule, updateProfileScheduleRule, deleteProfileScheduleRule, type ProfileScheduleItem, type ContentProfileItem, type ContentProfileList } from "./api/client";
 import { Collapsible } from "./Collapsible";
 import { Pagination } from "./Pagination";
 import { useResource } from "./hooks/useResource";
@@ -49,17 +49,240 @@ export function ProfilePage() {
   const [message, setMessage] = useState("");
   const items = resource.status === "success" ? resource.data.items : [];
   const selected = items.find((item) => item.id === selectedId) ?? items.find((item) => item.is_active) ?? items[0];
-  return <Page title="Content Profile" eyebrow="EDITORIAL / 06" lede="Manage saved editorial policies. Only the active profile is used by subsequent Runs." action={<IconButton label="Refresh Content Profile" onClick={reload} />}>
+  return <Page title="Content Profile" eyebrow="EDITORIAL / 06" lede="Manage saved editorial policies and centralized automation schedules. Multiple profiles can be active simultaneously, each running at its designated time." action={<IconButton label="Refresh Content Profile" onClick={reload} />}>
     {message && <p className="form-message" role="status">{message}</p>}
+    <CentralizedSchedulerSection key={items.map((item) => item.updated_at).join(",")} onScheduleChange={reload} />
     {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : <>
       <div className="profile-selector field"><label htmlFor="saved-profile">Saved profiles</label><select id="saved-profile" value={selected?.id ?? ""} onChange={(event) => { setSelectedId(event.target.value); setMessage(""); }}>{!items.length && <option value="">No saved profiles</option>}{items.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? " (active)" : ""}</option>)}</select></div>
-      {selected || active.status === "success" ? <ProfileEditor key={selected?.id ?? "new"} item={selected} initial={selected?.profile ?? (active.status === "success" ? active.data : {})} onSaved={(item, notice) => { setSelectedId(item?.id ?? ""); setMessage(notice); reload(); }} /> : active.status === "error" ? <ErrorMessage message={active.message} /> : <Loading />}
+      {selected || active.status === "success" ? <ProfileEditor key={`${selected?.id ?? "new"}-${selected?.updated_at ?? ""}`} item={selected} initial={selected?.profile ?? (active.status === "success" ? active.data : {})} onSaved={(item, notice) => { setSelectedId(item?.id ?? ""); setMessage(notice); reload(); }} /> : active.status === "error" ? <ErrorMessage message={active.message} /> : <Loading />}
     </>}
   </Page>;
 }
 
+function CentralizedSchedulerSection({ onScheduleChange }: { onScheduleChange?: () => void }) {
+  const [schedulesResource, reloadSchedules] = useResource<{ items: ProfileScheduleItem[] }>("/api/schedules", { intervalMs: 30_000 });
+  const rawItems = schedulesResource.status === "success" && Array.isArray(schedulesResource.data?.items) ? schedulesResource.data.items : [];
+  const items = rawItems.filter(Boolean);
+
+  // Group items by profile_id
+  const profilesMap: Record<string, { profile_id: string; profile_name: string; is_active: boolean; rules: ProfileScheduleItem[] }> = {};
+  for (const item of items) {
+    const pid = item.profile_id;
+    if (!profilesMap[pid]) {
+      profilesMap[pid] = {
+        profile_id: pid,
+        profile_name: item.profile_name,
+        is_active: item.is_active,
+        rules: [],
+      };
+    }
+    profilesMap[pid].rules.push(item);
+  }
+
+  return <section className="section-block form-section schedule-section" style={{ marginBottom: "2rem" }}>
+    <div className="section-head">
+      <div>
+        <div className="eyebrow">AUTOMATION & DISPATCH</div>
+        <h2>Centralized Schedules</h2>
+      </div>
+      <span className="privacy-note">LOCAL TIME · MULTI-DISPATCH</span>
+    </div>
+    <p className="form-message" style={{ margin: "0 0 1rem" }}>
+      Dynamic execution schedules for all profiles in your local system time. Add multiple daily dispatch runs per profile or toggle/remove them at any time.
+    </p>
+    {schedulesResource.status === "loading" ? <Loading /> : schedulesResource.status === "error" ? <ErrorMessage message={schedulesResource.message} /> : (
+      <div className="profile-schedules-list" style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+        {Object.keys(profilesMap).length === 0 ? <p className="privacy-note">No profiles configured.</p> : Object.values(profilesMap).map((group) => {
+          return (
+            <ProfileScheduleGroupCard
+              key={group.profile_id}
+              group={group}
+              onSaved={() => { reloadSchedules(); onScheduleChange?.(); }}
+            />
+          );
+        })}
+      </div>
+    )}
+  </section>;
+}
+
+function ProfileScheduleGroupCard({
+  group,
+  onSaved,
+}: {
+  group: { profile_id: string; profile_name: string; is_active: boolean; rules: ProfileScheduleItem[] };
+  onSaved: () => void;
+}) {
+  const [isActive, setIsActive] = useState(Boolean(group.is_active));
+  const [saving, setSaving] = useState(false);
+  const [newTime, setNewTime] = useState("06:00");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function handleToggleActive() {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const nextActive = !isActive;
+      await toggleActiveProfile(group.profile_id, nextActive);
+      setIsActive(nextActive);
+      setMessage(nextActive ? "Profile activated." : "Profile deactivated.");
+      onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to toggle profile activation");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAddRule() {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(newTime)) {
+      setError("Use HH:MM in 24-hour time.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await addProfileScheduleRule(group.profile_id, { local_time: newTime, enabled: true });
+      setMessage(`Added run at ${newTime}.`);
+      onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add schedule run");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUpdateRule(ruleId: string, updates: { local_time?: string; enabled?: boolean }) {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await updateProfileScheduleRule(group.profile_id, ruleId, updates);
+      setMessage("Schedule updated.");
+      onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update schedule rule");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteRule(ruleId: string) {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await deleteProfileScheduleRule(group.profile_id, ruleId);
+      setMessage("Schedule run removed.");
+      onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to remove schedule run");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div style={{ border: "1px solid var(--border-color, #2a2e39)", borderRadius: "8px", padding: "1.25rem", background: "var(--card-bg, rgba(255,255,255,0.02))" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.5rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <strong style={{ fontSize: "1.1rem" }}>{group.profile_name}</strong>
+        <span className={`table-status ${isActive ? "active" : "queued"}`}>{isActive ? "Active" : "Inactive"}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <button className={isActive ? "ghost-button" : "command-button"} style={{ fontSize: "0.8rem", padding: "4px 10px" }} disabled={saving} onClick={() => void handleToggleActive()}>
+          {isActive ? "Deactivate Profile" : "Activate Profile"}
+        </button>
+      </div>
+    </div>
+
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+      {group.rules.filter((rule) => rule.rule_id).map((rule) => {
+        const ruleId = rule.rule_id!;
+        const timeVal = rule.local_time ?? "";
+        const isEnabled = rule.enabled;
+        return (
+          <ScheduleRuleRow
+            key={`${ruleId}-${timeVal}-${isEnabled}`}
+            label={`${group.profile_name} ${timeVal}`}
+            timeVal={timeVal}
+            isEnabled={isEnabled}
+            dueAt={rule.due_at}
+            isActive={isActive}
+            disabled={saving}
+            onUpdate={(updates) => void handleUpdateRule(ruleId, updates)}
+            onDelete={() => void handleDeleteRule(ruleId)}
+          />
+        );
+      })}
+    </div>
+
+    <div style={{ marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border-color, rgba(255,255,255,0.06))", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+      <span style={{ fontSize: "0.85rem", opacity: 0.85 }}>Add Run Time:</span>
+      <input aria-label={`New Run time for ${group.profile_name}`} type="time" step={60} value={newTime} disabled={saving} onChange={(e) => setNewTime(e.target.value.slice(0, 5))} style={{ padding: "4px 8px", fontSize: "0.85rem" }} />
+      <button aria-label={`Add schedule for ${group.profile_name}`} className="command-button" style={{ fontSize: "0.8rem", padding: "4px 10px", display: "flex", alignItems: "center", gap: "4px" }} disabled={saving} onClick={() => void handleAddRule()}>
+        <Plus size={14} /> Add Schedule
+      </button>
+      {message && <span style={{ color: "#4ade80", fontSize: "0.85rem", marginLeft: "auto" }}>{message}</span>}
+      {error && <span role="alert" style={{ color: "#f87171", fontSize: "0.85rem", marginLeft: "auto" }}>{error}</span>}
+    </div>
+  </div>;
+}
+
+function ScheduleRuleRow({
+  label,
+  timeVal,
+  isEnabled,
+  dueAt,
+  isActive,
+  disabled,
+  onUpdate,
+  onDelete,
+}: {
+  label: string;
+  timeVal: string;
+  isEnabled: boolean;
+  dueAt: string | null;
+  isActive: boolean;
+  disabled: boolean;
+  onUpdate: (updates: { local_time?: string; enabled?: boolean }) => void;
+  onDelete: () => void;
+}) {
+  const [currentTime, setCurrentTime] = useState(timeVal);
+  const [error, setError] = useState("");
+
+  return <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(255,255,255,0.03)", padding: "0.5rem 0.75rem", borderRadius: "6px", gap: "1rem", flexWrap: "wrap" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.88rem", cursor: "pointer" }}>
+        <input aria-label={`Enable schedule ${label}`} type="checkbox" checked={isEnabled} disabled={disabled} onChange={(e) => onUpdate({ enabled: e.target.checked })} />
+        Enabled
+      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+        <Clock size={15} style={{ opacity: 0.7 }} />
+        <input aria-label={`Run time ${label}`} type="time" step={60} value={currentTime} disabled={disabled} onChange={(e) => { setCurrentTime(e.target.value.slice(0, 5)); setError(""); }} style={{ padding: "3px 6px", fontSize: "0.85rem" }} />
+        <button className="ghost-button" aria-label={`Save time ${label}`} disabled={disabled || currentTime === timeVal} onClick={() => {
+          if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(currentTime)) { setError("Use HH:MM in 24-hour time."); return; }
+          onUpdate({ local_time: currentTime });
+        }}>Save time</button>
+        {error && <span className="field-error" role="alert">{error}</span>}
+      </div>
+      <span style={{ fontSize: "0.8rem", color: "var(--muted-color, #888)" }}>
+        {dueAt && isEnabled && isActive ? `Next: ${formatDate(dueAt)}` : "Inactive or Disabled"}
+      </span>
+    </div>
+    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+      <button className="icon-button" aria-label={`Delete schedule ${label}`} title="Delete this schedule run" disabled={disabled} onClick={onDelete} style={{ color: "var(--danger-color, #f87171)" }}>
+        <Trash2 size={15} />
+      </button>
+    </div>
+  </div>;
+}
+
 function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?: ContentProfileItem; onSaved: (item: ContentProfileItem | undefined, notice: string) => void }) {
-  const [draft, setDraft] = useState(initial as { [key: string]: EditorValue });
+  const brandingFolder = text(initial.branding_folder);
+  const [draft, setDraft] = useState({ ...initial, env_prefix: initial.env_prefix ?? null } as { [key: string]: EditorValue });
   const [name, setName] = useState(item?.name ?? "");
   const [newName, setNewName] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -68,7 +291,7 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteButton = useRef<HTMLButtonElement>(null);
 
-  async function perform(action: "save" | "create" | "activate" | "delete") {
+  async function perform(action: "save" | "create" | "activate" | "deactivate" | "delete") {
     setMessage("");
     const validation = action === "save" || action === "create" ? validateProfile(draft) : {};
     if ((action === "create" && !newName.trim()) || (action === "save" && item && !name.trim())) validation.form = "Enter a profile name.";
@@ -83,8 +306,9 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
         else await updateContentProfile(draft as JsonObject);
       }
       if (action === "activate" && item) saved = await activateContentProfile(item.id);
+      if (action === "deactivate" && item) saved = await toggleActiveProfile(item.id, false);
       if (action === "delete" && item) { await deleteContentProfile(item.id); saved = undefined; }
-      onSaved(saved, action === "activate" ? "Content Profile activated. New Runs will use this profile." : action === "delete" ? "Content Profile deleted." : "Content Profile saved.");
+      onSaved(saved, action === "activate" ? "Content Profile activated. New Runs will use this profile." : action === "deactivate" ? "Content Profile deactivated." : action === "delete" ? "Content Profile deleted." : "Content Profile saved.");
     } catch (error: unknown) {
       setErrors(Object.fromEntries(Object.entries(serverErrors(error)).map(([path, value]) => [path.replace(/^profile\./, ""), value])));
       setMessage(error instanceof Error ? error.message : "Content Profile could not be updated");
@@ -98,7 +322,13 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
       <button className="command-button" disabled={saving || item.is_active} onClick={() => void perform("activate")}>Activate selected profile</button>
       <button ref={deleteButton} className="danger-button" disabled={saving || item.is_active} title={item.is_active ? "The active profile cannot be deleted" : "Delete this saved profile"} onClick={() => setConfirmDelete(true)}>Delete profile</button>
     </div>}
-    <ObjectEditor value={draft} onChange={setDraft} errors={errors} />
+    {item && brandingFolder && <div className="field">
+      <label htmlFor="profile-branding-folder">Branding folder</label>
+      <input id="profile-branding-folder" value={`branding/${brandingFolder}`} readOnly />
+      <p className="field-help">Place logo_letters.png and logo_badge.png here, then run from the repository root:</p>
+      <code>{`uv run clipfactory branding branding/${brandingFolder}`}</code>
+    </div>}
+    <ObjectEditor value={Object.fromEntries(Object.entries(draft).filter(([key]) => key !== "schedule" && key !== "schedules" && key !== "branding_folder"))} onChange={(next) => setDraft({ ...draft, ...next })} errors={errors} />
     {errors.form && <p className="field-error" role="alert">{errors.form}</p>}
     <FormFooter saving={saving} message={message} onSave={() => void perform("save")} />
     <div className="profile-create"><div className="field"><label htmlFor="new-profile-name">New profile name</label><input id="new-profile-name" value={newName} onChange={(event) => setNewName(event.target.value)} /></div><button className="ghost-button" disabled={saving} onClick={() => void perform("create")}>Save as new profile</button></div>
@@ -113,7 +343,6 @@ export function SettingsPage() {
   const settings = record(payload.settings);
   return <Page title="Settings" eyebrow="SYSTEM / 07" lede="Runtime policy and provider readiness. Credentials remain environment-only." action={<IconButton label="Refresh settings" onClick={reload} />}>
     {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : <>
-      <Collapsible title="Schedule"><ScheduleSection /></Collapsible>
       <Collapsible title="Providers"><section className="section-block provider-section">
         <div className="section-head"><div><div className="eyebrow">CREDENTIAL PRESENCE</div><h2>Providers</h2></div><span className="privacy-note">VALUES NEVER DISPLAYED</span></div>
         <div className="provider-grid">{providers.map((provider) => <div className="provider-row" key={text(provider.provider)}><span>{humanize(text(provider.provider))}</span><span className={`credential ${provider.credentials_configured === true ? "configured" : "missing"}`}>{provider.credentials_configured === true ? <Check size={13} /> : <X size={13} />}{provider.credentials_configured === true ? "Configured" : "Not configured"}</span></div>)}</div>
@@ -121,66 +350,6 @@ export function SettingsPage() {
       <div className="settings-stack">{Object.entries(settings).filter(([, value]) => isEditorObject(value)).sort(([left], [right]) => Number(right === "environment") - Number(left === "environment")).map(([section, value]) => <Collapsible key={section} title={humanize(section)}><SettingsSection name={section} initial={record(value)} onSaved={reload} /></Collapsible>)}</div>
     </>}
   </Page>;
-}
-
-function ScheduleSection() {
-  const [resource, reload] = useResource<unknown>("/api/content-profile");
-  const profile = resource.status === "success" ? record(resource.data) : {};
-  if (!isEditorObject(profile.schedule)) return null;
-  return <ScheduleEditor key={JSON.stringify(profile.schedule)} profile={profile} onSaved={reload} />;
-}
-
-function timezoneOptions(current: string): string[] {
-  const supported = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
-  return [...new Set([current, "UTC", ...supported].filter(Boolean))].sort((left, right) => left.localeCompare(right));
-}
-
-function ScheduleEditor({ profile, onSaved }: { profile: JsonObject; onSaved: () => void }) {
-  const initial = record(profile.schedule);
-  const [enabled, setEnabled] = useState(initial.enabled !== false);
-  const [localTime, setLocalTime] = useState(text(initial.local_time) || "05:00");
-  const [timezone, setTimezone] = useState(text(initial.timezone) || "Europe/Lisbon");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [summary, reloadSummary] = useResource<{ next_scheduled_run_at?: string | null }>("/api/dashboard/summary", { intervalMs: 30_000 });
-  const next = summary.status === "success" ? summary.data.next_scheduled_run_at : null;
-
-  async function save() {
-    const validation: Record<string, string> = {};
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(localTime)) validation["schedule.local_time"] = "Use HH:MM in 24-hour time.";
-    setErrors(validation); setMessage("");
-    if (Object.keys(validation).length) return;
-    setSaving(true);
-    try {
-      await updateContentProfile({ ...profile, schedule: { ...initial, enabled, local_time: localTime, timezone } });
-      setMessage(enabled ? `Daily Run set for ${localTime} (${timezone}). The next Run updates within 30 seconds.` : "Daily Run disabled.");
-      onSaved(); reloadSummary();
-    } catch (error: unknown) {
-      setErrors(serverErrors(error));
-      setMessage(error instanceof Error ? error.message : "Schedule could not be saved");
-    } finally { setSaving(false); }
-  }
-
-  return <section className="section-block form-section schedule-section">
-    <div className="section-head"><div><div className="eyebrow">AUTOMATION</div><h2>Schedule</h2></div><span className="privacy-note">NEXT RUN {next ? formatDate(next).toUpperCase() : "N/A"}</span></div>
-    <div className="object-editor">
-      <div className="field"><label htmlFor="schedule-enabled">Daily Run</label><input id="schedule-enabled" type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></div>
-      <div className="field">
-        <label htmlFor="schedule-local-time">Run Time</label>
-        <input id="schedule-local-time" type="time" step={60} value={localTime} disabled={!enabled} aria-invalid={Boolean(errors["schedule.local_time"])} onChange={(event) => setLocalTime(event.target.value.slice(0, 5))} />
-        {errors["schedule.local_time"] && <span className="field-error" role="alert">{errors["schedule.local_time"]}</span>}
-      </div>
-      <div className="field">
-        <label htmlFor="schedule-timezone">Timezone</label>
-        <select id="schedule-timezone" value={timezone} disabled={!enabled} aria-invalid={Boolean(errors["schedule.timezone"])} onChange={(event) => setTimezone(event.target.value)}>
-          {timezoneOptions(timezone).map((zone) => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}
-        </select>
-        {errors["schedule.timezone"] && <span className="field-error" role="alert">{errors["schedule.timezone"]}</span>}
-      </div>
-    </div>
-    <FormFooter saving={saving} message={message} onSave={() => void save()} />
-  </section>;
 }
 
 function SettingsSection({ name, initial, onSaved }: { name: string; initial: JsonObject; onSaved: () => void }) {
@@ -220,7 +389,7 @@ export function ClipsPage() {
   const [budget] = useResource<BudgetSummary>("/api/budget");
   const currency = budget.status === "success" ? budget.data.currency : null;
   return <Page title="Clips" headingExtra={<div className="clip-tabs" role="tablist" aria-label="Clip status">{(["all", "published", "failed"] as const).map((value) => <button id={`clip-tab-${value}`} key={value} role="tab" tabIndex={filter === value ? 0 : -1} onKeyDown={(event) => { const keys = ["ArrowLeft", "ArrowRight", "Home", "End"]; if (!keys.includes(event.key)) return; event.preventDefault(); const values = ["all", "published", "failed"] as const; const index = values.indexOf(value); const next = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3; const chosen = values[next]!; setFilter(chosen); setOffset(0); document.getElementById(`clip-tab-${chosen}`)?.focus(); }} aria-selected={filter === value} aria-controls="clip-results" className={`filter-button${filter === value ? " selected" : ""}`} onClick={() => { setFilter(value); setOffset(0); }}>{humanize(value)}</button>)}</div>} eyebrow="PUBLISHING / 04" lede="Approved Clips and platform Publications." action={<IconButton label="Refresh Clips" onClick={reload} />}>
-    <div id="clip-results" role="tabpanel" aria-labelledby={`clip-tab-${filter}`}>{clips.status === "loading" ? <Loading /> : clips.status === "error" ? <ErrorMessage message={clips.message} /> : clips.data.items.length ? <div className="clip-list">{clips.data.items.map((clip) => <ClipCard key={clip.id} clip={clip} currency={currency} />)}</div> : <Empty message="No Clips match this filter." />}</div>
+    <div id="clip-results" role="tabpanel" aria-labelledby={`clip-tab-${filter}`}>{clips.status === "loading" ? <Loading /> : clips.status === "error" ? <ErrorMessage message={clips.message} /> : clips.data.items.length ? <div className="clip-list">{clips.data.items.map((clip) => <ClipCard key={clip.id} clip={clip} currency={currency} onModified={reload} />)}</div> : <Empty message="No Clips match this filter." />}</div>
     {clips.status === "success" && <Pagination offset={offset} total={clips.data.total ?? clips.data.items.length} onChange={setOffset} label="Clips" />}
     <div className="platform-strip" aria-label="Supported publication platforms"><span>YouTube</span><span>Instagram</span><span>Facebook</span><span className="deferred">TikTok · deferred</span></div>
   </Page>;
@@ -259,60 +428,235 @@ export function PendingApprovals() {
   </section>;
 }
 
-export function PublishesPage() {
-  const [offset, setOffset] = useState(0);
-  const [resource, reload] = useResource<ClipList>(`/api/clips/pending-approval?limit=20&offset=${offset}`);
+export function GoalsPage() {
+  const [resource, reload] = useResource<GoalsResponse>("/api/goals");
+  const [refreshing, setRefreshing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    setMessage(null);
+    try {
+      await refreshGoals();
+      reload();
+      setMessage("Monetization goals refreshed.");
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Failed to refresh goals");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const goal = resource.status === "success" ? resource.data.goal : null;
+
+  return (
+    <Page
+      title="Obtain Monetization"
+      eyebrow="TARGETS / 06"
+      lede="Milestones and policy restrictions required to unlock monetization across eligible platforms."
+      action={
+        <div className="board-head-actions">
+          {goal && <span className="event-count">UPDATED {formatDate(goal.updated_at)}</span>}
+          <button
+            className="icon-button"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            title="Update goals"
+            aria-label="Update goals"
+          >
+            <RefreshCw size={17} className={refreshing ? "spinning" : ""} />
+          </button>
+        </div>
+      }
+    >
+      {message && <p className="form-message" role="status">{message}</p>}
+      {resource.status === "loading" ? (
+        <Loading />
+      ) : resource.status === "error" ? (
+        <ErrorMessage message={resource.message} />
+      ) : goal ? (
+        <div className="goals-board">
+          <div className="goals-grid">
+            {goal.platforms.map((platform) => (
+              <PlatformGoalCard key={platform.platform} platform={platform} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Empty message="No monetization goals configured." />
+      )}
+    </Page>
+  );
+}
+
+function PlatformGoalCard({ platform }: { platform: PlatformGoal }) {
+  return (
+    <article className="section-block goal-card" aria-label={`${platform.name} Monetization Goal`}>
+      <div className="goal-card-header">
+        <div>
+          <div className="eyebrow">{platform.name.toUpperCase()}</div>
+          <h2>{platform.program}</h2>
+        </div>
+        <span className={`table-status ${platform.status === "deferred" ? "deferred" : "published"}`}>
+          {platform.status === "deferred" ? "Deferred" : `${platform.progress_pct}% Complete`}
+        </span>
+      </div>
+
+      <div className="goal-overall-progress">
+        <div className="goal-progress-bar">
+          <div
+            className="goal-progress-fill"
+            style={{ width: `${Math.min(100, Math.max(0, platform.progress_pct))}%` }}
+          />
+        </div>
+        <div className="goal-progress-meta">
+          <span>{platform.published_clips} {platform.published_clips === 1 ? "Clip published" : "Clips published"}</span>
+          <span>{platform.progress_pct}% toward partner qualification</span>
+        </div>
+      </div>
+
+      <div className="goal-metrics-section">
+        <div className="section-subhead">Milestones & Requirements</div>
+        <div className="goal-metrics-grid">
+          {platform.metrics.map((metric) => (
+            <div className="goal-metric-box" key={metric.id}>
+              <div className="metric-header">
+                <span className="metric-label">{metric.label}</span>
+                <span className="metric-fraction">
+                  {displayMetric(metric.current)} / {displayMetric(metric.target)} {metric.unit}
+                </span>
+              </div>
+              <div className="goal-mini-bar">
+                <div
+                  className="goal-mini-fill"
+                  style={{ width: `${Math.min(100, Math.max(0, metric.pct))}%` }}
+                />
+              </div>
+              <div className="metric-footer">
+                <span>{metric.pct}%</span>
+                {metric.target_tier1 ? (
+                  <span className="tier1-hint">Tier 1: {displayMetric(metric.target_tier1)}</span>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="goal-restrictions-section">
+        <div className="section-subhead">Restrictions & Policy Checklist</div>
+        <ul className="goal-restrictions-list">
+          {platform.restrictions.map((restriction) => (
+            <li className="goal-restriction-item" key={restriction.id}>
+              <div className="restriction-status-col">
+                {restriction.status === "compliant" && (
+                  <span className="badge-compliant" title="Compliant"><ShieldCheck size={16} /></span>
+                )}
+                {restriction.status === "verified" && (
+                  <span className="badge-verified" title="Verified"><Check size={16} /></span>
+                )}
+                {restriction.status === "pending_action" && (
+                  <span className="badge-pending" title="Action Required"><AlertCircle size={16} /></span>
+                )}
+                {restriction.status === "deferred" && (
+                  <span className="badge-deferred" title="Deferred"><Clock size={16} /></span>
+                )}
+              </div>
+              <div className="restriction-copy">
+                <strong>{restriction.title}</strong>
+                <p>{restriction.description}</p>
+              </div>
+              <div className="restriction-badge-col">
+                <span className={`restriction-badge ${restriction.status}`}>
+                  {restriction.status === "compliant"
+                    ? "Compliant"
+                    : restriction.status === "verified"
+                    ? "Verified"
+                    : restriction.status === "pending_action"
+                    ? "Action Needed"
+                    : "Deferred"}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </article>
+  );
+}
+
+function ClipActions({ clip, onModified }: { clip: Clip; onModified?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
-  async function decide(clip: Clip, decision: "approve" | "reject") {
-    setBusy(clip.id); setMessage("");
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleDecision(decision: "approve" | "reject") {
+    setBusy(decision);
+    setMessage(null);
     try {
       await decideApproval(clip.id, { decision });
-      setMessage(`${clip.story_title || "Clip"} ${decision === "approve" ? "approved for publication" : "rejected"}.`);
-      setOffset(0); reload();
+      setMessage(`${clip.story_title || "Clip"} ${decision === "approve" ? "approved" : "rejected"}.`);
+      onModified?.();
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : "Approval decision failed");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
   }
-  const count = resource.status === "success" ? (resource.data.total ?? resource.data.items.length) : null;
-  return <Page title="Review Board" eyebrow="PUBLISHING / REVIEW BOARD" lede="Clips awaiting your decision before they are published to the enabled platforms." action={<div className="board-head-actions">{count !== null && <span className="event-count">{count} AWAITING</span>}<button className="ghost-button" onClick={reload} aria-label="Refresh review board"><RefreshCw size={14} />Refresh</button></div>}>
-    {message && <p className="form-message" role="status">{message}</p>}
-    {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : resource.data.items.length ? <div className="review-board">{resource.data.items.map((clip) => <ReviewCard key={clip.id} clip={clip} busy={busy === clip.id} onDecide={(decision) => void decide(clip, decision)} />)}</div> : <div className="section-block"><Empty message="Nothing to review. Clips awaiting approval will appear here." /></div>}
-    {resource.status === "success" && <Pagination offset={offset} total={resource.data.total ?? resource.data.items.length} onChange={setOffset} label="Clips awaiting approval" />}
-  </Page>;
-}
 
-function ReviewCard({ clip, busy, onDecide }: { clip: Clip; busy: boolean; onDecide: (decision: "approve" | "reject") => void }) {
-  const metadata = record(clip.social_metadata);
-  const description = text(metadata.description);
-  const hashtags = Array.isArray(metadata.hashtags) ? metadata.hashtags.map(text).filter(Boolean) : [];
-  const sources = Array.isArray(metadata.source_attributions) ? metadata.source_attributions.map(text).filter(Boolean) : [];
-  const title = clip.story_title || "Untitled Clip";
-  return <article className="review-card" aria-label={`Review ${title}`}>
-    <div className="review-media"><ClipPreview clip={clip} /></div>
-    <div className="review-body">
-      <div className="review-meta"><span>{Math.round(clip.preview.duration_seconds)}s</span><span>{formatDate(clip.created_at)}</span></div>
-      <h2>{title}</h2>
-      <p className="review-caption">{description || "No caption recorded."}</p>
-      {hashtags.length > 0 && <div className="review-tags" aria-label="Hashtags">{hashtags.map((tag) => <span key={tag}>#{tag.replace(/^#/, "")}</span>)}</div>}
-      {sources.length > 0 && <details className="review-sources"><summary>{sources.length} {sources.length === 1 ? "Source" : "Sources"}</summary><ul>{sources.map((source) => <li key={source}>{source}</li>)}</ul></details>}
-      <div className="review-platforms">{clip.publications.length ? clip.publications.map((publication) => <span key={publication.id}>{platformLabel(publication.platform)} · {humanize(publication.mode ?? "")}</span>) : <span>No platform targets</span>}</div>
-      {clip.auto_publish_due_at ? <Countdown dueAt={clip.auto_publish_due_at} /> : <span className="approval-countdown">Awaiting your decision</span>}
-      <div className="review-actions">
-        <button className="command-button" disabled={busy} aria-label={`Approve ${title}`} onClick={() => onDecide("approve")}><Check size={15} />Approve</button>
-        <button className="danger-button" disabled={busy} aria-label={`Reject ${title}`} onClick={() => onDecide("reject")}><X size={15} />Reject</button>
-        <NavLink className="text-link" to={`/runs/${clip.run_id}`}>Run <ArrowUpRight size={14} /></NavLink>
+  async function handleDelete() {
+    if (!window.confirm(`Are you sure you want to delete "${clip.story_title || "Untitled Clip"}"?`)) {
+      return;
+    }
+    setBusy("delete");
+    setMessage(null);
+    try {
+      await deleteClip(clip.id);
+      onModified?.();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Delete failed");
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="clip-actions-bar" aria-label={`Actions for ${clip.story_title || "Clip"}`}>
+      <div className="clip-actions-buttons">
+        <button
+          className="command-button action-approve"
+          disabled={busy !== null}
+          aria-label={`Approve ${clip.story_title || "Clip"}`}
+          onClick={() => void handleDecision("approve")}
+        >
+          <Check size={14} />Approve
+        </button>
+        <button
+          className="danger-button action-reject"
+          disabled={busy !== null}
+          aria-label={`Reject ${clip.story_title || "Clip"}`}
+          onClick={() => void handleDecision("reject")}
+        >
+          <X size={14} />Reject
+        </button>
+        <button
+          className="danger-button action-delete"
+          disabled={busy !== null}
+          aria-label={`Delete ${clip.story_title || "Clip"}`}
+          onClick={() => void handleDelete()}
+        >
+          <Trash2 size={14} />Delete
+        </button>
       </div>
+      {message && <span className="clip-action-feedback" role="status">{message}</span>}
     </div>
-  </article>;
+  );
 }
 
-function ClipCard({ clip, currency }: { clip: Clip; currency: string | null }) {
-  return <article className="section-block clip-card"><ClipPreview clip={clip} /><div className="clip-card-copy"><div className="section-head"><div><span className={`table-status ${clip.status}`}>{humanize(clip.status)}</span><h2><NavLink to={`/clips/${clip.id}`}>{clip.story_title || "Untitled Clip"}</NavLink></h2></div><span className="table-date">{formatDate(clip.created_at)}</span></div><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s</span><span>{clip.preview.width}×{clip.preview.height}</span></div><PublicationList clip={clip} /></div></article>;
+function ClipCard({ clip, currency, onModified }: { clip: Clip; currency: string | null; onModified?: () => void }) {
+  return <article className="section-block clip-card"><ClipPreview clip={clip} /><div className="clip-card-copy"><div className="section-head"><div><span className={`table-status ${clip.status}`}>{humanize(clip.status)}</span><h2><NavLink to={`/clips/${clip.id}`}>{clip.story_title || "Untitled Clip"}</NavLink></h2></div><span className="table-date">{formatDate(clip.created_at)}</span></div><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s</span><span>{clip.preview.width}×{clip.preview.height}</span></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onModified} /></div></article>;
 }
 
 function ClipDetail({ clip, currency, onChanged }: { clip: Clip; currency: string | null; onChanged: () => void }) {
-  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /></section></div>;
+  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onChanged} /></section></div>;
 }
 
 function RetryPublishButton({ clip, onRetried }: { clip: Clip; onRetried: () => void }) {
@@ -403,6 +747,24 @@ function ObjectEditor({ value, onChange, errors, prefix = "" }: { value: { [key:
         {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}
       </div>;
     }
+    if (path === "env_prefix") {
+      return <div className="field" key={key}>
+        <label htmlFor={id}>Account Env Prefix</label>
+        <input
+          id={id}
+          type="text"
+          value={typeof item === "string" ? item : ""}
+          placeholder="e.g. FOOTBALL (optional)"
+          aria-describedby={`${id}-help`}
+          onChange={(event) => {
+            const val = event.target.value.trim().toUpperCase();
+            onChange({ ...value, [key]: val || null });
+          }}
+        />
+        <small id={`${id}-help`}>Account scope (e.g. <code>FOOTBALL_INSTAGRAM_ACCESS_TOKEN</code>). A configured prefix uses only its own credentials. Leave blank for the default accounts.</small>
+        {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}
+      </div>;
+    }
     if (path === "environment.wan_max_generations_per_run") {
       return <div className="field" key={key}>
         <label htmlFor={id}>{humanize(key)}</label>
@@ -442,6 +804,7 @@ function Empty({ message }: { message: string }) { return <div className="empty-
 
 function validateProfile(profile: { [key: string]: EditorValue }): Record<string, string> {
   const errors: Record<string, string> = {};
+  if (text(profile.env_prefix) && !/^[A-Z][A-Z0-9_]{0,63}$/.test(text(profile.env_prefix))) errors.env_prefix = "Use letters, digits and underscores, starting with a letter (up to 64 characters).";
   const categories = ["general", "technology", "ai", "finance", "business", "science", "gaming", "sports", "entertainment", "politics"];
   if (!categories.includes(text(profile.category))) errors.category = "Choose a supported category.";
   try { new Intl.Locale(text(profile.language)); } catch { errors.language = "Use a valid BCP 47 language tag."; }

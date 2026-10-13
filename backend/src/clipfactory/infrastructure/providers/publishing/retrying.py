@@ -33,14 +33,14 @@ class RetryingPublisher:
         self.platform = publisher.platform
         self.name = publisher.name
 
-    def is_configured(self) -> bool:
-        return self._publisher.is_configured()
+    def is_configured(self, env_prefix: str | None = None) -> bool:
+        return self._publisher.is_configured(env_prefix)
 
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult:
         return await self._retry(lambda: self._publisher.publish(request, clip_file))
 
-    async def fetch_metrics(self, platform_post_id: str) -> PlatformMetrics:
-        return await self._retry(lambda: self._publisher.fetch_metrics(platform_post_id))
+    async def fetch_metrics(self, platform_post_id: str, env_prefix: str | None = None) -> PlatformMetrics:
+        return await self._retry(lambda: self._publisher.fetch_metrics(platform_post_id, env_prefix))
 
     async def _retry(self, call: Callable[[], Awaitable[ResultT]]) -> ResultT:
         for attempt in range(1, self._max_attempts + 1):

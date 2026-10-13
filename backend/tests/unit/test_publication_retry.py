@@ -91,7 +91,7 @@ class FakePublisher:
         self.outcome = outcome or PublicationResult("post-1", "https://example/post-1")
         self.requests: list[PublicationRequest] = []
 
-    def is_configured(self) -> bool:
+    def is_configured(self, env_prefix: str | None = None) -> bool:
         return True
 
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult:
@@ -101,7 +101,7 @@ class FakePublisher:
             raise self.outcome
         return self.outcome
 
-    async def fetch_metrics(self, platform_post_id: str) -> PlatformMetrics:
+    async def fetch_metrics(self, platform_post_id: str, env_prefix: str | None = None) -> PlatformMetrics:
         del platform_post_id
         return PlatformMetrics()
 

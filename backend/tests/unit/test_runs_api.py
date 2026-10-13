@@ -2,15 +2,16 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from clipfactory.api.app import create_app
-from clipfactory.domain.models import RunTrigger
+from clipfactory.domain.models import ContentProfile, RunTrigger
 from clipfactory.infrastructure.db.base import Base
+from clipfactory.infrastructure.db.models import ContentProfileRow
 from clipfactory.infrastructure.db.repositories import RunRepository
 from clipfactory.infrastructure.db.session import create_session_factory
 from clipfactory.infrastructure.http import SafeHTTPClient
@@ -72,6 +73,59 @@ def test_run_now_api_creates_run_and_rejects_second_active_run(run_client) -> No
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "active_run_conflict"
     assert conflict.json()["error"]["details"]["active_run_id"] == created.json()["run_id"]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-608")
+@pytest.mark.req("CF-REQ-609")
+@pytest.mark.req("CF-REQ-653")
+@pytest.mark.parametrize("manual", [False, True])
+def test_manual_dispatch_selects_profile_without_activating_it(run_client, manual: bool) -> None:
+    client, repository = run_client
+    profile = ContentProfile(name="Football", is_active=False, env_prefix="FOOTBALL", schedules=[])
+    other = ContentProfile(name="World", is_active=True)
+    with repository.sessions.begin() as session:
+        for value in (profile, other):
+            session.add(
+                ContentProfileRow(
+                    id=value.id,
+                    name=value.name,
+                    is_active=value.is_active,
+                    value=value.model_dump(mode="json"),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+    payload = {"profile_id": str(profile.id)}
+    endpoint = "/api/runs"
+    if manual:
+        endpoint += "/manual-url"
+        payload["url"] = "https://news.example/article"
+    response = client.post(endpoint, json=payload)
+    assert response.status_code == 202
+    run = repository.get(UUID(response.json()["run_id"]))
+    assert run["profile_id"] == str(profile.id)
+    assert run["profile_snapshot"]["name"] == "Football"
+    assert run["profile_snapshot"]["env_prefix"] == "FOOTBALL"
+    assert run["profile_snapshot"]["schedules"] == []
+    with repository.sessions() as session:
+        assert session.get(ContentProfileRow, profile.id).is_active is False
+        assert session.get(ContentProfileRow, other.id).is_active is True
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-608")
+@pytest.mark.req("CF-REQ-609")
+@pytest.mark.parametrize("endpoint", ["/api/runs", "/api/runs/manual-url"])
+def test_manual_dispatch_missing_profile_cannot_fall_back(run_client, endpoint: str) -> None:
+    client, repository = run_client
+    payload = {"profile_id": str(uuid4())}
+    if endpoint.endswith("manual-url"):
+        payload["url"] = "https://news.example/article"
+    response = client.post(endpoint, json=payload)
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "profile_not_found"
+    assert repository.active() is None
+    assert client.post(endpoint, json={**payload, "profile_id": "invalid"}).status_code == 422
 
 
 @pytest.mark.unit

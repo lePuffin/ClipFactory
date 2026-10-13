@@ -432,6 +432,56 @@ def test_clip_pagination_counts_filtered_rows_before_slicing(catalogue_client) -
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-610")
+def test_delete_clip_removes_clip_and_associated_entities(catalogue_client) -> None:
+    client, _sessions, _approved_clip_id, pending_clip_id = catalogue_client
+
+    delete_resp = client.delete(f"/api/clips/{pending_clip_id}")
+    assert delete_resp.status_code == 204
+
+    # Verify 404 when querying deleted clip
+    get_resp = client.get(f"/api/clips/{pending_clip_id}")
+    assert get_resp.status_code == 404
+
+    # Verify 404 on deleting non-existent clip
+    del_nonexistent = client.delete(f"/api/clips/{UUID(int=999)}")
+    assert del_nonexistent.status_code == 404
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-601")
+def test_goals_endpoint_returns_platform_milestones_and_restrictions(catalogue_client) -> None:
+    client, _sessions, _approved_clip_id, _pending_clip_id = catalogue_client
+
+    response = client.get("/api/goals")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["goal"]["id"] == "monetization"
+    assert data["goal"]["title"] == "Obtain Monetization"
+    platforms = {p["platform"]: p for p in data["goal"]["platforms"]}
+    assert "youtube" in platforms
+    assert "facebook" in platforms
+    assert "instagram" in platforms
+    assert "tiktok" in platforms
+
+    # YouTube has views from seed (900 views)
+    yt = platforms["youtube"]
+    assert yt["published_clips"] == 1
+    metrics = {m["id"]: m for m in yt["metrics"]}
+    assert metrics["shorts_views"]["current"] == 900
+    assert metrics["shorts_views"]["target"] == 10_000_000
+
+    # Restrictions include EU AI disclosure
+    restrictions = {r["id"]: r for r in yt["restrictions"]}
+    assert restrictions["ai_disclosure"]["status"] == "compliant"
+
+    # Refresh endpoint also succeeds
+    refresh = client.post("/api/goals/refresh")
+    assert refresh.status_code == 200
+    assert refresh.json()["goal"]["id"] == "monetization"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-610")
 @pytest.mark.req("CF-REQ-613")
 @pytest.mark.parametrize("path", ["/api/clips", "/api/clips/pending-approval"])
 @pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=bad", "offset=bad"])

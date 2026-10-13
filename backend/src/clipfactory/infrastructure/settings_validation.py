@@ -92,10 +92,12 @@ class PublishingSettings(BaseModel):
 
 class CompositionSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
-    logo_file: str = Field(default="logo_letters.png", min_length=1)
+    logo_file: str = Field(default="branding/inpulso_world/logo_letters.png", min_length=1)
     logo_opacity: float = Field(default=0.7, gt=0, le=1, allow_inf_nan=False)
     end_card_file: str | None = Field(default=None, min_length=1)
     tail_seconds: float = Field(default=1, ge=0, allow_inf_nan=False)
+    ai_disclosure_tag: bool = True
+    ai_disclosure_text: str = Field(default="AI Generated", min_length=1, max_length=40)
 
     @model_validator(mode="after")
     def end_card_fits_tail(self) -> CompositionSettings:

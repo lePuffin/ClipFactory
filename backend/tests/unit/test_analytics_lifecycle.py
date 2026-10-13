@@ -14,6 +14,7 @@ from clipfactory.workflow.lifecycle_scheduler import LifecycleScheduler
 class MetricStore:
     def __init__(self, metrics_settings: dict[str, Any]) -> None:
         self.settings = metrics_settings
+        self.env_prefix: str | None = None
         self.saved: dict[str, Any] | None = None
 
     def metric_context(self, publication_id: UUID) -> dict[str, Any]:
@@ -22,6 +23,7 @@ class MetricStore:
             "platform": "youtube",
             "platform_post_id": "post-1",
             "analytics": self.settings,
+            "env_prefix": self.env_prefix,
         }
 
     def save_metric(
@@ -47,11 +49,14 @@ class MetricsPublisher:
 
     def __init__(self, metrics: PlatformMetrics) -> None:
         self.metrics = metrics
+        self.scopes: list[str | None] = []
 
-    def is_configured(self) -> bool:
+    def is_configured(self, env_prefix: str | None = None) -> bool:
+        self.scopes.append(env_prefix)
         return True
 
-    async def fetch_metrics(self, platform_post_id: str) -> PlatformMetrics:
+    async def fetch_metrics(self, platform_post_id: str, env_prefix: str | None = None) -> PlatformMetrics:
+        self.scopes.append(env_prefix)
         assert platform_post_id == "post-1"
         return self.metrics
 
@@ -99,6 +104,20 @@ async def test_metric_collection_keeps_unavailable_values_null() -> None:
     assert store.saved["shares"] is None
     assert store.saved["estimated_revenue"] is None
     assert store.saved["revenue_basis"] is None
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-550")
+@pytest.mark.req("CF-REQ-500")
+@pytest.mark.asyncio
+async def test_metrics_preserve_publication_account_scope() -> None:
+    store = MetricStore({})
+    store.env_prefix = "FOOTBALL"
+    publisher = MetricsPublisher(PlatformMetrics(views=25))
+    collector = MetricCollector(store, {Platform.YOUTUBE: publisher})
+    now = datetime(2026, 10, 13, tzinfo=UTC)
+    await collector.collect(uuid4(), "1h", now, now)
+    assert publisher.scopes == ["FOOTBALL", "FOOTBALL"]
 
 
 class Tasks:

@@ -19,7 +19,7 @@ LLMOutputMode = Literal["json_schema", "json_object", "prompt_json"]
 
 class EnvironmentSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
         hide_input_in_errors=True,
@@ -100,6 +100,7 @@ class EnvironmentSettings(BaseSettings):
     instagram_user_id: str | None = Field(default=None, alias="INSTAGRAM_USER_ID")
     tiktok_client_key: SecretStr | None = Field(default=None, alias="TIKTOK_CLIENT_KEY")
     tiktok_client_secret: SecretStr | None = Field(default=None, alias="TIKTOK_CLIENT_SECRET")
+    tiktok_access_token: SecretStr | None = Field(default=None, alias="TIKTOK_ACCESS_TOKEN")
     facebook_access_token: SecretStr | None = Field(default=None, alias="FACEBOOK_ACCESS_TOKEN")
     facebook_page_id: SecretStr | None = Field(default=None, alias="FACEBOOK_PAGE_ID")
 
@@ -162,7 +163,10 @@ class EnvironmentSettings(BaseSettings):
             "unsplash": self.unsplash_access_key is not None,
             "higgsfield": self.higgsfield_api_key is not None,
             "instagram": self.instagram_access_token is not None and self.instagram_user_id is not None,
-            "tiktok": self.tiktok_client_key is not None and self.tiktok_client_secret is not None,
+            "tiktok": (
+                (self.tiktok_client_key is not None and self.tiktok_client_secret is not None)
+                or self.tiktok_access_token is not None
+            ),
             "facebook": self.facebook_access_token is not None and self.facebook_page_id is not None,
             "youtube": self.youtube_client_secrets_file is not None,
         }

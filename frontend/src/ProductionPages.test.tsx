@@ -11,6 +11,26 @@ describe("ClipFactory production pages", () => {
     vi.restoreAllMocks();
   });
 
+  it("CF-REQ-360 CF-REQ-607 shows the selected profile's stable branding folder and command", async () => {
+    const world = { id: "world-id", name: "World", is_active: true, updated_at: "2026-10-13", profile: { name: "World", language: "en", branding_folder: "global-news-english" } };
+    const profiles = [
+      world,
+      { id: "football-id", name: "Football", is_active: false, updated_at: "2026-10-13", profile: { name: "Football", language: "en", branding_folder: "football-news-english" } },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/content-profiles" ? { items: profiles } :
+      String(input) === "/api/schedules" ? { items: [] } : world.profile
+    ), { status: 200 })));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={["/profile"]}><App /></MemoryRouter>);
+    const folder = await screen.findByLabelText("Branding folder");
+    expect(folder).toHaveValue("branding/global-news-english");
+    expect(folder).toHaveAttribute("readonly");
+    await user.selectOptions(screen.getByLabelText("Saved profiles"), "football-id");
+    expect(screen.getByLabelText("Branding folder")).toHaveValue("branding/football-news-english");
+    expect(screen.getByText("uv run clipfactory branding branding/football-news-english")).toBeInTheDocument();
+  });
+
   it("CF-REQ-502 CF-REQ-503 CF-REQ-504 CF-REQ-505 CF-REQ-603 renders analytics without inventing missing metrics", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       period: "7d",
@@ -72,6 +92,32 @@ describe("ClipFactory production pages", () => {
     expect(screen.getByText("VALUES NEVER DISPLAYED")).toBeInTheDocument();
   });
 
+  it("CF-REQ-550 CF-REQ-551 saves an account prefix without exposing credentials", async () => {
+    const profile = {
+      name: "Football", category: "sports", language: "en", platforms: ["instagram"],
+      duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 },
+      output: { width: 720, height: 1280, fps: 30 },
+      schedule: { enabled: true, local_time: "06:00", timezone: "Europe/Lisbon" },
+      schedules: [], research: { min_sources: 1, preferred_independent_sources: 3, max_candidate_articles: 20 },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") return new Response("{}", { status: 200 });
+      if (String(input) === "/api/content-profiles" || String(input) === "/api/schedules") return new Response('{"items":[]}', { status: 200 });
+      return new Response(JSON.stringify(profile), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={["/profile"]}><App /></MemoryRouter>);
+    const prefix = await screen.findByLabelText("Account Env Prefix");
+    await user.type(prefix, "football");
+    expect(prefix).toHaveValue("FOOTBALL");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true));
+    const saved = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(saved?.[1]?.body))).toEqual({ ...profile, env_prefix: "FOOTBALL" });
+    expect(screen.queryByLabelText(/access token|password|secret/i)).not.toBeInTheDocument();
+  });
+
   it("CF-REQ-759 saves Wan FPS and inference steps as numeric settings", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "PUT") return new Response(JSON.stringify({}), { status: 200 });
@@ -94,34 +140,50 @@ describe("ClipFactory production pages", () => {
     expect(JSON.parse(String(update?.[1]?.body))).toEqual({ wan_fps: 8, wan_inference_steps: 25 });
   });
 
-  it("CF-REQ-606 CF-REQ-651 edits the daily Run schedule and preserves the rest of the profile", async () => {
+  it("CF-REQ-550 CF-REQ-651 adds, edits, disables and deletes independent local schedules", async () => {
     const profile = {
-      niche: "world news", tone: "calm",
+      name: "Football", category: "sports", language: "en",
       schedule: { enabled: true, local_time: "05:00", timezone: "Europe/Lisbon" },
     };
+    let rules = [{ rule_id: "rule-1", local_time: "06:00", enabled: true }];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === "PUT") return new Response(JSON.stringify({}), { status: 200 });
       const url = String(input);
+      if (url.startsWith("/api/content-profiles/profile-1/schedules") && init?.method) {
+        const payload = init.body ? JSON.parse(String(init.body)) : {};
+        if (init.method === "POST") rules.push({ rule_id: "rule-2", ...payload });
+        if (init.method === "PUT") rules = rules.map((rule) => url.endsWith(rule.rule_id) ? { ...rule, ...payload } : rule);
+        if (init.method === "DELETE") rules = rules.filter((rule) => !url.endsWith(rule.rule_id));
+        return init.method === "DELETE" ? new Response(null, { status: 204 }) : new Response("{}", { status: 200 });
+      }
+      if (url === "/api/schedules") return new Response(JSON.stringify({ items: rules.map((rule) => ({
+        ...rule, profile_id: "profile-1", profile_name: "Football", is_active: true,
+        schedule: {}, task_id: null, due_at: null, status: "idle",
+      })) }), { status: 200 });
+      if (url === "/api/content-profiles") return new Response(JSON.stringify({ items: [{
+        id: "profile-1", name: "Football", is_active: true, updated_at: "2026-10-13", profile,
+      }] }), { status: 200 });
       if (url === "/api/content-profile") return new Response(JSON.stringify(profile), { status: 200 });
-      if (url === "/api/dashboard/summary") return new Response(JSON.stringify({ next_scheduled_run_at: "2026-10-08T04:00:00Z" }), { status: 200 });
-      return new Response(JSON.stringify({ providers: [], settings: {} }), { status: 200 });
+      return new Response("{}", { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
-    const time = await screen.findByLabelText("Run Time");
-    expect(time).toHaveValue("05:00");
-    expect(screen.getByRole("combobox", { name: "Timezone" })).toHaveValue("Europe/Lisbon");
-    expect(await screen.findByText(/NEXT RUN 8 OCT 2026/)).toBeInTheDocument();
+    render(<MemoryRouter initialEntries={["/profile"]}><App /></MemoryRouter>);
+    const time = await screen.findByLabelText("Run time Football 06:00");
+    expect(screen.queryByLabelText("Timezone")).not.toBeInTheDocument();
     fireEvent.change(time, { target: { value: "07:30" } });
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Save time Football 06:00" }));
+    await screen.findByLabelText("Run time Football 07:30");
     const update = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
-    expect(update?.[0]).toBe("/api/content-profile");
-    expect(JSON.parse(String(update?.[1]?.body))).toEqual({
-      ...profile, schedule: { enabled: true, local_time: "07:30", timezone: "Europe/Lisbon" },
-    });
-    expect(await screen.findByText(/Daily Run set for 07:30/)).toBeInTheDocument();
+    expect(update?.[0]).toBe("/api/content-profiles/profile-1/schedules/rule-1");
+    expect(JSON.parse(String(update?.[1]?.body))).toEqual({ local_time: "07:30" });
+    fireEvent.change(screen.getByLabelText("New Run time for Football"), { target: { value: "18:00" } });
+    await user.click(screen.getByRole("button", { name: "Add schedule for Football" }));
+    await screen.findByLabelText("Run time Football 18:00");
+    await user.click(screen.getByRole("checkbox", { name: "Enable schedule Football 18:00" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Enable schedule Football 18:00" })).not.toBeChecked());
+    await user.click(screen.getByRole("button", { name: "Delete schedule Football 07:30" }));
+    await waitFor(() => expect(screen.queryByLabelText("Run time Football 07:30")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Run time Football 18:00")).toBeInTheDocument();
   });
 
   it("CF-REQ-606 CF-REQ-752 uses fixed-choice dropdowns and preserves open-ended settings", async () => {
@@ -264,8 +326,8 @@ describe("ClipFactory production pages", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/clips/clip-1/approval", expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "approve" }) })));
   });
 
-  it("CF-REQ-613 shows only Clips awaiting approval on the Review Board and removes a decided Clip", async () => {
-    let pending = true;
+  it("CF-REQ-613 provides individual clip approve, reject, and delete actions on each clip", async () => {
+    let deleted = false;
     const clip = {
       id: "clip-9", run_id: "run-9", status: "approved", story_title: "Board fixture", created_at: "2026-10-01T10:00:00Z", cost_total: "0.10",
       social_metadata: { description: "Leaders met to agree a ceasefire.", hashtags: ["Ceasefire", "#WorldNews"], source_attributions: ["Reuters: https://reuters.example/a"] },
@@ -273,28 +335,27 @@ describe("ClipFactory production pages", () => {
       auto_publish_due_at: null, publications: [{ id: "pub-9", platform: "instagram", status: "awaiting_approval", mode: "live" }],
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === "POST") { pending = false; return new Response(JSON.stringify({ clip_id: "clip-9", decision: "reject", already_resolved: false }), { status: 200 }); }
-      if (String(input) === "/api/clips/pending-approval?limit=20&offset=0") return new Response(JSON.stringify({ items: pending ? [clip] : [] }), { status: 200 });
-      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (init?.method === "DELETE") { deleted = true; return new Response(null, { status: 204 }); }
+      if (init?.method === "POST") { return new Response(JSON.stringify({ clip_id: "clip-9", decision: "approve", already_resolved: false }), { status: 200 }); }
+      if (String(input).startsWith("/api/clips?")) return new Response(JSON.stringify({ items: deleted ? [] : [clip], total: deleted ? 0 : 1 }), { status: 200 });
+      return new Response(JSON.stringify({ currency: "EUR" }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
-    render(<MemoryRouter initialEntries={["/publishes"]}><App /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/clips"]}><App /></MemoryRouter>);
 
-    expect(screen.getByRole("link", { name: /Review Board/ })).toHaveAttribute("href", "/publishes");
-    const card = await screen.findByRole("article", { name: "Review Board fixture" });
-    expect(card).toHaveTextContent("Leaders met to agree a ceasefire.");
-    expect(card).toHaveTextContent("#Ceasefire");
-    expect(card).toHaveTextContent("#WorldNews");
-    expect(card).toHaveTextContent("Instagram · Live");
-    expect(card).toHaveTextContent("Awaiting your decision");
-    expect(card).toHaveTextContent("64s");
-    expect(screen.getByText("1 AWAITING")).toBeInTheDocument();
+    await screen.findByRole("link", { name: "Board fixture" });
+    expect(screen.getByRole("button", { name: "Approve Board fixture" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject Board fixture" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Board fixture" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reject Board fixture" }));
-    expect(await screen.findByText("Board fixture rejected.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/clips/clip-9/approval", expect.objectContaining({ method: "POST", body: JSON.stringify({ decision: "reject" }) }));
-    expect(await screen.findByText("Nothing to review. Clips awaiting approval will appear here.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Approve Board fixture" }));
+    expect(await screen.findByText("Board fixture approved.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/clips/clip-9/approval", expect.objectContaining({ method: "POST" }));
+
+    await user.click(screen.getByRole("button", { name: "Delete Board fixture" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/clips/clip-9", expect.objectContaining({ method: "DELETE" })));
   });
 
   it("CF-REQ-610 CF-REQ-612 lists Clips with previews, cost, Publications, links, and metrics", async () => {

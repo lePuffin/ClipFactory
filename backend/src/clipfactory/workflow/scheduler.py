@@ -27,6 +27,7 @@ class ScheduledRunCreator(Protocol):
         *,
         manual_url: str | None,
         settings_snapshot: dict[str, Any],
+        profile_id: UUID | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -53,12 +54,18 @@ class DailyRunScheduler:
         task = await asyncio.to_thread(self._tasks.claim_due, now)
         if task is not None:
             skipped_reason = None
+            profile_id = (
+                UUID(str(task["payload"]["profile_id"]))
+                if task.get("payload") and "profile_id" in task["payload"]
+                else None
+            )
             try:
                 await asyncio.to_thread(
                     self._runs.create,
                     RunTrigger.SCHEDULED,
                     manual_url=None,
                     settings_snapshot=self._settings_snapshot(),
+                    profile_id=profile_id,
                 )
             except ActiveRunConflict as exc:
                 active = str(exc.active_run_id) if exc.active_run_id else "unknown"

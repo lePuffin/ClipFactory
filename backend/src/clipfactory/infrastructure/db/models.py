@@ -39,15 +39,7 @@ class ContentProfileRow(Base):
     value: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    __table_args__ = (
-        Index(
-            "uq_content_profile_active",
-            "is_active",
-            unique=True,
-            postgresql_where=text("is_active"),
-            sqlite_where=text("is_active"),
-        ),
-    )
+    __table_args__ = (Index("ix_content_profile_is_active", "is_active"),)
 
 
 class AppSettingsRow(Base):

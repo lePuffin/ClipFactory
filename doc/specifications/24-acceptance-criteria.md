@@ -139,7 +139,7 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 - Continue Run and Stop dispatch on a single click, without confirmation
   panels; pending actions are disabled and rejected requests show errors.
 
-- With a fake clock, a Run starts at 05:00 in the profile timezone exactly once; a missed schedule within grace runs at startup; concurrent triggers produce one Run and a 409; a process kill after `write_script` resumes at `plan_visuals`; stage timeouts fail the Run with `stage_timeout`.
+- With a fake clock, a Run starts at 05:00 in backend host local time exactly once; multiple rules per active profile remain independent; editing/disabling/deleting a rule affects only that rule and deleting the last leaves no schedule; DST gaps/overlaps run once; a missed schedule within grace runs at startup; concurrent triggers produce one Run and a 409; a process kill after `write_script` resumes at `plan_visuals`; stage timeouts fail the Run with `stage_timeout`.
 - **Requirements:** CF-REQ-650–660
 - **Verified by:** integration + E2E-5
 
@@ -260,7 +260,7 @@ The following scenarios extend the baseline by owner direction on 2026-10-06. Th
   and a `8 Oct 2026`-format date from the latest cited Source publication date,
   not the render date. Unknown dates warn and remain absent; archive years
   remain deferred. Saved-package revisions preserve the persistent identity.
-- The owner installation uses the tightly cropped `logo_letters.png` wordmark.
+- The owner installation uses the tightly cropped `branding/inpulso_world/logo_letters.png` wordmark.
   When configured, the last three reserved tail seconds show the frozen local
   centered globe end card and "Follow for more", with its original synthesized
   news sting and baked-in TTS saying "Keep up with the world. Follow InPulso.",
@@ -268,6 +268,16 @@ The following scenarios extend the baseline by owner direction on 2026-10-06. Th
   reuse the card without an additional TTS request. Saved
   revisions preserve the frozen end-card hash; disabled configurations retain
   the ordinary tail. Missing or invalid enabled cards fail explicitly.
+- Creating a profile creates its readable name-derived branding folder.
+  Colliding slugs allocate separate directories; submitted paths cannot
+  redirect ownership. Existing UUID-folder migration preserves all assets
+  and prior snapshot paths. Git ignores personal branding media.
+  Two profiles'
+  Runs snapshot distinct wordmark/end-card paths regardless of activation,
+  name changes or dispatch method. No global-branding fallback occurs.
+  A missing end card is built from that profile's badge and voice once and
+  reused on subsequent Runs; missing inputs fail without borrowing assets.
+  Deleting a profile retains its branding and historical frozen Run inputs.
 - **Requirements:** CF-REQ-152, CF-REQ-220, CF-REQ-302, CF-REQ-360–362, CF-REQ-412
 - **Verified by:** integration + E2E + zero-provider-call assertions
 

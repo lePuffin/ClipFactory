@@ -179,9 +179,14 @@ async def test_persistent_logo_and_latest_cited_news_date(tmp_path: Path, has_da
         70,
         {"logo_file": str(logo), "logo_opacity": 0.7},
     )
-    assert len(overlays) == (2 if has_date else 1)
+    assert len(overlays) == (3 if has_date else 2)
     brand = overlays[0]
     assert (brand.x, brand.y, brand.width, brand.height) == (584, 24, 112, 56)
+    ai_tag = overlays[-1]
+    assert recorded[-1]["kind"] == "ai_disclosure"
+    assert recorded[-1]["text"] == "AI Generated"
+    assert ai_tag.x == 24
+    assert ai_tag.y > 1150
     for overlay in overlays:
         assert (overlay.start_seconds, overlay.end_seconds, overlay.fade_seconds) == (0, 70, 0)
         assert overlay.path.is_file()
@@ -262,7 +267,7 @@ def test_end_card_requires_reserved_tail() -> None:
 def test_owner_wordmark_crops_padding_and_preserves_white_letters() -> None:
     import io
 
-    source = Path(__file__).resolve().parents[3] / "logo_letters.png"
+    source = Path(__file__).resolve().parents[3] / "branding/inpulso_world/logo_letters.png"
     content, width, height = render_brand_mark(source, 112, 0.7)
     assert width == 112
     assert 25 <= height <= 30

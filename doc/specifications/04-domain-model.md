@@ -58,7 +58,7 @@ Canonical requirements: [14-content-profiles.md](14-content-profiles.md).
 | --- | --- | --- |
 | id | UUID | |
 | name | str | Unique |
-| is_active | bool | Exactly one active profile in v1.0 |
+| is_active | bool | Multiple profiles may be active |
 | language | str | BCP 47 tag, e.g. `en` |
 | category | enum `ContentCategory` | `general`, `technology`, `ai`, `finance`, `business`, `science`, `gaming`, `sports`, `entertainment`, `politics` |
 | topics | list[str] | Topics to prefer |
@@ -71,6 +71,9 @@ Canonical requirements: [14-content-profiles.md](14-content-profiles.md).
 | visual_style | `VisualStyle` | |
 | platforms | list[enum `Platform`] | `youtube`, `instagram`, `tiktok`, `facebook`; may be empty |
 | schedule | `Schedule` | |
+| schedules | list[`ScheduleRule`] or null | null preserves the legacy daily time; empty means no scheduled Runs |
+| env_prefix | str or null | Uppercase account credential scope; null selects global credentials |
+| branding_folder | str or null | Server-assigned readable directory name under branding; stable on rename, null before legacy initialization |
 | research | `ResearchPolicy` | |
 | music | `MusicPolicy` | |
 | generation | `GenerationPolicy` | Ordered generation providers |
@@ -88,6 +91,8 @@ Value objects:
   `TTSProvider`; `words_per_minute` is the planning estimate.
 - **VisualStyle** `{description: str, caption_style: str, motion_intensity: enum(low|medium|high), allow_generated_media: bool}`.
 - **Schedule** `{enabled: bool, local_time: "HH:MM", timezone: IANA name}`.
+- **ScheduleRule** `{id: UUID, local_time: "HH:MM", enabled: bool}` —
+  independent daily occurrence in the backend host's local timezone.
 - **ResearchPolicy** `{max_candidate_articles, min_sources, preferred_independent_sources, max_article_age_hours, allowed_publishers?, blocked_publishers}`.
 - **MusicPolicy** `{enabled: bool, mood_tags: list[str], energy: enum(low|medium|high)?, ducked_level_db: float, unducked_level_db: float}` — levels relative to normalised narration (CF-REQ-321).
 - **GenerationPolicy** `{image_providers: list[str], video_providers: list[str]}` —

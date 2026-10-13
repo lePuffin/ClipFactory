@@ -132,7 +132,14 @@ class RunCreatorFake:
     def __init__(self) -> None:
         self.snapshots: list[dict[str, Any]] = []
 
-    def create(self, trigger: Any, *, manual_url: str | None, settings_snapshot: dict[str, Any]) -> dict[str, Any]:
+    def create(
+        self,
+        trigger: Any,
+        *,
+        manual_url: str | None,
+        settings_snapshot: dict[str, Any],
+        profile_id: UUID | None = None,
+    ) -> dict[str, Any]:
         self.snapshots.append(settings_snapshot)
         return {"run_id": str(uuid4())}
 

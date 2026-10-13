@@ -47,7 +47,12 @@ from clipfactory.infrastructure.providers.media_sources import (
     WikimediaCommonsMediaSource,
 )
 from clipfactory.infrastructure.providers.news.rss import RssNewsSource
-from clipfactory.infrastructure.providers.publishing import FacebookPublisher, InstagramPublisher, YouTubePublisher
+from clipfactory.infrastructure.providers.publishing import (
+    FacebookPublisher,
+    InstagramPublisher,
+    TikTokPublisher,
+    YouTubePublisher,
+)
 from clipfactory.infrastructure.providers.publishing.retrying import RetryingPublisher
 from clipfactory.infrastructure.providers.transcription.whisper_local import WhisperLocalTranscriptionProvider
 from clipfactory.infrastructure.providers.tts.google import GoogleTTSProvider
@@ -83,7 +88,8 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
     configured = settings or EnvironmentSettings()
     engine = create_database_engine(configured)
     sessions = create_session_factory(engine)
-    run_repository = RunRepository(sessions)
+    branding_root = Path(__file__).resolve().parents[3] / "branding"
+    run_repository = RunRepository(sessions, branding_root=branding_root)
     asset_repository = AssetRepository(sessions)
     publishing_repository = PublishingRepository(sessions)
     catalogue_repository = CatalogueRepository(sessions)
@@ -91,7 +97,9 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
     production_repository = ProductionRepository(sessions)
     research_repository = ResearchRepository(sessions)
     schedule_repository = DailyScheduleRepository(sessions)
-    configuration_repository = ConfigurationRepository(sessions, clock=lambda: datetime.now(UTC))
+    configuration_repository = ConfigurationRepository(
+        sessions, clock=lambda: datetime.now(UTC), branding_root=branding_root
+    )
     storage_provider = LocalStorageProvider(configured.data_dir)
     http_provider = SafeHTTPClient()
     # Providers read this copy so each Run's saved settings apply without touching the .env baseline.
@@ -145,6 +153,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
         Platform.YOUTUBE: YouTubePublisher(configured),
         Platform.INSTAGRAM: InstagramPublisher(configured),
         Platform.FACEBOOK: FacebookPublisher(configured),
+        Platform.TIKTOK: TikTokPublisher(configured),
     }
     selected_publishers = {
         platform: RetryingPublisher(publisher)
@@ -234,6 +243,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         nonlocal lifecycle
+        await asyncio.to_thread(configuration_repository.initialize_branding)
         async with open_postgres_checkpointer(configured.database_url.get_secret_value()) as checkpointer:
             application.state.checkpointer = checkpointer
             graph = build_workflow(stage_executor, checkpointer=checkpointer, stage_observer=run_repository)
@@ -307,6 +317,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
         catalogue=catalogue_repository,
         budget_reader=catalogue_repository,
         dashboard_reader=catalogue_repository,
+        schedule_repository=schedule_repository,
         saved_news_renderer=saved_news_renderer,
         render_revision_reader=render_revision_repository,
         continue_run=continue_run,

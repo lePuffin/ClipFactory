@@ -40,9 +40,10 @@ class MetricCollector:
         context = await asyncio.to_thread(self._store.metric_context, publication_id)
         platform = Platform(context["platform"])
         publisher = self._publishers.get(platform)
-        if publisher is None or not publisher.is_configured():
+        env_prefix = context.get("env_prefix")
+        if publisher is None or not publisher.is_configured(env_prefix):
             raise RuntimeError(f"{platform.value} metrics provider is not configured")
-        metrics = await publisher.fetch_metrics(context["platform_post_id"])
+        metrics = await publisher.fetch_metrics(context["platform_post_id"], env_prefix)
         analytics = context["analytics"]
         estimate = metrics.estimated_revenue
         basis = "platform_reported_estimate" if estimate is not None else None

@@ -116,6 +116,13 @@ def main(argv: Sequence[str] | None = None, *, dependencies: CliDependencies | N
     render_parser.add_argument("recipe", type=Path)
     audio_parser = subparsers.add_parser("import-audio", help="import a licensed music/SFX manifest")
     audio_parser.add_argument("manifest", type=Path)
+    branding_parser = subparsers.add_parser("branding", help="create reusable profile branding from its logos")
+    branding_parser.add_argument("folder", type=Path, help="folder containing logo_letters.png and logo_badge.png")
+    branding_parser.add_argument("--text", default="Follow for more.", help="spoken outro line (keep it brief)")
+    branding_parser.add_argument("--voice-id", default="en-US-Chirp3-HD-Leda")
+    branding_parser.add_argument("--language", default="en")
+    branding_parser.add_argument("--font", type=Path, help="font file; defaults to the installed caption font")
+    branding_parser.add_argument("--force", action="store_true", help="regenerate the voice, poster and video")
     wan_parser = subparsers.add_parser("wan-test", help="test only local Wan; no server, Run, database or cloud calls")
     wan_parser.add_argument("--prompt", required=True)
     wan_parser.add_argument("--output", required=True, type=Path)
@@ -177,6 +184,29 @@ def main(argv: Sequence[str] | None = None, *, dependencies: CliDependencies | N
         return 1
 
     try:
+        if args.command == "branding":
+            from clipfactory.infrastructure.media.branding_command import generate_profile_branding
+            from clipfactory.infrastructure.media.runner import MediaRunner
+            from clipfactory.infrastructure.providers.tts.google import GoogleTTSProvider
+
+            try:
+                generated = asyncio.run(
+                    generate_profile_branding(
+                        args.folder,
+                        font=args.font or settings.data_dir / "fonts/NotoSans-Bold.ttf",
+                        tts=GoogleTTSProvider(settings),
+                        runner=MediaRunner(settings.ffmpeg_path, settings.ffprobe_path),
+                        text=args.text,
+                        voice_id=args.voice_id,
+                        language=args.language,
+                        force=args.force,
+                    )
+                )
+            except (ProviderError, MediaProcessError, OSError, ValueError) as exc:
+                print(f"Branding generation failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+                return 1
+            print(f"{'Created' if generated else 'Reused'} branding in {args.folder.resolve()}", flush=True)
+            return 0
         if args.command == "wan-test":
             try:
                 if not 0 <= args.seed < 2**32:

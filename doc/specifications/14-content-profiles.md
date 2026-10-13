@@ -19,43 +19,62 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
 | visual_style | Visual plan prompt, caption style preset, generation permission (07, 08, 09) |
 | platforms | Publishing targets (12) |
 | schedule | Daily Run time (16) |
+| schedules | Independent daily rules in backend host local time (16); empty disables scheduling |
+| env_prefix | Account credential scope for publishing and metric collection (12, 13) |
 | research | Candidate limits and source thresholds (05) |
 | music | Music selection and mix (09) |
 
 ## Requirements
 
-### CF-REQ-550 — Single active profile
+### CF-REQ-550 — Saved content profiles and independent multi-profile scheduling
 
-- **Description:** Exactly one Content Profile shall be active in v1.0. The
-  owner may store multiple uniquely named profiles in the existing ID-keyed
-  table, without migrating Runs. Names contain 1–160 characters after
-  trimming surrounding whitespace and cannot be blank. Stored ID, name, activation and update
-  time are authoritative over those fields in submitted profile JSON.
+- **Description:** Content Profiles shall support saving named profiles, multiple
+  concurrent active profiles, and independent scheduled execution times per profile
+  (owner-approved extension, 2026-10-13). The owner may store multiple uniquely named
+  profiles in the ID-keyed table. Names contain 1–160 characters after trimming
+  surrounding whitespace and cannot be blank. Stored ID, name, activation status and
+  update time are authoritative over those fields in submitted profile JSON.
 - **Behaviour:** `GET /api/content-profiles` returns `{"items": [{"id", "name",
   "is_active", "updated_at", "profile": ContentProfile}]}`. Creation via
   `POST /api/content-profiles` accepts `{name, profile, activate: false}` and
   returns the item with 201 and a new ID. `PUT /api/content-profiles/{id}`
   accepts optional `name` and/or `profile` and returns the item.
-  `POST /api/content-profiles/{id}/activate` activates that item and atomically
-  deactivates others. `DELETE /api/content-profiles/{id}` returns 204 for an
-  inactive profile; deleting the active profile returns 409 with error code
-  `active_profile_delete_forbidden`. Missing IDs return 404 `profile_not_found`;
-  duplicate names return 409 `profile_name_conflict`, using the standard error
-  envelope. Existing `GET/PUT /api/content-profile` continue to read/replace
-  the active profile; edits and activation never alter existing Run snapshots.
-  Deleting an inactive profile physically removes its row. Prior Runs retain
-  their immutable `profile_snapshot`; their nullable `profile_id` reference
-  becomes null through `ON DELETE SET NULL` (owner-approved retention decision,
-  2026-10-11). No hidden tombstone is stored. Profile fields and the single-active
-  unique index need no migration; this Run foreign-key change does.
+  `POST /api/content-profiles/{id}/activate` activates that item.
+  `POST /api/content-profiles/{id}/deactivate` deactivates that item.
+  `POST /api/content-profiles/{id}/toggle-active` accepts `{"is_active": bool}`.
+  `PUT /api/content-profiles/{id}/schedule` updates schedule settings and reconciles tasks.
+  `GET /api/schedules` returns centralized execution schedule records for all profiles.
+  `POST /api/content-profiles/{id}/schedules` adds a rule; `PUT/DELETE
+  /api/content-profiles/{id}/schedules/{rule_id}` edits/removes one rule.
+  Unknown rule IDs return 404 `rule_not_found` without changing other rules.
+  Optional `env_prefix` selects account environment variables, for example
+  `FOOTBALL_INSTAGRAM_ACCESS_TOKEN`. When set, only that scope's credentials
+  and OAuth files may be used; missing credentials fail as `not_configured`,
+  never falling back to another account. Unset prefixes preserve global
+  credentials. Publication retries and metrics use the original Run snapshot.
+  `DELETE /api/content-profiles/{id}` returns 204 for an inactive profile; deleting an
+  active profile returns 409 with error code `active_profile_delete_forbidden`. Missing IDs
+  return 404 `profile_not_found`; duplicate names return 409 `profile_name_conflict`,
+  using the standard error envelope. Existing `GET/PUT /api/content-profile` continue to
+  read/replace the active profile for backward compatibility; edits and activation never
+  alter existing Run snapshots. Prior Runs retain their immutable `profile_snapshot`;
+  their nullable `profile_id` reference becomes null through `ON DELETE SET NULL`.
+  Creation also provisions the stable readable branding folder described
+  in CF-REQ-360; rename/deletion retain that folder and historical inputs.
+  `branding_folder` is server-assigned and cannot be changed by submitted
+  profile JSON; copying a profile allocates a separate folder.
 - **Acceptance:**
-  - Activating profile B deactivates profile A in the same transaction.
+  - Multiple active profiles may be stored concurrently with index `ix_content_profile_is_active`.
+  - Daily scheduler reconciles independent pending tasks for each active profile.
   - Every Run retains the complete profile snapshot it used; when that saved
     profile is deleted, only its live reference becomes null.
-  - Creating an inactive profile leaves the active profile unchanged; activating
-    it makes both row metadata and nested profile JSON agree.
+  - Creating an inactive profile leaves the active profiles unchanged.
   - Duplicate names, missing IDs and active deletion return the codes above
     without changing stored profiles.
+  - Scoped credentials work without global credentials and cannot publish to
+    global accounts when incomplete. Scoped values in the process environment
+    override values in the configured environment files; values are never
+    returned by profile endpoints.
 
 ### CF-REQ-551 — Profile validation
 
@@ -69,6 +88,9 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
   `{"error": {"code": "profile_validation_failed", "message":
   "Content Profile validation failed", "details": {"errors": [...]}}}`; invalid
   updates leave persisted values unchanged.
+  Schedule rules require valid 24-hour `HH:MM` times and unique rule IDs.
+  Account prefixes are normalized to uppercase and must match
+  `[A-Z][A-Z0-9_]{0,63}`; an empty prefix is unset.
 - **Acceptance:**
   - `min_seconds = 90, max_seconds = 60` is rejected with a field error.
   - `timezone = "Mars/Base"` is rejected.

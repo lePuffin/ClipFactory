@@ -44,6 +44,7 @@ class PublishingRepository:
                 "storage_key": clip.storage_key,
                 "social_metadata": clip.metadata_json["social_metadata"],
                 "platforms": run.profile_snapshot.get("platforms", []),
+                "profile_snapshot": run.profile_snapshot,
                 "settings": run.settings_snapshot,
             }
 
@@ -250,6 +251,7 @@ class PublishingRepository:
                 "platform": row.platform,
                 "platform_post_id": row.platform_post_id,
                 "analytics": run.settings_snapshot.get("analytics", {}),
+                "env_prefix": run.profile_snapshot.get("env_prefix"),
             }
 
     def save_metric(

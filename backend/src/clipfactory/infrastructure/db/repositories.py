@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -14,12 +15,19 @@ from sqlalchemy.orm import sessionmaker
 from clipfactory.domain.models import ContentProfile, RunTrigger
 from clipfactory.domain.routing import revision_limit_raised
 from clipfactory.infrastructure.db.models import ContentProfileRow, EvaluationRow, LLMRequestRow, RunEventRow, RunRow
+from clipfactory.infrastructure.media.profile_branding import (
+    allocate_branding_folder,
+    profile_branding_directory,
+    profile_branding_settings,
+)
+from clipfactory.ports.configuration import ProfileNotFound
 from clipfactory.ports.runs import ActiveRunConflict, LLMBudgetExhausted, RunContinuationConflict, RunNotFound
 
 
 class RunRepository:
-    def __init__(self, sessions: sessionmaker) -> None:
+    def __init__(self, sessions: sessionmaker, *, branding_root: Path | None = None) -> None:
         self.sessions = sessions
+        self.branding_root = branding_root
 
     def reserve_generation_start(
         self, run_id: UUID, *, provider: str, limit: int, segment_index: int, now: datetime
@@ -73,6 +81,7 @@ class RunRepository:
         *,
         manual_url: str | None,
         settings_snapshot: dict[str, Any],
+        profile_id: UUID | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         try:
@@ -98,10 +107,20 @@ class RunRepository:
                 )
                 if trigger != RunTrigger.SCHEDULED and daily_limit - used_today < minimum:
                     raise LLMBudgetExhausted("Not enough daily LLM requests remain to start this Run")
-                profile = session.scalar(
-                    select(ContentProfileRow).where(ContentProfileRow.is_active.is_(True)).with_for_update()
-                )
+                if profile_id is not None:
+                    profile = session.scalar(
+                        select(ContentProfileRow).where(ContentProfileRow.id == profile_id).with_for_update()
+                    )
+                else:
+                    profile = session.scalar(
+                        select(ContentProfileRow)
+                        .where(ContentProfileRow.is_active.is_(True))
+                        .order_by(ContentProfileRow.updated_at.desc())
+                        .with_for_update()
+                    )
                 if profile is None:
+                    if profile_id is not None:
+                        raise ProfileNotFound(str(profile_id))
                     default_profile = ContentProfile()
                     profile = ContentProfileRow(
                         id=default_profile.id,
@@ -112,13 +131,23 @@ class RunRepository:
                     )
                     session.add(profile)
                     session.flush()
+                if self.branding_root is not None and not profile.value.get("branding_folder"):
+                    folder = allocate_branding_folder(self.branding_root, profile.id, profile.name)
+                    profile_branding_directory(self.branding_root, profile.id, folder)
+                    profile.value = {**profile.value, "branding_folder": folder}
                 run = RunRow(
                     id=uuid4(),
                     trigger=trigger.value,
                     manual_url=manual_url,
                     profile_id=profile.id,
                     profile_snapshot=profile.value,
-                    settings_snapshot=settings_snapshot,
+                    settings_snapshot=(
+                        profile_branding_settings(
+                            self.branding_root, profile.id, settings_snapshot, profile.value["branding_folder"]
+                        )
+                        if self.branding_root is not None
+                        else settings_snapshot
+                    ),
                     status="queued",
                     attempt=1,
                     revision_retries_used=0,
@@ -154,6 +183,7 @@ class RunRepository:
             if run is None:
                 raise RunNotFound(str(run_id))
             result = _run_summary(run)
+            result["profile_id"] = str(run.profile_id) if run.profile_id else None
             result["manual_url"] = run.manual_url
             result["profile_snapshot"] = run.profile_snapshot
             result["settings_snapshot"] = run.settings_snapshot

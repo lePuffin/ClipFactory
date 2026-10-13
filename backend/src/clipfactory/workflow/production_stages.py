@@ -98,6 +98,7 @@ from clipfactory.production.audio_captions import (
 )
 from clipfactory.production.editorial import (
     EditorialCue,
+    render_ai_disclosure_tag,
     render_brand_mark,
     render_editorial_graphic,
     render_news_date,
@@ -1304,6 +1305,8 @@ class ProductionStageService:
         end_card_sha256 = None
         if composition.get("end_card_file"):
             try:
+                if composition.get("branding_directory"):
+                    await self.media.prepare_profile_outro(Path(composition["branding_directory"]), font_file)
                 end_card_path, end_card_sha256 = await freeze_end_card(
                     Path(str(composition["end_card_file"])),
                     storage=self.storage,
@@ -1662,7 +1665,7 @@ class ProductionStageService:
     ) -> tuple[list[OverlayInput], list[dict[str, Any]]]:
         scale = profile.output.width / 720
         margin = round(24 * scale)
-        logo = Path(str(settings.get("logo_file", "logo_letters.png")))
+        logo = Path(str(settings.get("logo_file", "branding/inpulso_world/logo_letters.png")))
         opacity = float(settings.get("logo_opacity", 0.7))
         try:
             content, width, height = await asyncio.to_thread(render_brand_mark, logo, round(112 * scale), opacity)
@@ -1705,47 +1708,86 @@ class ProductionStageService:
             for source, timestamp in context.get("source_publications", {}).items()
             if source in sources and timestamp is not None
         }
-        if not dated:
+        if dated:
+            latest = max(dated.values())
+            try:
+                text, graphic = await asyncio.to_thread(
+                    render_news_date, latest, profile.schedule.timezone, font_file, profile.output.width
+                )
+            except (OSError, ValueError) as exc:
+                raise StageFailure("composition_failed", f"News-date label could not be rendered: {exc}") from exc
+            if graphic.x + graphic.width >= overlays[0].x or graphic.y + graphic.height > round(
+                112 * profile.output.height / 1280
+            ):
+                raise StageFailure(
+                    "composition_failed", "News-date label cannot fit outside the logo and editorial region"
+                )
+            key = f"work/{run_id}/attempt-{attempt}/identity-date.png"
+            await self.storage.put_bytes(key, graphic.png_bytes)
+            overlay = OverlayInput(
+                self.storage.local_path(key),
+                0,
+                duration,
+                graphic.x,
+                graphic.y,
+                graphic.width,
+                graphic.height,
+                0,
+                graphic.sha256,
+            )
+            overlays.append(overlay)
+            recorded.append(
+                asdict(overlay)
+                | {
+                    "path": str(overlay.path),
+                    "kind": "news_date",
+                    "text": text,
+                    "published_at": latest.isoformat(),
+                    "source_ids": sorted(str(source) for source, timestamp in dated.items() if timestamp == latest),
+                    "sha256": graphic.sha256,
+                }
+            )
+        else:
             await self._event(
                 run_id, "warning", "News date omitted: cited verified Sources have no known publication timestamp"
             )
-            return overlays, recorded
-        latest = max(dated.values())
-        try:
-            text, graphic = await asyncio.to_thread(
-                render_news_date, latest, profile.schedule.timezone, font_file, profile.output.width
-            )
-        except (OSError, ValueError) as exc:
-            raise StageFailure("composition_failed", f"News-date label could not be rendered: {exc}") from exc
-        if graphic.x + graphic.width >= overlays[0].x or graphic.y + graphic.height > round(
-            112 * profile.output.height / 1280
-        ):
-            raise StageFailure("composition_failed", "News-date label cannot fit outside the logo and editorial region")
-        key = f"work/{run_id}/attempt-{attempt}/identity-date.png"
-        await self.storage.put_bytes(key, graphic.png_bytes)
-        overlay = OverlayInput(
-            self.storage.local_path(key),
-            0,
-            duration,
-            graphic.x,
-            graphic.y,
-            graphic.width,
-            graphic.height,
-            0,
-            graphic.sha256,
-        )
-        overlays.append(overlay)
-        recorded.append(
-            asdict(overlay)
-            | {
-                "path": str(overlay.path),
-                "kind": "news_date",
-                "text": text,
-                "published_at": latest.isoformat(),
-                "source_ids": sorted(str(source) for source, timestamp in dated.items() if timestamp == latest),
-                "sha256": graphic.sha256,
-            }
-        )
+
+        if settings.get("ai_disclosure_tag", True):
+            ai_tag_text = str(settings.get("ai_disclosure_text", "AI Generated"))
+            try:
+                tag_label, ai_graphic = await asyncio.to_thread(
+                    render_ai_disclosure_tag,
+                    font_file,
+                    profile.output.width,
+                    profile.output.height,
+                    ai_tag_text,
+                )
+                ai_key = f"work/{run_id}/attempt-{attempt}/identity-ai-tag.png"
+                await self.storage.put_bytes(ai_key, ai_graphic.png_bytes)
+                ai_overlay = OverlayInput(
+                    self.storage.local_path(ai_key),
+                    0,
+                    duration,
+                    ai_graphic.x,
+                    ai_graphic.y,
+                    ai_graphic.width,
+                    ai_graphic.height,
+                    0,
+                    ai_graphic.sha256,
+                )
+                overlays.append(ai_overlay)
+                recorded.append(
+                    asdict(ai_overlay)
+                    | {
+                        "path": str(ai_overlay.path),
+                        "kind": "ai_disclosure",
+                        "text": tag_label,
+                        "sha256": ai_graphic.sha256,
+                    }
+                )
+            except (OSError, ValueError) as exc:
+                await self._event(run_id, "warning", f"AI disclosure tag omitted: {exc}")
+
         return overlays, recorded
 
     async def _editorial_overlays(

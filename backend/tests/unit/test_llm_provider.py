@@ -572,12 +572,10 @@ async def test_openrouter_routing_requires_endpoints_that_honour_the_output_cont
 def test_evaluation_fallback_role_selects_the_configured_fallback_model(
     evaluation: str | None, fallback: str | None, expected: str
 ) -> None:
-    settings = EnvironmentSettings.model_validate(
-        {"LLM_MODEL": "writer", "LLM_MODEL_EVALUATION": evaluation, "LLM_MODEL_EVALUATION_FALLBACK": fallback}
-    )
-    assert settings.model_for_role("evaluation_fallback") == expected
-    assert settings.model_for_role("evaluation") == (evaluation or "writer")
-    assert settings.model_for_role("default") == "writer"
+    configured = settings(LLM_MODEL="writer", LLM_MODEL_EVALUATION=evaluation, LLM_MODEL_EVALUATION_FALLBACK=fallback)
+    assert configured.model_for_role("evaluation_fallback") == expected
+    assert configured.model_for_role("evaluation") == (evaluation or "writer")
+    assert configured.model_for_role("default") == "writer"
 
 
 @pytest.mark.unit

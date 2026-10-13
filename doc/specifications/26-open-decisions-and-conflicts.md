@@ -7,6 +7,27 @@ any) and keep it behind the stated configuration or provider boundary.
 
 ## Open decisions
 
+Owner-approved profile branding isolation (2026-10-13): new Runs use
+`branding/<profile-slug>/` for the wordmark, badge, poster, voice and cached
+end card, superseding shared-logo/end-card selection in CF-REQ-360.
+Existing Run snapshots remain unchanged. New profiles receive empty folders;
+the owner supplies logos rather than silently copying another profile's
+identity. The explicit branding CLI generates voice and authors the local
+end card once; normal Runs never make branding TTS requests.
+Folders survive renaming and deletion to preserve retained content.
+Owner revision (2026-10-13): use readable name-derived folders rather than
+bare UUIDs, with server-owned stable folder names and UUID collision suffixes.
+Preserve legacy paths with compatibility symlinks; exclude local branding
+assets from Git while retaining generic authoring instructions.
+
+Owner-approved scheduling/account extension (2026-10-13): multiple active
+profiles and multiple daily rules per profile replace the single-profile
+scheduler assumption in ADR-009. New rules use the backend host's local
+timezone with DST, superseding OD-008's fixed Europe/Lisbon scheduling choice.
+An explicitly empty rules list is unscheduled. A configured account prefix
+is an isolation boundary: no fallback to global publishing credentials.
+Legacy profiles without a prefix continue using their global accounts.
+
 Resolved owner retention conflict (2026-10-11): “external assets from the free
 Pixabay and Pexels etc shouldn't be saved, only generated media should be saved.”
 This supersedes permanent external storage/reuse in CF-REQ-200, CF-REQ-211 and
@@ -18,7 +39,6 @@ and owner-imported media remain saved. No automatic bulk deletion of legacy
 stock files, migration or new retention configuration is authorised. Saved
 re-render requires its original visual inputs and therefore cannot replay a
 removed stock file; the composed Clip still supports publishing/Retry publish.
-
 
 Owner-approved named-profile retention decision (2026-10-11): inactive
 profiles are physically deletable (CF-REQ-550), including those used by prior
@@ -72,6 +92,7 @@ are reflected in the referenced requirements; they stay here for history.
 - **Decided:** `google/gemma-4-31b-it:free` — a specific free, vision-capable OpenRouter model (not the `openrouter/free` router) so development is reproducible. Selected from OpenRouter's public model list on 2026-09-28 (free, image input, `response_format` support, 262k context); a live request has not yet been made. Fallback if retired: `qwen/qwen3.8-27b:free`. The model is configuration (`LLM_MODEL`, `LLM_MODEL_EVALUATION`); OpenAI, Luna, Terra or local models are later configuration/adapters behind `LLMProvider` with no application-logic change. Weak free models need schema repair (CF-REQ-758).
 
 Owner revision to OD-001 (2026-10-09): the `openrouter/free` router is permitted as an explicit owner-selected opt-in for `LLM_MODEL` or `LLM_MODEL_EVALUATION`; it is not the default. It is treated as free because OpenRouter routes it only to $0 models; other router IDs such as `openrouter/auto` remain blocked as potentially paid. Each call's answering model is recorded in its `llm_call_completed` Run Event. Trade-off accepted: calls within a Run may be answered by different models, so behaviour is less reproducible than with a pinned `:free` model.
+
 - **Boundary:** `LLMProvider`, configuration.
 
 Quality revision to OD-001 (2026-10-06): owner permits budgeted paid writing/vision models. Model-role identifiers remain configuration; capabilities, availability and prices must be verified before paid calls. Fixed historical free-model choices are not proof of current availability. Candidate and final visual review require image-capable models; unavailable evidence remains pending. No hard-coded vendor/model dependency is introduced.
@@ -239,11 +260,12 @@ restrictions and final review remain unchanged (CF-REQ-208).
 - **OD-022:** Channel name/logo/palette, exact example videos and creative numeric defaults remain open. Provisional choice: neutral modern news-explainer template and the labelled provisional values in configuration. The owner approves branding and the diverse reference set before creative-template completion is claimed. Boundaries: Content Profile, template versions and Quality Review.
 
 Owner partial decision (2026-10-08): use the existing owner-provided
-`logo_inPulso_world.png` subtly at top-right on every future Clip, with 70%
+`branding/inpulso_world/logo_inPulso_world.png` subtly at top-right on every future Clip, with 70%
 opacity. Show the latest publication date among Sources actually cited by
 the Script as `8 Oct 2026`, in the profile timezone. Preserve provenance;
 unknown publication dates are not invented. Archive-year overlays are
 explicitly deferred. Other OD-022 creative decisions remain open.
+
 - **OD-023:** Owner explicitly approved one additional batched visual-review request and paid models within EUR 1 per Clip/EUR 30 monthly. Five initial automatic-research calls, four for Manual URL, and eight total including retries/repairs; cache reuse may reduce initial calls. Boundaries: provider governance, accounting and versioned media judgments; ADR-018.
 
 ## Known conflicts

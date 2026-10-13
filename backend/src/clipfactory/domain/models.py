@@ -206,6 +206,19 @@ class Schedule(StrictModel):
         return value
 
 
+class ScheduleRule(StrictModel):
+    id: UUID = Field(default_factory=uuid4)
+    local_time: str = "06:00"
+    enabled: bool = True
+
+    @field_validator("local_time")
+    @classmethod
+    def valid_local_time(cls, value: str) -> str:
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+            raise ValueError("local_time must use HH:MM")
+        return value
+
+
 class ResearchPolicy(StrictModel):
     max_candidate_articles: int = Field(default=20, ge=1, le=50)
     min_sources: int = Field(default=1, ge=1)
@@ -252,10 +265,35 @@ class ContentProfile(StrictModel):
     visual_style: VisualStyle = Field(default_factory=VisualStyle)
     platforms: list[Platform] = Field(default_factory=list)
     schedule: Schedule = Field(default_factory=Schedule)
+    schedules: list[ScheduleRule] | None = None
+    env_prefix: str | None = None
+    branding_folder: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,199}$")
     research: ResearchPolicy = Field(default_factory=ResearchPolicy)
     music: MusicPolicy = Field(default_factory=MusicPolicy)
     generation: GenerationPolicy = Field(default_factory=GenerationPolicy)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    def schedule_rules(self) -> list[ScheduleRule]:
+        if self.schedules is not None:
+            return list(self.schedules)
+        return [ScheduleRule(id=UUID(int=0), local_time=self.schedule.local_time, enabled=self.schedule.enabled)]
+
+    @field_validator("env_prefix")
+    @classmethod
+    def valid_env_prefix(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", value):
+            raise ValueError("env_prefix must be an account prefix using letters, digits and underscores")
+        return value
+
+    @field_validator("schedules")
+    @classmethod
+    def unique_schedule_ids(cls, value: list[ScheduleRule] | None) -> list[ScheduleRule] | None:
+        if value is not None and len({rule.id for rule in value}) != len(value):
+            raise ValueError("schedule rule IDs must be unique")
+        return value
 
     @field_validator("language")
     @classmethod

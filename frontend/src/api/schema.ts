@@ -89,6 +89,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/content-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Named Profiles */
+        get: operations["get_named_profiles_api_content_profiles_get"];
+        put?: never;
+        /** Create Named Profile */
+        post: operations["create_named_profile_api_content_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Named Profile */
+        put: operations["update_named_profile_api_content_profiles__profile_id__put"];
+        post?: never;
+        /** Delete Named Profile */
+        delete: operations["delete_named_profile_api_content_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Profile Schedule */
+        put: operations["update_profile_schedule_api_content_profiles__profile_id__schedule_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Schedule Rule */
+        post: operations["add_schedule_rule_api_content_profiles__profile_id__schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}/schedules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Schedule Rule */
+        put: operations["update_schedule_rule_api_content_profiles__profile_id__schedules__rule_id__put"];
+        post?: never;
+        /** Delete Schedule Rule */
+        delete: operations["delete_schedule_rule_api_content_profiles__profile_id__schedules__rule_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Named Profile */
+        post: operations["activate_named_profile_api_content_profiles__profile_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deactivate Named Profile */
+        post: operations["deactivate_named_profile_api_content_profiles__profile_id__deactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/content-profiles/{profile_id}/toggle-active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Toggle Active Named Profile */
+        post: operations["toggle_active_named_profile_api_content_profiles__profile_id__toggle_active_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Schedules */
+        get: operations["get_schedules_api_schedules_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/content-profile": {
         parameters: {
             query?: never;
@@ -118,6 +274,23 @@ export interface paths {
         put?: never;
         /** Decide Approval */
         post: operations["decide_approval_api_clips__clip_id__approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clips/{clip_id}/publications/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Publications */
+        post: operations["retry_publications_api_clips__clip_id__publications_retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -169,7 +342,8 @@ export interface paths {
         get: operations["get_clip_api_clips__clip_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Clip */
+        delete: operations["delete_clip_api_clips__clip_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -322,6 +496,40 @@ export interface paths {
         get: operations["publication_snapshots_api_analytics_publications__publication_id__snapshots_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goals */
+        get: operations["get_goals_api_goals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/goals/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Goals */
+        post: operations["refresh_goals_api_goals_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -534,165 +742,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/content-profiles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Success */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContentProfileListResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ContentProfileCreateRequest"];
-                };
-            };
-            responses: {
-                /** @description Success */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContentProfileItemResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/content-profiles/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ContentProfileUpdateRequest"];
-                };
-            };
-            responses: {
-                /** @description Success */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContentProfileItemResponse"];
-                    };
-                };
-            };
-        };
-        post?: never;
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Success */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/content-profiles/{id}/activate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Success */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContentProfileItemResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -706,7 +755,8 @@ export interface components {
         AssetListResponse: {
             /** Items */
             items: components["schemas"]["AssetResponse"][];
-            total?: number;
+            /** Total */
+            total: number;
         };
         /** AssetPatchRequest */
         AssetPatchRequest: {
@@ -824,7 +874,8 @@ export interface components {
         ClipListResponse: {
             /** Items */
             items: components["schemas"]["ClipResponse"][];
-            total?: number;
+            /** Total */
+            total: number;
         };
         /** ClipPreviewResponse */
         ClipPreviewResponse: {
@@ -876,6 +927,65 @@ export interface components {
             /** Publications */
             publications: components["schemas"]["PublicationResponse"][];
         };
+        /**
+         * ContentCategory
+         * @enum {string}
+         */
+        ContentCategory: "general" | "technology" | "ai" | "finance" | "business" | "science" | "gaming" | "sports" | "entertainment" | "politics";
+        /** ContentProfile */
+        ContentProfile: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * Name
+             * @default Global News (English)
+             */
+            name: string;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /**
+             * Language
+             * @default en
+             */
+            language: string;
+            /** @default general */
+            category: components["schemas"]["ContentCategory"];
+            /** Topics */
+            topics?: string[];
+            /** Excluded Topics */
+            excluded_topics?: string[];
+            /** Geography */
+            geography?: string[];
+            /** Markets */
+            markets?: string[];
+            voice?: components["schemas"]["VoiceSpec"];
+            duration?: components["schemas"]["DurationPolicy"];
+            output?: components["schemas"]["OutputSpec"];
+            visual_style?: components["schemas"]["VisualStyle"];
+            /** Platforms */
+            platforms?: components["schemas"]["Platform"][];
+            schedule?: components["schemas"]["Schedule"];
+            /** Schedules */
+            schedules?: components["schemas"]["ScheduleRule"][] | null;
+            /** Env Prefix */
+            env_prefix?: string | null;
+            /** Branding Folder */
+            branding_folder?: string | null;
+            research?: components["schemas"]["ResearchPolicy"];
+            music?: components["schemas"]["MusicPolicy"];
+            generation?: components["schemas"]["GenerationPolicy"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at?: string;
+        };
         /** CostEntryResponse */
         CostEntryResponse: {
             /**
@@ -920,6 +1030,15 @@ export interface components {
             /** Next Scheduled Run At */
             next_scheduled_run_at?: string | null;
         };
+        /** DurationPolicy */
+        DurationPolicy: {
+            /** Min Seconds */
+            min_seconds: number;
+            /** Target Seconds */
+            target_seconds: number;
+            /** Max Seconds */
+            max_seconds: number;
+        };
         /** EvaluationResponse */
         EvaluationResponse: {
             /**
@@ -956,6 +1075,61 @@ export interface components {
             /** Created At */
             created_at: string;
         };
+        /** GenerationPolicy */
+        GenerationPolicy: {
+            /** Image Providers */
+            image_providers?: string[];
+            /** Video Providers */
+            video_providers?: string[];
+        };
+        /** GoalDataResponse */
+        GoalDataResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Platforms */
+            platforms: components["schemas"]["PlatformGoalResponse"][];
+        };
+        /** GoalMetricResponse */
+        GoalMetricResponse: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Current */
+            current: number;
+            /** Target */
+            target: number;
+            /** Target Tier1 */
+            target_tier1?: number | null;
+            /** Unit */
+            unit: string;
+            /** Pct */
+            pct: number;
+        };
+        /** GoalRestrictionResponse */
+        GoalRestrictionResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Status */
+            status: string;
+        };
+        /** GoalsResponse */
+        GoalsResponse: {
+            goal: components["schemas"]["GoalDataResponse"];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -976,6 +1150,8 @@ export interface components {
         ManualURLRequest: {
             /** Url */
             url: string;
+            /** Profile Id */
+            profile_id?: string | null;
         };
         /** MetricSnapshotResponse */
         MetricSnapshotResponse: {
@@ -1013,6 +1189,89 @@ export interface components {
             revenue_currency?: string | null;
             /** Revenue Basis */
             revenue_basis?: string | null;
+        };
+        /** MusicPolicy */
+        MusicPolicy: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Mood Tags */
+            mood_tags?: string[];
+            /**
+             * Energy
+             * @default low
+             */
+            energy: string | null;
+            /**
+             * Ducked Level Db
+             * @default -20
+             */
+            ducked_level_db: number;
+            /**
+             * Unducked Level Db
+             * @default -12
+             */
+            unducked_level_db: number;
+        };
+        /** NamedProfileCreateRequest */
+        NamedProfileCreateRequest: {
+            /** Name */
+            name: string;
+            profile: components["schemas"]["ContentProfile"];
+            /**
+             * Activate
+             * @default false
+             */
+            activate: boolean;
+        };
+        /** NamedProfileListResponse */
+        NamedProfileListResponse: {
+            /** Items */
+            items: components["schemas"]["NamedProfileResponse"][];
+        };
+        /** NamedProfileResponse */
+        NamedProfileResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            profile: components["schemas"]["ContentProfile"];
+        };
+        /** NamedProfileUpdateRequest */
+        NamedProfileUpdateRequest: {
+            /** Name */
+            name?: string | null;
+            profile?: components["schemas"]["ContentProfile"] | null;
+        };
+        /** OutputSpec */
+        OutputSpec: {
+            /**
+             * Width
+             * @default 720
+             */
+            width: number;
+            /**
+             * Height
+             * @default 1280
+             */
+            height: number;
+            /**
+             * Fps
+             * @default 30
+             */
+            fps: number;
         };
         /** OverlayRequest */
         OverlayRequest: {
@@ -1056,6 +1315,78 @@ export interface components {
          * @enum {string}
          */
         Platform: "youtube" | "instagram" | "tiktok" | "facebook";
+        /** PlatformGoalResponse */
+        PlatformGoalResponse: {
+            /** Platform */
+            platform: string;
+            /** Name */
+            name: string;
+            /** Program */
+            program: string;
+            /** Status */
+            status: string;
+            /** Published Clips */
+            published_clips: number;
+            /** Progress Pct */
+            progress_pct: number;
+            /** Metrics */
+            metrics: components["schemas"]["GoalMetricResponse"][];
+            /** Restrictions */
+            restrictions: components["schemas"]["GoalRestrictionResponse"][];
+        };
+        /** ProfileScheduleListResponse */
+        ProfileScheduleListResponse: {
+            /** Items */
+            items: components["schemas"]["ProfileScheduleResponse"][];
+        };
+        /** ProfileScheduleResponse */
+        ProfileScheduleResponse: {
+            /**
+             * Profile Id
+             * Format: uuid
+             */
+            profile_id: string;
+            /** Profile Name */
+            profile_name: string;
+            /** Rule Id */
+            rule_id: string | null;
+            /** Is Active */
+            is_active: boolean;
+            /** Local Time */
+            local_time: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Schedule */
+            schedule: {
+                [key: string]: unknown;
+            };
+            /** Task Id */
+            task_id: string | null;
+            /** Due At */
+            due_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "disabled" | "idle";
+        };
+        /** ProfileScheduleUpdateRequest */
+        ProfileScheduleUpdateRequest: {
+            /** Enabled */
+            enabled: boolean;
+            /** Local Time */
+            local_time: string;
+            /**
+             * Timezone
+             * @default Europe/Lisbon
+             */
+            timezone: string;
+        };
+        /** ProfileToggleActiveRequest */
+        ProfileToggleActiveRequest: {
+            /** Is Active */
+            is_active: boolean;
+        };
         /** PublicationResponse */
         PublicationResponse: {
             /**
@@ -1125,6 +1456,33 @@ export interface components {
             research_calls: number;
             /** Transcription Calls */
             transcription_calls: number;
+        };
+        /** ResearchPolicy */
+        ResearchPolicy: {
+            /**
+             * Max Candidate Articles
+             * @default 20
+             */
+            max_candidate_articles: number;
+            /**
+             * Min Sources
+             * @default 1
+             */
+            min_sources: number;
+            /**
+             * Preferred Independent Sources
+             * @default 3
+             */
+            preferred_independent_sources: number;
+            /**
+             * Max Article Age Hours
+             * @default 24
+             */
+            max_article_age_hours: number;
+            /** Allowed Publishers */
+            allowed_publishers?: string[] | null;
+            /** Blocked Publishers */
+            blocked_publishers?: string[];
         };
         /** RunCostsResponse */
         RunCostsResponse: {
@@ -1227,6 +1585,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["RunSummaryResponse"][];
         };
+        /** RunNowRequest */
+        RunNowRequest: {
+            /** Profile Id */
+            profile_id?: string | null;
+        };
         /** RunSummaryResponse */
         RunSummaryResponse: {
             /**
@@ -1316,6 +1679,59 @@ export interface components {
              */
             subtitle_bottom_margin_pct: number;
         };
+        /** Schedule */
+        Schedule: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Local Time
+             * @default 05:00
+             */
+            local_time: string;
+            /**
+             * Timezone
+             * @default Europe/Lisbon
+             */
+            timezone: string;
+        };
+        /** ScheduleRule */
+        ScheduleRule: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * Local Time
+             * @default 06:00
+             */
+            local_time: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** ScheduleRuleCreateRequest */
+        ScheduleRuleCreateRequest: {
+            /** Local Time */
+            local_time: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** ScheduleRuleUpdateRequest */
+        ScheduleRuleUpdateRequest: {
+            /** Local Time */
+            local_time?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
         /** SoundRequest */
         SoundRequest: {
             /**
@@ -1351,30 +1767,44 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
-        ContentProfileItemResponse: {
-            id: string;
-            name: string;
-            is_active: boolean;
-            updated_at: string;
-            profile: {
-                [key: string]: unknown;
-            };
+        /** VisualStyle */
+        VisualStyle: {
+            /**
+             * Description
+             * @default clean, factual news style
+             */
+            description: string;
+            /**
+             * Caption Style
+             * @default bold_white_on_dark_box
+             */
+            caption_style: string;
+            /**
+             * Motion Intensity
+             * @default medium
+             * @enum {string}
+             */
+            motion_intensity: "low" | "medium" | "high";
+            /**
+             * Allow Generated Media
+             * @default true
+             */
+            allow_generated_media: boolean;
         };
-        ContentProfileListResponse: {
-            items: components["schemas"]["ContentProfileItemResponse"][];
-        };
-        ContentProfileCreateRequest: {
-            name: string;
-            profile: {
-                [key: string]: unknown;
-            };
-            activate?: boolean;
-        };
-        ContentProfileUpdateRequest: {
-            name?: string;
-            profile?: {
-                [key: string]: unknown;
-            };
+        /** VoiceSpec */
+        VoiceSpec: {
+            /** Provider Voice Id */
+            provider_voice_id: string;
+            /**
+             * Speaking Rate
+             * @default 1
+             */
+            speaking_rate: number;
+            /**
+             * Words Per Minute
+             * @default 150
+             */
+            words_per_minute: number;
         };
     };
     responses: never;
@@ -1517,6 +1947,378 @@ export interface operations {
             };
         };
     };
+    get_named_profiles_api_content_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileListResponse"];
+                };
+            };
+        };
+    };
+    create_named_profile_api_content_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NamedProfileCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_named_profile_api_content_profiles__profile_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NamedProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_named_profile_api_content_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_schedule_api_content_profiles__profile_id__schedule_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileScheduleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_schedule_rule_api_content_profiles__profile_id__schedules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleRuleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_schedule_rule_api_content_profiles__profile_id__schedules__rule_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleRuleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_schedule_rule_api_content_profiles__profile_id__schedules__rule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_named_profile_api_content_profiles__profile_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deactivate_named_profile_api_content_profiles__profile_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_active_named_profile_api_content_profiles__profile_id__toggle_active_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileToggleActiveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NamedProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_schedules_api_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileScheduleListResponse"];
+                };
+            };
+        };
+    };
     get_content_profile_api_content_profile_get: {
         parameters: {
             query?: never;
@@ -1532,9 +2334,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ContentProfile"];
                 };
             };
         };
@@ -1560,7 +2360,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContentProfile"];
                 };
             };
             /** @description Validation Error */
@@ -1588,6 +2388,37 @@ export interface operations {
                 "application/json": components["schemas"]["ApprovalRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_publications_api_clips__clip_id__publications_retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clip_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -1693,6 +2524,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ClipResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_clip_api_clips__clip_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clip_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -1966,6 +2826,46 @@ export interface operations {
             };
         };
     };
+    get_goals_api_goals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalsResponse"];
+                };
+            };
+        };
+    };
+    refresh_goals_api_goals_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalsResponse"];
+                };
+            };
+        };
+    };
     list_runs_api_runs_get: {
         parameters: {
             query?: {
@@ -2006,7 +2906,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunNowRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -2015,6 +2919,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -92,7 +92,7 @@ class Publisher:
         self.calls = 0
         self.requests: list[PublicationRequest] = []
 
-    def is_configured(self) -> bool:
+    def is_configured(self, env_prefix: str | None = None) -> bool:
         return self.configured
 
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult:
@@ -104,7 +104,7 @@ class Publisher:
             raise outcome
         return outcome
 
-    async def fetch_metrics(self, platform_post_id: str) -> PlatformMetrics:
+    async def fetch_metrics(self, platform_post_id: str, env_prefix: str | None = None) -> PlatformMetrics:
         del platform_post_id
         return PlatformMetrics(views=10)
 
@@ -202,6 +202,25 @@ async def test_successful_publication_schedules_configured_metrics() -> None:
     assert result["outcome"] == "published"
     assert store.metric_offsets == ["1h", "6h"]
     assert store.published[0]["platform_post_id"] == "post-1"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-454")
+@pytest.mark.asyncio
+async def test_youtube_success_and_tiktok_failure_completes_with_partially_published() -> None:
+    store = Store(platforms=["youtube", "tiktok"])
+    yt_publisher = Publisher([PublicationResult("yt-1", "https://youtube.example/yt-1")])
+    tt_publisher = Publisher([ProviderError("publish_failed", "tiktok upload error", transient=False)])
+    result = await PublishService(
+        store,
+        Storage(),
+        {Platform.YOUTUBE: yt_publisher, Platform.TIKTOK: tt_publisher},
+        clock=lambda: NOW,
+    ).execute(uuid4(), store.clip_id)
+
+    assert result["outcome"] == "partially_published"
+    assert yt_publisher.calls == 1
+    assert tt_publisher.calls == 1
 
 
 @pytest.mark.unit

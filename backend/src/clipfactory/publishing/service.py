@@ -71,10 +71,13 @@ class PublishService:
         analytics = context["settings"].get("analytics", {})
         mode = str(settings.get("mode", "dry_run"))
         platforms = [Platform(value) for value in context["platforms"]]
+        profile_snapshot = context.get("profile_snapshot") or {}
+        env_prefix = profile_snapshot.get("env_prefix")
         request = _request(
             clip_id,
             context["social_metadata"],
             settings.get("discovery_hashtags", ["News", "BreakingNews", "WorldNews"]),
+            env_prefix=env_prefix,
         )
         if mode == "disabled" or not platforms:
             return {"outcome": "not_published", "clip_id": str(clip_id)}
@@ -119,7 +122,7 @@ class PublishService:
             if mode == "dry_run":
                 continue
             publisher = self._publishers.get(platform)
-            if publisher is None or not publisher.is_configured():
+            if publisher is None or not publisher.is_configured(request.env_prefix):
                 await asyncio.to_thread(
                     self._store.mark_failed,
                     UUID(existing["id"]),
@@ -191,7 +194,12 @@ def _hashtags(generated: Sequence[str], discovery: Sequence[str], limit: int = 8
     return tuple(tags.values())
 
 
-def _request(clip_id: UUID, value: dict[str, Any], discovery_hashtags: Sequence[str] = ()) -> PublicationRequest:
+def _request(
+    clip_id: UUID,
+    value: dict[str, Any],
+    discovery_hashtags: Sequence[str] = (),
+    env_prefix: str | None = None,
+) -> PublicationRequest:
     return PublicationRequest(
         clip_id=clip_id,
         title=value["title"],
@@ -201,6 +209,7 @@ def _request(clip_id: UUID, value: dict[str, Any], discovery_hashtags: Sequence[
         asset_attributions=tuple(value.get("asset_attributions", [])),
         contains_synthetic_media=bool(value.get("contains_synthetic_media", False)),
         synthetic_voice=bool(value.get("synthetic_voice", False)),
+        env_prefix=env_prefix,
     )
 
 
@@ -215,4 +224,5 @@ def _as_dict(request: PublicationRequest) -> dict[str, Any]:
         "contains_synthetic_media": request.contains_synthetic_media,
         "synthetic_voice": request.synthetic_voice,
         "public_media_url": request.public_media_url,
+        "env_prefix": request.env_prefix,
     }

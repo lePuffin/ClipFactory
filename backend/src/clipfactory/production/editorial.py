@@ -75,6 +75,34 @@ def render_news_date(timestamp: datetime, timezone: str, font_file: Path, width:
     )
 
 
+def render_ai_disclosure_tag(
+    font_file: Path,
+    width: int,
+    height: int,
+    text: str = "AI Generated",
+) -> tuple[str, EditorialGraphic]:
+    scale = width / 720
+    font = ImageFont.truetype(str(font_file), max(1, round(15 * scale)))
+    padding_x = max(1, round(7 * scale))
+    padding_y = max(1, round(3 * scale))
+    box = font.getbbox(text)
+    text_width = round(font.getlength(text))
+    text_height = round(box[3] - box[1])
+    img_width = text_width + 2 * padding_x
+    img_height = text_height + 2 * padding_y
+    image = Image.new("RGBA", (img_width, img_height))
+    draw = ImageDraw.Draw(image)
+    radius = max(2, round(4 * scale))
+    draw.rounded_rectangle((0, 0, img_width - 1, img_height - 1), radius=radius, fill=(13, 17, 22, 170))
+    draw.text((padding_x, padding_y - box[1]), text, font=font, fill=(225, 230, 235, 210))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    content = output.getvalue()
+    x = round(24 * scale)
+    y = height - img_height - round(36 * scale)
+    return text, EditorialGraphic(content, hashlib.sha256(content).hexdigest(), img_width, img_height, x, y)
+
+
 def render_editorial_graphic(
     cue: EditorialCue,
     *,

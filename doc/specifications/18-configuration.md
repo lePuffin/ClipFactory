@@ -361,9 +361,11 @@ resolution (OD-011, decided). At 720×1280: side margins 43 px, text width
 | `tail_seconds` | `1.0` | CF-REQ-354 |
 | `narration_loudness_lufs` | `-14` | CF-REQ-356 |
 | `transition_seconds` | `0.4` | CF-REQ-355 |
-| `logo_file` | `logo_letters.png` (owner-provided, relative to launch directory or absolute) | CF-REQ-360 |
+| `logo_file` | New Runs use `branding/<branding_folder>/logo_letters.png`; legacy snapshots retain their configured path | CF-REQ-360 |
 | `logo_opacity` | `0.7` (greater than 0, at most 1) | CF-REQ-360 |
-| `end_card_file` | `null` (disabled); owner installation uses `branding/outro.mp4` | CF-REQ-360 |
+| `end_card_file` | New Runs use `branding/<branding_folder>/outro.mp4`; legacy snapshots retain their configured path or `null` | CF-REQ-360 |
+| `ai_disclosure_tag` | `true` | CF-REQ-259, CF-REQ-360 |
+| `ai_disclosure_text` | `AI Generated` (1–40 chars) | CF-REQ-259, CF-REQ-360 |
 
 An enabled end card is exactly three seconds and requires `tail_seconds >= 3`.
 The owner installation sets `tail_seconds = 3`; the end card replaces the tail,
@@ -446,11 +448,25 @@ actual cost. Values are Provisional (OD-020) and editable in Settings.
 
 ## Content Profile defaults
 
+Account scoping uses the profile's optional `env_prefix` (CF-REQ-550).
+For prefix `FOOTBALL`, configure only the intended account:
+`FOOTBALL_INSTAGRAM_ACCESS_TOKEN`, `FOOTBALL_INSTAGRAM_USER_ID`,
+`FOOTBALL_FACEBOOK_ACCESS_TOKEN`, `FOOTBALL_FACEBOOK_PAGE_ID`,
+`FOOTBALL_TIKTOK_ACCESS_TOKEN` or `FOOTBALL_TIKTOK_TOKEN_FILE`, and
+`FOOTBALL_YOUTUBE_TOKEN_FILE` with `FOOTBALL_YOUTUBE_CLIENT_SECRETS_FILE`
+for token refresh. Default scoped OAuth files live under `DATA_DIR/secrets/`
+as `football_youtube_token.json`, `football_client_secrets.json` and
+`football_tiktok_token.json`. Scoped credentials never fall back to globals.
+Environment files use the existing settings paths; process variables override
+file values. The profile stores the prefix only, never the secrets.
+
 The seeded default profile (created by the initial migration if none exists):
 
 | Field | Default |
 | --- | --- |
 | name | `Global News (English)` |
+| schedules | `null` (legacy daily time); `[]` explicitly disables scheduled Runs |
+| env_prefix | `null` (global platform accounts) |
 | language | `en` |
 | category | `general` |
 | topics | `[]` |

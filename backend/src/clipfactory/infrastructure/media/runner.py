@@ -27,6 +27,26 @@ class MediaRunner:
     async def ffprobe(self, arguments: Sequence[str], *, timeout_seconds: float | None = None) -> tuple[bytes, bytes]:
         return await self._run(self.ffprobe_path, arguments, timeout_seconds=timeout_seconds)
 
+    async def prepare_profile_outro(self, directory: Path, font: Path) -> None:
+        from clipfactory.infrastructure.media.brand_outro import generate_outro
+
+        directory = await asyncio.to_thread(directory.resolve)
+        if (directory / "outro.mp4").is_file():
+            return
+        for filename in ("logo_badge.png", "outro-voice.wav"):
+            path = directory / filename
+            if not path.is_file() or (await asyncio.to_thread(path.resolve)).parent != directory:
+                raise MediaProcessError(
+                    "branding_missing", f"Missing profile branding input: {path}; run clipfactory branding first"
+                )
+        await generate_outro(
+            directory / "logo_badge.png",
+            font,
+            directory / "outro.mp4",
+            runner=self,
+            voice=directory / "outro-voice.wav",
+        )
+
     async def probe(self, media_path: Path) -> dict[str, Any]:
         path = await asyncio.to_thread(_resolve_existing_path, media_path)
         stdout, _ = await self.ffprobe(

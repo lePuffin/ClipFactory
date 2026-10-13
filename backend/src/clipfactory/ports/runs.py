@@ -46,6 +46,7 @@ class RunCreator(Protocol):
         *,
         manual_url: str | None,
         settings_snapshot: dict[str, Any],
+        profile_id: UUID | None = None,
     ) -> dict[str, Any]: ...
 
 

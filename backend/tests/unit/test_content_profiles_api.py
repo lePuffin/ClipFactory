@@ -13,6 +13,7 @@ from clipfactory.domain.models import ContentProfile
 from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.configuration_repository import ConfigurationRepository
 from clipfactory.infrastructure.db.models import ContentProfileRow
+from clipfactory.infrastructure.db.scheduler_repository import DailyScheduleRepository
 from clipfactory.infrastructure.db.session import create_session_factory
 
 NOW = datetime(2026, 10, 11, 21, 0, tzinfo=UTC)
@@ -24,7 +25,17 @@ def profile_client(tmp_path: Path) -> Generator[tuple[TestClient, ConfigurationR
     Base.metadata.create_all(engine)
     repository = ConfigurationRepository(create_session_factory(engine), clock=lambda: NOW)
     repository.replace_active_profile(ContentProfile(name="Original"))
-    yield TestClient(create_app(settings(), configuration=repository)), repository
+    yield (
+        TestClient(
+            create_app(
+                settings(),
+                configuration=repository,
+                schedule_repository=DailyScheduleRepository(repository._sessions),
+                clock=lambda: NOW,
+            )
+        ),
+        repository,
+    )
     engine.dispose()
 
 
@@ -41,7 +52,8 @@ def test_named_profiles_crud_activation_and_active_endpoint(profile_client) -> N
     assert second["name"] == second["profile"]["name"] == "Second"
     assert second["id"] == second["profile"]["id"]
     assert second["is_active"] is second["profile"]["is_active"] is False
-    assert second["updated_at"] == second["profile"]["updated_at"] == "2026-10-11T21:00:00Z"
+    assert second["updated_at"] == second["profile"]["updated_at"]
+    assert second["updated_at"].startswith("2026-10-11T21:00:00")
     assert client.get("/api/content-profile").json()["id"] == original["id"]
     updated = client.put(f"/api/content-profiles/{second['id']}", json={"name": "Renamed"})
     assert updated.json()["profile"]["language"] == "es"
@@ -51,7 +63,7 @@ def test_named_profiles_crud_activation_and_active_endpoint(profile_client) -> N
     assert activated.json()["is_active"] is True
     assert client.post(f"/api/content-profiles/{second['id']}/activate").status_code == 200
     items = client.get("/api/content-profiles").json()["items"]
-    assert sum(item["is_active"] for item in items) == 1
+    assert sum(item["is_active"] for item in items) == 2
     assert all(item["is_active"] == item["profile"]["is_active"] for item in items)
     assert client.get("/api/content-profile").json()["id"] == second["id"]
     active_update = client.put("/api/content-profile", json={"name": "Active renamed", "language": "fr"})
@@ -60,7 +72,9 @@ def test_named_profiles_crud_activation_and_active_endpoint(profile_client) -> N
     with repository._sessions() as session:
         rows = list(session.scalars(select(ContentProfileRow)))
         assert len(rows) == 2
-        assert sum(row.is_active for row in rows) == 1
+        assert sum(row.is_active for row in rows) == 2
+    deactivated = client.post(f"/api/content-profiles/{original['id']}/deactivate")
+    assert deactivated.status_code == 200
     deleted = client.delete(f"/api/content-profiles/{original['id']}")
     assert deleted.status_code == 204
     assert deleted.content == b""
@@ -146,6 +160,66 @@ def test_named_profile_validation_matches_active_profile_errors(profile_client, 
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-550")
+@pytest.mark.req("CF-REQ-651")
+def test_schedule_crud_preserves_other_rules_and_last_delete_stays_empty(profile_client) -> None:
+    client, _ = profile_client
+    profile_id = client.get("/api/content-profiles").json()["items"][0]["id"]
+    base = f"/api/content-profiles/{profile_id}/schedules"
+    legacy = client.get("/api/schedules").json()["items"][0]["rule_id"]
+    added = client.post(base, json={"local_time": "18:00", "enabled": True})
+    assert added.status_code == 200
+    rule_id = added.json()["rule"]["id"]
+    assert {row["rule_id"] for row in client.get("/api/schedules").json()["items"]} == {legacy, rule_id}
+    assert client.put(f"{base}/{rule_id}", json={"local_time": "19:15", "enabled": False}).status_code == 200
+    rules = client.get("/api/content-profile").json()["schedules"]
+    assert rules[1]["local_time"] == "19:15"
+    assert rules[1]["enabled"] is False
+    before = client.get("/api/content-profile").json()
+    for response in (
+        client.put(f"{base}/{uuid4()}", json={"enabled": False}),
+        client.delete(f"{base}/{uuid4()}"),
+    ):
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "rule_not_found"
+    assert client.get("/api/content-profile").json() == before
+    assert client.delete(f"{base}/{legacy}").status_code == 204
+    assert client.delete(f"{base}/{rule_id}").status_code == 204
+    assert client.get("/api/content-profile").json()["schedules"] == []
+    assert client.get("/api/schedules").json()["items"][0]["rule_id"] is None
+    assert client.post(base, json={"local_time": "06:00"}).status_code == 200
+    assert len(client.get("/api/content-profile").json()["schedules"]) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-551")
+@pytest.mark.parametrize("time", ["25:00", "06:99", "6:00", "06:00\n", ""])
+def test_schedule_time_validation_is_atomic(profile_client, time: str) -> None:
+    client, _ = profile_client
+    original = client.get("/api/content-profile").json()
+    base = f"/api/content-profiles/{original['id']}/schedules"
+    rule_id = client.get("/api/schedules").json()["items"][0]["rule_id"]
+    for response in (
+        client.post(base, json={"local_time": time}),
+        client.put(f"{base}/{rule_id}", json={"local_time": time}),
+        client.put(f"{base}/{rule_id}", json={"enabled": None}),
+    ):
+        assert response.status_code == 422
+    assert client.get("/api/content-profile").json() == original
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-551")
+@pytest.mark.parametrize("prefix", ["../football", "foo-bar", "1FOOTBALL", "X" * 65])
+def test_invalid_account_prefix_is_rejected(profile_client, prefix: str) -> None:
+    client, _ = profile_client
+    original = client.get("/api/content-profile").json()
+    response = client.put("/api/content-profile", json={**original, "env_prefix": prefix})
+    assert response.status_code == 422
+    assert client.get("/api/content-profile").json() == original
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-550")
 @pytest.mark.parametrize("name", ["", "   ", "a" * 161])
 def test_named_profile_name_validation(profile_client, name: str) -> None:
     client, _ = profile_client
@@ -186,6 +260,7 @@ def test_deleting_profile_used_by_run_preserves_immutable_snapshot(profile_clien
             )
         )
     client.post("/api/content-profiles", json={"name": "Replacement", "profile": {}, "activate": True})
+    client.post(f"/api/content-profiles/{original['id']}/deactivate")
     assert client.delete(f"/api/content-profiles/{original['id']}").status_code == 204
     with repository._sessions() as session:
         run = session.get(RunRow, run_id)

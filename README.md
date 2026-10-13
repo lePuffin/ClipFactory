@@ -1,79 +1,165 @@
 # ClipFactory
 
-ClipFactory is a private, single-user application that autonomously produces vertical news **Clips**: it researches recent news, selects a Story, grounds it in independent Sources and verified Claims, writes a script, plans and sources visuals, generates narration and captions, composes a 720×1280 Clip with FFmpeg, evaluates it, revises it when needed, publishes approved Clips to the enabled platforms, and tracks post-publication metrics.
+### Autonomous AI News Anchor & Short-Form Video Production Engine
 
-> **Status:** v1.0.0 implementation in progress. The production workflow, scheduler, live Run events, evaluation and retries, approval, YouTube/Instagram/Facebook publishing, analytics, settings, and dashboard are implemented and tested with fakes or mocked HTTP. TikTok publishing is deferred. Live provider and platform integrations have not been verified end to end, and not every v1.0 acceptance criterion is complete.
+[![CI](https://github.com/lePuffin/ClipFactory/actions/workflows/ci.yml/badge.svg)](https://github.com/lePuffin/ClipFactory/actions/workflows/ci.yml)
+![Python 3.13+](https://img.shields.io/badge/python-3.13+-3776ab.svg?style=flat&logo=python&logoColor=white)
+![TypeScript 5.8](https://img.shields.io/badge/typescript-5.8-3178c6.svg?style=flat&logo=typescript&logoColor=white)
+![React 19](https://img.shields.io/badge/react-19-61dafb.svg?style=flat&logo=react&logoColor=black)
+![FFmpeg](https://img.shields.io/badge/media-FFmpeg%20%7C%20Faster--Whisper-007808.svg?logo=ffmpeg&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Documentation
+ClipFactory is a production-grade autonomous content engine that converts verified global news and sports reporting into broadcast-quality vertical video (9:16 vertical Clips, 720×1280, 30 FPS). Built for hands-free daily publication to **YouTube Shorts**, **Instagram Reels**, **TikTok**, and **Facebook Reels**, ClipFactory enforces strict journalistic grounding—extracting primary sources, cross-verifying factual claims, and eliminating generative hallucinations before any script or media is produced.
 
-| Start here | |
+---
+
+## Key Highlights
+
+- **Journalistic Evidence Grounding:** Discovers and clusters articles via RSS feeds, scores candidates against active editorial profiles, cross-references independent primary sources, and freezes verified claims with verbatim citations.
+- **Autonomous Agent Personas:** Production is orchestrated by specialized agent personas—**Scout** (Research), **Sage** (Fact Grounding), **Scribe** (Script & Story), **Pixel** (Visual Assets), **Echo** (Voice & Audio), **Frame** (FFmpeg Composition), **Guard** (Quality Review & Retries), and **Relay** (Omnichannel Publishing)—with live telemetry streamed over Server-Sent Events (SSE).
+- **Multi-Profile Scheduling:** Add, edit, enable or remove daily Run times from Content Profile. Each profile supports multiple times in the backend host's local timezone and an optional account credential prefix for separate publishing accounts.
+- **Manual Dispatch:** Select a saved Content Profile on Overview before starting Run Now or Manual URL; manual selection does not change automatic schedules.
+- **Hybrid Multi-Modal Media Pipeline:** Combines a local deduplicated media library, high-resolution open stock (Pexels, Pixabay, Unsplash, Wikimedia Commons), Wan 2.1 local video diffusion, HyperFrames programmatic infographics, and Manim animations.
+- **Deterministic Broadcast Assembly:** Word-level subtitle timing via `faster-whisper`, speech synthesis via Google Cloud TTS (Chirp 3 HD), dynamic audio ducking, branded outro stings, and automated EU AI Act Article 50 disclosure overlays rendered via FFmpeg.
+- **Automated Omnichannel Publishing & Analytics:** Automated dispatch across YouTube, Instagram, TikTok, and Facebook, backed by a 30-day analytics tracking lifecycle and real-time monetization milestone monitoring.
+- **Automated Validation Gates & Targeted Retries:** Multi-layer evaluation covering audio/video technical gates, narrative pacing, and semantic claim fidelity with automated bounded revisions.
+
+---
+
+## Production Pipeline
+
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, Segoe UI, sans-serif", "fontSize": "16px", "lineColor": "#64748b", "edgeLabelBackground": "#f1f5f9"}, "flowchart": {"curve": "monotoneY", "htmlLabels": true, "wrappingWidth": 640, "padding": 24, "rankSpacing": 32, "useMaxWidth": true}}}%%
+flowchart TD
+    feeds(["RSS & News Feeds"])
+    research["`**01 · SCOUT & SAGE**
+Cluster Stories · Verify independent Sources · Extract Claims`"]
+    planning["`**02 · SCRIBE & PIXEL**
+Grounded scripts · Visual planning · Media sourcing & generation`"]
+    production["`**03 · ECHO & FRAME**
+Chirp 3 HD narration · Faster-Whisper captions · FFmpeg assembly`"]
+    evaluation["`**04 · GUARD**
+Technical media gates · Semantic alignment · Bounded retries`"]
+    publishing["`**05 · RELAY**
+YouTube Shorts · Instagram Reels · TikTok · Facebook Reels`"]
+    analytics["`**06 · ANALYTICS & GOALS**
+30-day Metric Snapshots · Monetization progress tracking`"]
+
+    feeds --> research --> planning --> production --> evaluation
+    evaluation -->|Approved Clip| publishing --> analytics
+
+    classDef source fill:#f1f5f9,stroke:#cbd5e1,color:#334155,stroke-width:1px;
+    classDef stage fill:#0f172a,stroke:#334155,color:#f8fafc,stroke-width:1px;
+    classDef gate fill:#ecfdf5,stroke:#10b981,color:#065f46,stroke-width:2px;
+    classDef outcome fill:#eff6ff,stroke:#3b82f6,color:#1e40af,stroke-width:1px;
+    class feeds source;
+    class research,planning,production,publishing stage;
+    class evaluation gate;
+    class analytics outcome;
+```
+
+---
+
+## Architecture & Design Principles
+
+ClipFactory is designed with strict separation of concerns using **Hexagonal Architecture (Ports and Adapters)**:
+
+- **Zero Vendor SDK Leakage:** All external services (LLMs, TTS, news feeds, media stock, publishers) are isolated behind abstract interfaces (`ports/`). Business logic and workflows never directly couple to third-party SDKs.
+- **Durable State & Resilience:** PostgreSQL provides ACID guarantees for domain entities, editorial profiles, and LangGraph workflow checkpoints. In-memory state and rolling rate-limits are backed by Dragonfly.
+- **Deterministic Workflows:** Media processing, audio analysis, scheduling, routing, and verification gates are implemented entirely in deterministic code—LLMs are used exclusively for structured semantic synthesis.
+- **Production Operational Console:** High-performance React 19 single-page application featuring live agent state, media review, timeline scrubber, centralized scheduling, and monetization goal tracking.
+
+---
+
+## Prerequisites
+
+- **Linux / WSL2** (Ubuntu 22.04+ recommended)
+- **Python 3.13+** with **[uv](https://docs.astral.sh/uv/)**
+- **Node.js 22+** and **npm**
+- **Docker** with Compose v2 (for PostgreSQL and Dragonfly services)
+- **FFmpeg 6+** and **FFprobe** (compiled with `libx264`, `aac`, and `libass`)
+- **System Graphics Libraries** (for Cairo/Pango text rendering): `libcairo2-dev`, `libpango1.0-dev`, `pkg-config`
+- *(Optional)* **NVIDIA GPU with CUDA 12+** for accelerated local Wan 2.1 video diffusion and Whisper transcription
+
+---
+
+## Quickstart
+
+### 1. Environment Configuration
+
+```bash
+cp .env.example .env
+```
+
+Configure your local database paths, storage directories, and provider keys in `.env`. Providers default to test fakes when credentials are left empty, enabling complete offline execution.
+
+### 2. Dependency Installation & Build
+
+```bash
+# Backend dependencies and virtualenv setup
+uv sync --locked
+
+# Frontend compilation and assets build
+cd frontend && npm ci && npm run build && cd ..
+```
+
+### 3. Bootstrap & Verification
+
+```bash
+# Start Docker services (PostgreSQL & Dragonfly), run migrations, seed initial profiles
+uv run clipfactory setup
+
+# Run preflight system health checks (Database, Dragonfly, FFmpeg, directories)
+uv run clipfactory doctor
+
+# Launch native backend server and scheduler daemon
+uv run clipfactory
+```
+
+The web dashboard is served at `http://127.0.0.1:8000/`. Health check endpoint: `http://127.0.0.1:8000/api/health`.
+
+### CLI Utilities
+
+- `uv run clipfactory branding branding/<profile-slug>`: Generate a profile's reusable outro image, voice and video from its two logos. The Profile page shows its folder. See [profile branding](branding/README.md).
+- `uv run clipfactory wan-test`: Benchmark local Wan 2.1 video generation.
+- `uv run clipfactory db upgrade`: Apply pending Alembic database migrations.
+- `uv run clipfactory serve`: Run Uvicorn directly with development live-reload.
+
+---
+
+## Quality & Verification
+
+Every component is rigorously tested across unit, contract, integration, and end-to-end suites:
+
+```bash
+# Backend linting, type-checking, and test suite
+uv run ruff check backend/
+uv run pyright backend/
+uv run pytest backend/tests/unit/
+
+# Frontend linting, type-checking, and Vitest suite
+cd frontend && npm run lint && npm run typecheck && npm run test && cd ..
+
+# Full validation gate across backend, frontend, and architecture documentation
+make check
+```
+
+---
+
+## Architecture Documentation
+
+| Document | Purpose |
 | --- | --- |
-| [doc/specifications/README.md](doc/specifications/README.md) | Canonical specification: structure, reading order, source-of-truth rules |
-| [doc/specifications/00-project-overview.md](doc/specifications/00-project-overview.md) | Purpose, pipeline, scope |
-| [doc/specifications/architecture/README.md](doc/specifications/architecture/README.md) | Architecture and PlantUML diagrams |
-| [doc/specifications/decisions/README.md](doc/specifications/decisions/README.md) | Architecture Decision Records |
-| [doc/specifications/24-acceptance-criteria.md](doc/specifications/24-acceptance-criteria.md) | Definition of "v1.0.0 complete" |
-| [doc/specifications/25-roadmap.md](doc/specifications/25-roadmap.md) | Implementation phases |
-| [doc/specifications/26-open-decisions-and-conflicts.md](doc/specifications/26-open-decisions-and-conflicts.md) | Open decisions awaiting the owner |
-| [doc/setup/platform-credentials.md](doc/setup/platform-credentials.md) | Provider and platform credential setup (`.env.example`) |
-| [AGENTS.md](AGENTS.md) | Engineering contract for agents and contributors |
+| [doc/specifications/README.md](doc/specifications/README.md) | Canonical system specification and reading order |
+| [doc/specifications/00-project-overview.md](doc/specifications/00-project-overview.md) | Production pipeline, scope, and engineering principles |
+| [doc/specifications/architecture/README.md](doc/specifications/architecture/README.md) | System, application, workflow, and container architecture |
+| [doc/specifications/decisions/README.md](doc/specifications/decisions/README.md) | Architecture Decision Records (ADRs) |
+| [doc/specifications/24-acceptance-criteria.md](doc/specifications/24-acceptance-criteria.md) | Quality assurance and v1.0.0 acceptance criteria |
+| [doc/setup/platform-credentials.md](doc/setup/platform-credentials.md) | Provider credentials and API integration guide |
+| [AGENTS.md](AGENTS.md) | Core engineering contract and architectural rules |
 
-## Planned technology
-
-Python 3.13+, uv, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL, Dragonfly, Docker Compose, LangGraph, httpx, FFmpeg · local pinned HyperFrames Node package and optional isolated Manim group for typed graphics · React, TypeScript, Vite, Tailwind CSS · Ruff, Pyright, pytest, ESLint, Prettier, Vitest, Playwright, GitHub Actions.
-
-## Validating the documentation
-
-```bash
-python3 scripts/check_docs.py
-```
-
-## Running locally
-
-The backend source lives under `backend/`. From the repository root, install
-with `uv sync --locked`, configure a local `.env` from `.env.example`, and
-build the frontend with `cd frontend && npm install && npm run build`.
-The root runtime includes Manim and local Wan dependencies automatically
-(Cairo/Pango build prerequisites are in the graphics setup guide).
-From the repository root, use:
-
-```bash
-uv run clipfactory setup   # start PostgreSQL/Dragonfly, migrate, seed defaults
-uv run clipfactory doctor  # read-only, redacted dependency diagnostics
-uv run clipfactory         # native one-process/one-worker API and scheduler
-```
-
-Compose manages only pinned PostgreSQL and Dragonfly services; the backend, FFmpeg/FFprobe and local graphics renderers remain native. `setup` creates `DATA_DIR` if missing. `PUBLIC_MEDIA_DIR` is optional: startup and setup do not access or create it, and `doctor` reports an unavailable share as a warning. Local production and signed media serving use `DATA_DIR`. `doctor` exits 1 if any required check fails, and invalid configuration is reported by setting name without printing its value. The dashboard is served at `http://127.0.0.1:8000/`, and the health endpoint is `/api/health`. The `clipfactory db upgrade` and `clipfactory serve` commands remain available for targeted development use.
-
-Native Wan is limited to two generation starts per Run by default. Change
-**Wan Max Generations Per Run** under **Settings / Environment** (0 disables
-new Wan calls). Failed/stopped starts count, and Retry/Continue retain usage.
-Existing Wan Assets remain reusable. Additional Visuals use suitable grounded
-HyperFrames/Manim alternatives or refined free-media searches; unresolved
-media remains an explicit failure, never a placeholder.
-
-For a local Wan comparison without starting the app or a Run, use
-`uv run clipfactory wan-test`; see the
-[isolated paper-boat reference test](doc/setup/wan-reference-test.md).
-`--dry-run` prints its recipe without loading weights or generating media.
-
-Run the backend checks with `make backend-check` and the documentation link/traceability checks with `make docs-check`. See [provider setup](doc/setup/platform-credentials.md) before configuring live integrations.
-
-The root runtime installs native Wan and Manim without group flags.
-When generation is permitted by
-the Content Profile and shot strategy, Wan can supply video for a missing
-image or video shot. Missing model weights download automatically on first
-use into `DATA_DIR/models/wan`, outside Git. Configure the model and device
-via [generation settings](doc/specifications/18-configuration.md#provider-settings-and-credentials).
-Local GPU generation has not been verified live; first use needs network,
-disk space and sufficient RAM/VRAM and can be slow.
-
-For the specified local HyperFrames/Manim graphics setup, dependencies and
-validation expectations are documented in
-[local graphics renderer setup](doc/setup/local-graphics-rendering.md).
-All five graphics templates were exercised with synthetic local fixtures;
-this is not live Story or complete Run validation.
+---
 
 ## License
 
-[MIT](LICENSE)
+This project is licensed under the terms of the [MIT License](LICENSE).

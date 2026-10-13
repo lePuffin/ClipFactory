@@ -11,8 +11,8 @@ API contract: [architecture/application-architecture.md](architecture/applicatio
 | `/` | Overview | Current Run with agent personas, KPIs, budget, next scheduled Run |
 | `/runs` | Runs | Run history with status/outcome filters |
 | `/runs/:id` | Run detail | Timeline, Story, Sources, Claims, Script, Evaluations, Clip, failure reason |
-| `/clips` | Clips | All / Published / Failed tabs, 20 Clips per page, preview, publications, latest metrics |
-| `/publishes` | Review Board | Review board (20 per page) of Clips awaiting approval only: preview, caption, hashtags, Sources, platform targets, Approve / Reject |
+| `/clips` | Clips | All / Published / Failed tabs, 20 Clips per page, preview, publications, latest metrics, approve / reject / delete actions |
+| `/goals` | Goals | "Obtain Monetization" tracking qualification milestones, progress meters, and policy restrictions across YouTube, Facebook, Instagram, and TikTok |
 | `/analytics` | Analytics | Per-platform metrics and estimated revenue over time |
 | `/assets` | Asset library | Browse (20 per page), filter, preview, provenance, status, import |
 | `/profile` | Content Profile | Select, save as new, edit, activate or delete saved profiles |
@@ -178,11 +178,13 @@ Global header: product name, current Run indicator, **Run Now** button,
     integer 0–100) with guidance that 0 disables new Wan calls and Retry/
     Continue retain usage. Additional Visuals use suitable graphics or refined
     free-media searches, not unlimited Wan generation (CF-REQ-266).
-  - A Schedule section edits the active Content Profile's daily schedule
-    (CF-REQ-651): an enabled toggle, a 24-hour local time picker and an IANA
-    timezone dropdown, plus the next scheduled Run. Saving stores a new
-    Content Profile version with only `schedule` changed; invalid times are
-    rejected before saving. The scheduler applies it within one poll interval.
+  - Automation & Dispatch belongs to Content Profile, not Settings.
+    It groups rules by selectable saved profile, supports adding multiple
+    daily times, explicit time saving, enabled toggles and individual deletion.
+    All times use backend host local time, without a timezone picker.
+    Inactive profiles remain editable; activation controls dispatch only.
+    Validation and API failures remain visible. Empty schedules allow adding
+    a new rule. The profile editor exposes Account Env Prefix but no secrets.
   - Each Settings group is a collapsible section that can be expanded or
     collapsed independently without losing unsaved edits.
 - **Related:** CF-REQ-651, CF-REQ-752, CF-REQ-753
@@ -195,6 +197,9 @@ Global header: product name, current Run indicator, **Run Now** button,
   one for editing, save the current form as a new named profile, update or
   activate the selected profile, and delete a profile that is not active
   (CF-REQ-550 named-profile APIs).
+- **Profile branding:** The selected saved profile shows its stable
+  server-assigned `branding/<profile-slug>/` path and the `uv run clipfactory branding` command.
+  These are read-only instructions, not editable arbitrary filesystem paths.
 - **Acceptance:**
   - Entering `min 90 / max 60` shows a field error and does not submit.
   - Saving as new adds the profile to the selector; deleting the active
@@ -202,12 +207,23 @@ Global header: product name, current Run indicator, **Run Now** button,
 
 ### CF-REQ-608 — Run Now
 
+- **Behaviour:** Start a Run includes a labelled Content Profile selector
+  listing saved profiles, including inactive ones. The owner explicitly
+  chooses the profile used by Run Now and Manual URL. Loading, unavailable
+  or empty profile lists disable dispatch and display their state. Selecting
+  a profile does not alter activation or schedules. The selected ID is sent
+  to the API and its immutable snapshot, including account scope, is used.
+  API clients omitting the ID retain the most recently updated active profile
+  default. A missing selected profile returns 404 `profile_not_found`, never
+  silently creating or selecting a default.
 - **Description:** A Run Now button shall start a Run immediately. It is
   disabled while a Run is active; if the server reports a conflict, the UI
   shows the active Run link.
 - **Acceptance:**
   - Clicking Run Now while idle navigates to the new Run's detail page.
   - The API returns 409 when a Run is active (see CF-REQ-652).
+  - Choosing a different saved profile changes the Run snapshot without
+    changing any saved profile's activation status or schedule.
 
 ### CF-REQ-609 — Manual URL input
 
@@ -235,11 +251,16 @@ Global header: product name, current Run indicator, **Run Now** button,
   playback (HTTP range streaming), Story title, creation time, and per-platform
   Publication status, link and latest metrics, in three tabs — **All**,
   **Published** and **Failed** — mapped to the `filter` parameter, 20 Clips
-  per page. A `published` status badge is shown in green.
+  per page. A `published` status badge is shown in green. Each Clip card
+  features individual **Approve**, **Reject**, and **Delete** actions placed
+  directly below the platform states. Approving or rejecting submits the
+  publication decision, and deleting removes the Clip, its render revisions,
+  scheduled publish tasks, and storage media.
 - **Acceptance:**
   - Switching tab resets to page 1 and requests the matching filter;
     pagination controls reflect `total`.
   - Seeking in the preview player issues range requests that the API serves with 206.
+  - Approve, Reject, and Delete actions are available on each Clip card.
 
 ### CF-REQ-611 — Safe rendering of external text
 
@@ -264,23 +285,26 @@ Global header: product name, current Run indicator, **Run Now** button,
   - Estimated entries are visibly labelled "estimated".
 - **Related:** CF-REQ-665
 
-### CF-REQ-613 — Approval of pending Clips
+### CF-REQ-613 — Approval of pending Clips and Monetization Goals
 
 - **API behaviour:** `GET /api/clips/pending-approval` accepts `limit` (default
   100, 1–100) and `offset` (default 0, non-negative), returning
   `{"items": [...], "total": integer}`. Only approved Clips with at least one
   `awaiting_approval` Publication qualify; pagination, stable ordering and total
-  follow CF-REQ-610.
+  follow CF-REQ-610. `GET /api/goals` and `POST /api/goals/refresh` return
+  monetization progress across YouTube, Facebook, Instagram and TikTok.
 
-- **Description:** When Clips are `awaiting_approval`, the dashboard shall
-  show them prominently with exact-version preview, unresolved review reasons, platform metadata and Approve / Reject actions. Human-review rollout has no auto-publication countdown; an automatic countdown is shown only for explicitly enabled benchmark-qualified timeout mode.
+- **Description:** When Clips are `awaiting_approval`, each Clip in the Clips
+  workspace shall display explicit Approve and Reject buttons directly beneath
+  its platform statuses. The navigation provides a dedicated **Goals** tab
+  (`/goals`), titled **Obtain Monetization**, displaying platform subscriber/follower
+  milestones, watch hours/views, and regulatory policy restrictions including
+  EU AI Act Article 50 transparency disclosure ("AI Generated" badge in the
+  bottom-left corner). Goals can be refreshed on demand via the update button.
 - **Acceptance:**
-  - Approving from the dashboard triggers publication and the item disappears from the pending list.
-  - Human-review mode requires an explicit decision; eligible automatic mode's countdown matches the task due time.
-  - The **Review Board** navigation tab (`/publishes`) lists only
-    `awaiting_approval` Clips, one Clip per row with preview, caption,
-    hashtags, Sources and platform targets, 20 per page; a decided Clip
-    leaves the board.
+  - Approving or rejecting a Clip submits the publication decision.
+  - The Goals tab displays milestones, progress percentages, and policy checklists for each eligible platform.
+  - The update button on the Goals page refreshes metrics.
 - **Related:** CF-REQ-459, CF-REQ-460
 
 ### CF-REQ-614 — Storyboard and version-bound quality review UI

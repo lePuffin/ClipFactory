@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from clipfactory.composition.render import validate_end_card
 from clipfactory.infrastructure.media.runner import MediaRunner
 
 
@@ -76,7 +77,7 @@ async def generate_outro(
     poster = await asyncio.to_thread(render_outro_poster, logo, font)
     audio = await asyncio.to_thread(news_sting)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="in-pulso-outro-") as temporary:
+    with tempfile.TemporaryDirectory(prefix=".outro-", dir=output.parent) as temporary:
         root = Path(temporary)
         picture = root / "poster.png"
         sound = root / "sting.wav"
@@ -148,14 +149,14 @@ async def generate_outro(
                 str(video),
             ]
         )
-        await runner.decode(video)
-        await asyncio.to_thread(output.write_bytes, video.read_bytes())
-    await asyncio.to_thread(output.with_suffix(".png").write_bytes, poster)
+        await validate_end_card(video, runner=runner)
+        await asyncio.to_thread(picture.replace, output.with_suffix(".png"))
+        await asyncio.to_thread(video.replace, output)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate the original three-second inPulso end card offline")
-    parser.add_argument("--logo", type=Path, default=Path("logo_inPulso_world.png"))
+    parser.add_argument("--logo", type=Path, default=Path("branding/inpulso_world/logo_inPulso_world.png"))
     parser.add_argument("--font", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("branding/outro.mp4"))
     parser.add_argument("--voice-file", type=Path, help="Pre-generated offline speech to mix over the sting")

@@ -163,6 +163,533 @@
         }
       }
     },
+    "/api/content-profiles": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Named Profiles",
+        "operationId": "get_named_profiles_api_content_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Create Named Profile",
+        "operationId": "create_named_profile_api_content_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NamedProfileCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Named Profile",
+        "operationId": "update_named_profile_api_content_profiles__profile_id__put",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NamedProfileUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Delete Named Profile",
+        "operationId": "delete_named_profile_api_content_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}/schedule": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Profile Schedule",
+        "operationId": "update_profile_schedule_api_content_profiles__profile_id__schedule_put",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileScheduleUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}/schedules": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Add Schedule Rule",
+        "operationId": "add_schedule_rule_api_content_profiles__profile_id__schedules_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRuleCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Add Schedule Rule Api Content Profiles  Profile Id  Schedules Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}/schedules/{rule_id}": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Schedule Rule",
+        "operationId": "update_schedule_rule_api_content_profiles__profile_id__schedules__rule_id__put",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRuleUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Update Schedule Rule Api Content Profiles  Profile Id  Schedules  Rule Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Delete Schedule Rule",
+        "operationId": "delete_schedule_rule_api_content_profiles__profile_id__schedules__rule_id__delete",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Delete Schedule Rule Api Content Profiles  Profile Id  Schedules  Rule Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}/activate": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Activate Named Profile",
+        "operationId": "activate_named_profile_api_content_profiles__profile_id__activate_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}/deactivate": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Deactivate Named Profile",
+        "operationId": "deactivate_named_profile_api_content_profiles__profile_id__deactivate_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/content-profiles/{profile_id}/toggle-active": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Toggle Active Named Profile",
+        "operationId": "toggle_active_named_profile_api_content_profiles__profile_id__toggle_active_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileToggleActiveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Schedules",
+        "operationId": "get_schedules_api_schedules_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileScheduleListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/content-profile": {
       "get": {
         "tags": [
@@ -176,9 +703,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Get Content Profile Api Content Profile Get"
+                  "$ref": "#/components/schemas/ContentProfile"
                 }
               }
             }
@@ -209,7 +734,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Put Content Profile Api Content Profile Put"
+                  "$ref": "#/components/schemas/ContentProfile"
                 }
               }
             }
@@ -280,6 +805,49 @@
         }
       }
     },
+    "/api/clips/{clip_id}/publications/retry": {
+      "post": {
+        "tags": [
+          "publishing"
+        ],
+        "summary": "Retry Publications",
+        "operationId": "retry_publications_api_clips__clip_id__publications_retry_post",
+        "parameters": [
+          {
+            "name": "clip_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Clip Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Retry Publications Api Clips  Clip Id  Publications Retry Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/clips": {
       "get": {
         "tags": [
@@ -298,6 +866,32 @@
               "minimum": 1,
               "default": 100,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "published",
+                "failed"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Filter"
             }
           }
         ],
@@ -343,6 +937,17 @@
               "minimum": 1,
               "default": 100,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
             }
           }
         ],
@@ -399,6 +1004,40 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "publishing"
+        ],
+        "summary": "Delete Clip",
+        "operationId": "delete_clip_api_clips__clip_id__delete",
+        "parameters": [
+          {
+            "name": "clip_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Clip Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -752,6 +1391,48 @@
         }
       }
     },
+    "/api/goals": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Get Goals",
+        "operationId": "get_goals_api_goals_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/goals/refresh": {
+      "post": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Refresh Goals",
+        "operationId": "refresh_goals_api_goals_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/runs": {
       "post": {
         "tags": [
@@ -759,6 +1440,23 @@
         ],
         "summary": "Start Run Now",
         "operationId": "start_run_now_api_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunNowRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -766,6 +1464,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RunCreatedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1178,6 +1886,17 @@
               "default": 100,
               "title": "Limit"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
           }
         ],
         "responses": {
@@ -1405,11 +2124,16 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total"
         ],
         "title": "AssetListResponse"
       },
@@ -1711,11 +2435,16 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total"
         ],
         "title": "ClipListResponse"
       },
@@ -1845,6 +2574,154 @@
         ],
         "title": "ClipResponse"
       },
+      "ContentCategory": {
+        "type": "string",
+        "enum": [
+          "general",
+          "technology",
+          "ai",
+          "finance",
+          "business",
+          "science",
+          "gaming",
+          "sports",
+          "entertainment",
+          "politics"
+        ],
+        "title": "ContentCategory"
+      },
+      "ContentProfile": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": "Global News (English)"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ContentCategory",
+            "default": "general"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Topics"
+          },
+          "excluded_topics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Topics"
+          },
+          "geography": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Geography"
+          },
+          "markets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Markets"
+          },
+          "voice": {
+            "$ref": "#/components/schemas/VoiceSpec"
+          },
+          "duration": {
+            "$ref": "#/components/schemas/DurationPolicy"
+          },
+          "output": {
+            "$ref": "#/components/schemas/OutputSpec"
+          },
+          "visual_style": {
+            "$ref": "#/components/schemas/VisualStyle"
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/Platform"
+            },
+            "type": "array",
+            "title": "Platforms"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "schedules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ScheduleRule"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedules"
+          },
+          "env_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env Prefix"
+          },
+          "branding_folder": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,199}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branding Folder"
+          },
+          "research": {
+            "$ref": "#/components/schemas/ResearchPolicy"
+          },
+          "music": {
+            "$ref": "#/components/schemas/MusicPolicy"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/GenerationPolicy"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ContentProfile"
+      },
       "CostEntryResponse": {
         "properties": {
           "id": {
@@ -1963,6 +2840,33 @@
         ],
         "title": "DashboardSummaryResponse"
       },
+      "DurationPolicy": {
+        "properties": {
+          "min_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Min Seconds"
+          },
+          "target_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Target Seconds"
+          },
+          "max_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "min_seconds",
+          "target_seconds",
+          "max_seconds"
+        ],
+        "title": "DurationPolicy"
+      },
       "EvaluationResponse": {
         "properties": {
           "id": {
@@ -2047,6 +2951,170 @@
         ],
         "title": "EvaluationResponse"
       },
+      "GenerationPolicy": {
+        "properties": {
+          "image_providers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Image Providers"
+          },
+          "video_providers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Video Providers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "GenerationPolicy"
+      },
+      "GoalDataResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/PlatformGoalResponse"
+            },
+            "type": "array",
+            "title": "Platforms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "description",
+          "updated_at",
+          "platforms"
+        ],
+        "title": "GoalDataResponse"
+      },
+      "GoalMetricResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Current"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Target"
+          },
+          "target_tier1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Tier1"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "pct": {
+            "type": "number",
+            "title": "Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "current",
+          "target",
+          "unit",
+          "pct"
+        ],
+        "title": "GoalMetricResponse"
+      },
+      "GoalRestrictionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "description",
+          "status"
+        ],
+        "title": "GoalRestrictionResponse"
+      },
+      "GoalsResponse": {
+        "properties": {
+          "goal": {
+            "$ref": "#/components/schemas/GoalDataResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "GoalsResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2101,6 +3169,18 @@
           "url": {
             "type": "string",
             "title": "Url"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
           }
         },
         "additionalProperties": false,
@@ -2250,6 +3330,178 @@
         ],
         "title": "MetricSnapshotResponse"
       },
+      "MusicPolicy": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "mood_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mood Tags"
+          },
+          "energy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy",
+            "default": "low"
+          },
+          "ducked_level_db": {
+            "type": "number",
+            "title": "Ducked Level Db",
+            "default": -20
+          },
+          "unducked_level_db": {
+            "type": "number",
+            "title": "Unducked Level Db",
+            "default": -12
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "MusicPolicy"
+      },
+      "NamedProfileCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ContentProfile"
+          },
+          "activate": {
+            "type": "boolean",
+            "title": "Activate",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "profile"
+        ],
+        "title": "NamedProfileCreateRequest"
+      },
+      "NamedProfileListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NamedProfileResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "NamedProfileListResponse"
+      },
+      "NamedProfileResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ContentProfile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "is_active",
+          "updated_at",
+          "profile"
+        ],
+        "title": "NamedProfileResponse"
+      },
+      "NamedProfileUpdateRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContentProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "NamedProfileUpdateRequest"
+      },
+      "OutputSpec": {
+        "properties": {
+          "width": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Width",
+            "default": 720
+          },
+          "height": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Height",
+            "default": 1280
+          },
+          "fps": {
+            "type": "integer",
+            "maximum": 60.0,
+            "minimum": 24.0,
+            "title": "Fps",
+            "default": 30
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "OutputSpec"
+      },
       "OverlayRequest": {
         "properties": {
           "kind": {
@@ -2345,6 +3597,210 @@
           "facebook"
         ],
         "title": "Platform"
+      },
+      "PlatformGoalResponse": {
+        "properties": {
+          "platform": {
+            "type": "string",
+            "title": "Platform"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "program": {
+            "type": "string",
+            "title": "Program"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "published_clips": {
+            "type": "integer",
+            "title": "Published Clips"
+          },
+          "progress_pct": {
+            "type": "number",
+            "title": "Progress Pct"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/GoalMetricResponse"
+            },
+            "type": "array",
+            "title": "Metrics"
+          },
+          "restrictions": {
+            "items": {
+              "$ref": "#/components/schemas/GoalRestrictionResponse"
+            },
+            "type": "array",
+            "title": "Restrictions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "platform",
+          "name",
+          "program",
+          "status",
+          "published_clips",
+          "progress_pct",
+          "metrics",
+          "restrictions"
+        ],
+        "title": "PlatformGoalResponse"
+      },
+      "ProfileScheduleListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileScheduleResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ProfileScheduleListResponse"
+      },
+      "ProfileScheduleResponse": {
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Profile Id"
+          },
+          "profile_name": {
+            "type": "string",
+            "title": "Profile Name"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "local_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "schedule": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Schedule"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "disabled",
+              "idle"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id",
+          "profile_name",
+          "rule_id",
+          "is_active",
+          "local_time",
+          "enabled",
+          "schedule",
+          "task_id",
+          "due_at",
+          "status"
+        ],
+        "title": "ProfileScheduleResponse"
+      },
+      "ProfileScheduleUpdateRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "local_time": {
+            "type": "string",
+            "title": "Local Time"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "default": "Europe/Lisbon"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled",
+          "local_time"
+        ],
+        "title": "ProfileScheduleUpdateRequest"
+      },
+      "ProfileToggleActiveRequest": {
+        "properties": {
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "is_active"
+        ],
+        "title": "ProfileToggleActiveRequest"
       },
       "PublicationResponse": {
         "properties": {
@@ -2543,6 +3999,59 @@
           "transcription_calls"
         ],
         "title": "RenderRevisionResponse"
+      },
+      "ResearchPolicy": {
+        "properties": {
+          "max_candidate_articles": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Candidate Articles",
+            "default": 20
+          },
+          "min_sources": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Min Sources",
+            "default": 1
+          },
+          "preferred_independent_sources": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Preferred Independent Sources",
+            "default": 3
+          },
+          "max_article_age_hours": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Article Age Hours",
+            "default": 24
+          },
+          "allowed_publishers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Publishers"
+          },
+          "blocked_publishers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blocked Publishers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ResearchPolicy"
       },
       "RunCostsResponse": {
         "properties": {
@@ -2833,6 +4342,25 @@
         ],
         "title": "RunListResponse"
       },
+      "RunNowRequest": {
+        "properties": {
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RunNowRequest"
+      },
       "RunSummaryResponse": {
         "properties": {
           "run_id": {
@@ -3052,6 +4580,100 @@
         ],
         "title": "SavedNewsRenderRequest"
       },
+      "Schedule": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "local_time": {
+            "type": "string",
+            "title": "Local Time",
+            "default": "05:00"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "default": "Europe/Lisbon"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Schedule"
+      },
+      "ScheduleRule": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "local_time": {
+            "type": "string",
+            "title": "Local Time",
+            "default": "06:00"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ScheduleRule"
+      },
+      "ScheduleRuleCreateRequest": {
+        "properties": {
+          "local_time": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Local Time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "local_time"
+        ],
+        "title": "ScheduleRuleCreateRequest"
+      },
+      "ScheduleRuleUpdateRequest": {
+        "properties": {
+          "local_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Time"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ScheduleRuleUpdateRequest"
+      },
       "SoundRequest": {
         "properties": {
           "asset_id": {
@@ -3133,6 +4755,65 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VisualStyle": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": "clean, factual news style"
+          },
+          "caption_style": {
+            "type": "string",
+            "title": "Caption Style",
+            "default": "bold_white_on_dark_box"
+          },
+          "motion_intensity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Motion Intensity",
+            "default": "medium"
+          },
+          "allow_generated_media": {
+            "type": "boolean",
+            "title": "Allow Generated Media",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "VisualStyle"
+      },
+      "VoiceSpec": {
+        "properties": {
+          "provider_voice_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Provider Voice Id"
+          },
+          "speaking_rate": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Speaking Rate",
+            "default": 1.0
+          },
+          "words_per_minute": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Words Per Minute",
+            "default": 150
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider_voice_id"
+        ],
+        "title": "VoiceSpec"
       }
     }
   }

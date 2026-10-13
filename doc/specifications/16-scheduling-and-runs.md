@@ -44,9 +44,11 @@ Run Events, API and UI.
 
 ### CF-REQ-651 — Daily schedule
 
-- **Description:** When the active profile's `schedule.enabled` is true, the
-  scheduler shall trigger a Run daily at `schedule.local_time` in
-  `schedule.timezone` (default 05:00 Europe/Lisbon).
+- **Description:** Each active Content Profile may have multiple independently
+  enabled daily schedule rules (`id`, `local_time`, `enabled`). Rules run in the
+  backend host's local timezone, without a timezone picker (owner-approved,
+  2026-10-13). Legacy profiles without `schedules` use their existing daily time.
+  An explicitly empty rule list means no scheduled Runs, not a default Run.
 - **Behaviour:** The scheduler is an in-process loop polling persisted
   scheduled tasks every `scheduler.poll_interval_seconds`. A daily task missed
   while the application was down runs at startup if less than
@@ -57,6 +59,10 @@ Run Events, API and UI.
   - With a fake clock at 04:59:50 → 05:00:20 (poll 30 s), exactly one Run is created.
   - Restarting the app at 05:30 (grace 60) creates the missed Run; at 06:30 it does not.
   - Changing `local_time` to 06:15 reschedules the next task accordingly.
+  - Adding, editing, disabling and deleting rules affects only that rule;
+    deleting the last rule leaves the profile unscheduled across restarts.
+  - Multiple daily times for the same profile retain independent task IDs.
+  - Local timezone resolution retains DST rules, not today's fixed UTC offset.
 - **Related:** ADR-010, OD-008
 
 ### CF-REQ-652 — Single active Run
@@ -73,6 +79,9 @@ Run Events, API and UI.
 - **Description:** At start, a Run shall store an immutable snapshot of the
   active Content Profile and effective application settings, and use only the
   snapshot for its whole execution, including resumptions.
+  Explicit `profile_id` on Run Now or Manual URL selects any saved profile,
+  independently of automatic scheduling activation. Without an ID, the
+  most recently updated active profile is used for backward compatibility.
 - **Acceptance:**
   - Changing `workflow.max_revision_retries` during a Run does not change that Run's limit.
 - **Related:** CF-REQ-555

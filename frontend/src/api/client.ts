@@ -69,8 +69,8 @@ async function apiMutation<T>(method: "POST" | "PUT" | "DELETE", path: string, b
   return (await response.json()) as T;
 }
 
-export function startRunNow(): Promise<RunCreated> {
-  return apiMutation<RunCreated>("POST", "/api/runs");
+export function startRunNow(profileId?: string): Promise<RunCreated> {
+  return apiMutation<RunCreated>("POST", "/api/runs", profileId ? { profile_id: profileId } : undefined);
 }
 
 export function continueRun(runId: string): Promise<RunCreated> {
@@ -151,17 +151,96 @@ function isApiErrorPayload(value: unknown): value is { error: { message: string;
   const error = value.error;
   return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string";
 }
-export type ContentProfileItem = components["schemas"]["ContentProfileItemResponse"];
-export type ContentProfileList = components["schemas"]["ContentProfileListResponse"];
-export function createContentProfile(request: components["schemas"]["ContentProfileCreateRequest"]): Promise<ContentProfileItem> {
+export type ContentProfileItem = components["schemas"]["NamedProfileResponse"];
+export type ContentProfileList = components["schemas"]["NamedProfileListResponse"];
+
+export type ProfileScheduleItem = components["schemas"]["ProfileScheduleResponse"];
+
+export function createContentProfile(request: Omit<components["schemas"]["NamedProfileCreateRequest"], "profile" | "activate"> & { profile: JsonObject; activate?: boolean }): Promise<ContentProfileItem> {
   return apiMutation("POST", "/api/content-profiles", request);
 }
-export function saveContentProfile(id: string, request: components["schemas"]["ContentProfileUpdateRequest"]): Promise<ContentProfileItem> {
+export function saveContentProfile(id: string, request: Omit<components["schemas"]["NamedProfileUpdateRequest"], "profile"> & { profile?: JsonObject }): Promise<ContentProfileItem> {
   return apiMutation("PUT", `/api/content-profiles/${encodeURIComponent(id)}`, request);
 }
 export function activateContentProfile(id: string): Promise<ContentProfileItem> {
   return apiMutation("POST", `/api/content-profiles/${encodeURIComponent(id)}/activate`);
 }
+export function deactivateContentProfile(id: string): Promise<ContentProfileItem> {
+  return apiMutation("POST", `/api/content-profiles/${encodeURIComponent(id)}/deactivate`);
+}
+export function toggleActiveProfile(id: string, is_active: boolean): Promise<ContentProfileItem> {
+  return apiMutation("POST", `/api/content-profiles/${encodeURIComponent(id)}/toggle-active`, { is_active });
+}
+export function updateProfileSchedule(id: string, schedule: { enabled: boolean; local_time: string; timezone?: string }): Promise<ContentProfileItem> {
+  return apiMutation("PUT", `/api/content-profiles/${encodeURIComponent(id)}/schedule`, schedule);
+}
+export function addProfileScheduleRule(id: string, rule: { local_time: string; enabled: boolean }): Promise<unknown> {
+  return apiMutation("POST", `/api/content-profiles/${encodeURIComponent(id)}/schedules`, {
+    local_time: rule.local_time,
+    enabled: rule.enabled,
+  });
+}
+export function updateProfileScheduleRule(profileId: string, ruleId: string, rule: { local_time?: string; enabled?: boolean }): Promise<unknown> {
+  return apiMutation("PUT", `/api/content-profiles/${encodeURIComponent(profileId)}/schedules/${encodeURIComponent(ruleId)}`, rule);
+}
+export function deleteProfileScheduleRule(profileId: string, ruleId: string): Promise<void> {
+  return apiMutation("DELETE", `/api/content-profiles/${encodeURIComponent(profileId)}/schedules/${encodeURIComponent(ruleId)}`);
+}
+export function getSchedules(signal?: AbortSignal): Promise<{ items: ProfileScheduleItem[] }> {
+  return apiGet<{ items: ProfileScheduleItem[] }>("/api/schedules", signal);
+}
 export function deleteContentProfile(id: string): Promise<void> {
   return apiMutation("DELETE", `/api/content-profiles/${encodeURIComponent(id)}`);
+}
+
+export function deleteClip(clipId: string): Promise<void> {
+  return apiMutation("DELETE", `/api/clips/${encodeURIComponent(clipId)}`);
+}
+
+export interface GoalMetric {
+  id: string;
+  label: string;
+  current: number;
+  target: number;
+  target_tier1?: number;
+  unit: string;
+  pct: number;
+}
+
+export interface GoalRestriction {
+  id: string;
+  title: string;
+  description: string;
+  status: "compliant" | "verified" | "pending_action" | "deferred";
+}
+
+export interface PlatformGoal {
+  platform: string;
+  name: string;
+  program: string;
+  status: string;
+  published_clips: number;
+  progress_pct: number;
+  metrics: GoalMetric[];
+  restrictions: GoalRestriction[];
+}
+
+export interface GoalData {
+  id: string;
+  title: string;
+  description: string;
+  updated_at: string;
+  platforms: PlatformGoal[];
+}
+
+export interface GoalsResponse {
+  goal: GoalData;
+}
+
+export function getGoals(signal?: AbortSignal): Promise<GoalsResponse> {
+  return apiGet<GoalsResponse>("/api/goals", signal);
+}
+
+export function refreshGoals(): Promise<GoalsResponse> {
+  return apiMutation<GoalsResponse>("POST", "/api/goals/refresh");
 }

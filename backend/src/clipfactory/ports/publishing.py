@@ -22,6 +22,7 @@ class PublicationRequest:
     contains_synthetic_media: bool
     synthetic_voice: bool
     public_media_url: str | None = None
+    env_prefix: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,11 +48,11 @@ class Publisher(Protocol):
     platform: Platform
     name: str
 
-    def is_configured(self) -> bool: ...
+    def is_configured(self, env_prefix: str | None = None) -> bool: ...
 
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult: ...
 
-    async def fetch_metrics(self, platform_post_id: str) -> PlatformMetrics: ...
+    async def fetch_metrics(self, platform_post_id: str, env_prefix: str | None = None) -> PlatformMetrics: ...
 
 
 class PublicMediaReader(Protocol):

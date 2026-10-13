@@ -121,7 +121,7 @@ pixel count per frame, reducing encode time, storage and upload size.
 - **Description:** The immutable CompositionSpec shall include ordered visuals, editorial Overlay Cues, subtitles, narration/music/SFX Audio Cues, motion/keyframe presets, template versions and platform-safe layout identifiers.
 - **Behaviour:** Deterministic rendering consumes this contract only; basic graphics use local fonts/assets and FFmpeg, not generation providers. Required credits/disclosures remain intact. Every output records Story Package and render revision, input hashes and composition hash; deterministic planning does not create an external overlay-provider abstraction.
 - **Persistent identity (owner revision 2026-10-08):** Every future normal Run
-  renders the configured owner logo (`logo_letters.png` by default), top-right, fitted
+  renders the configured owner logo (`branding/inpulso_world/logo_letters.png` by default), top-right, fitted
   within 112 x 112 px with 24 px margins at 720 px width, scaled with output
   width. Preserve aspect ratio and existing alpha; apply 70% opacity by
   default. Missing or invalid configured logo files fail composition explicitly.
@@ -137,7 +137,7 @@ pixel count per frame, reducing encode time, storage and upload size.
   existing archive/illustrative disclosures remain unchanged.
 - **Branded ending (owner revision 2026-10-10):** An optional configured
   reusable local MP4 occupies the final three seconds of the tail. The
-  owner end card centers `logo_inPulso_world.png`, displays "Follow for more",
+  owner end card centers `branding/inpulso_world/logo_inPulso_world.png`, displays "Follow for more",
   and includes the exact spoken phrase "Keep up with the world. Follow InPulso."
   over an original locally synthesized news-style sting. The owner authorized
   one-time Google TTS generation using configured credentials; the speech is
@@ -153,6 +153,34 @@ pixel count per frame, reducing encode time, storage and upload size.
   is branding, not fabricated Story footage or a factual title-card fallback.
   The wordmark's existing alpha and white lettering are preserved;
   transparent padding is trimmed.
+- **Profile branding (owner revision 2026-10-13):** Creating a Content Profile
+  creates `branding/<profile-slug>/` under the repository root, independent of
+  the backend launch directory.
+  The server derives a readable ASCII slug from the initial profile name,
+  stores it as `branding_folder`, and preserves it on rename. If the slug is
+  already occupied, append the new profile UUID to avoid sharing assets.
+  Existing UUID folders migrate to readable names; compatibility symlinks
+  preserve paths in earlier Run snapshots. Branding media is local and
+  ignored by Git; only the generic branding instructions are tracked. Each folder
+  owns `logo_letters.png`, `logo_badge.png`, `outro.png`, `outro-voice.wav`
+  and `outro.mp4`. New folders are empty until the owner supplies the two logos;
+  no other profile's logos or voice are used as defaults. New Run snapshots
+  select that profile's wordmark and end card, reserving at least three seconds
+  of tail. If no MP4 exists, composition builds and validates it once from
+  that folder's badge and voice, retaining the poster and MP4 for subsequent
+  Runs. Replacing inputs requires removing the cached MP4 to rebuild it.
+  Missing or invalid inputs fail composition explicitly. Rename, activation,
+  schedule changes and profile deletion do not rename or delete branding.
+  Existing Run snapshots and their frozen end cards remain unchanged.
+  The explicit command `uv run clipfactory branding <folder>` validates both
+  PNG logos, generates `outro-voice.wav` through configured Google TTS once,
+  and authors `outro.png` and the validated three-second `outro.mp4`.
+  `--text`, `--voice-id`, `--language` and `--font` customize authoring;
+  speech defaults to "Follow for more." with the default Content Profile
+  English voice. Completed files are reused without another provider call;
+  `--force` regenerates voice/poster/video. Missing inputs and provider/render
+  errors return a nonzero exit code and an explicit diagnostic. Failed
+  authoring leaves previously completed assets unchanged.
 - **Acceptance:** A fixture with uncited newer Sources still displays the
   latest cited publication date; date and logo span the full Clip timeline,
   stay above captions and outside editorial panels, change the composition

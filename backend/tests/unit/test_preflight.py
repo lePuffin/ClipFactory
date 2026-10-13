@@ -44,6 +44,8 @@ def settings(tmp_path: Path) -> EnvironmentSettings:
         "NEWS_SOURCES": "fake",
         "TTS_PROVIDER": "fake",
         "TRANSCRIPTION_PROVIDER": "fake",
+        "HYPERFRAMES_PATH": None,
+        "MANIM_PATH": None,
     }
     return EnvironmentSettings(**values)
 

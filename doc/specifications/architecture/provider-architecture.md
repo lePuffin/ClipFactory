@@ -174,15 +174,19 @@ class TranscriptionProvider(Protocol):
 class Publisher(Protocol):
     platform: Platform
     name: str
-    def is_configured(self) -> bool: ...
+    def is_configured(self, env_prefix: str | None = None) -> bool: ...
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult: ...
-    async def fetch_metrics(self, platform_post_id: str) -> PlatformMetrics: ...
+    async def fetch_metrics(self, platform_post_id: str, env_prefix: str | None = None) -> PlatformMetrics: ...
 ```
 
 - Initial adapters: `YouTubePublisher`, `InstagramPublisher`, `TikTokPublisher`, `FacebookPublisher` (OD-009).
 - Platform limits (title length, hashtags, disclosure fields) are handled
   inside each adapter (CF-REQ-451, CF-REQ-453).
 - `PlatformMetrics` fields map to `MetricSnapshot`; unavailable values are `None`.
+- `PublicationRequest.env_prefix` and metric collection carry the Run snapshot's
+  opaque account scope. Adapters resolve scoped environment credentials and
+  OAuth files; use cases never inspect secrets. Missing scoped credentials
+  fail explicitly and cannot fall back to a different account.
 
 ### StorageProvider
 

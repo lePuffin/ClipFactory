@@ -73,7 +73,8 @@ h2 { margin: 7px 0 0; color: var(--paper); font-size: 20px; font-weight: 500; le
 .icon-button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); background: #171c1c; color: #b3beb7; cursor: pointer; transition: border-color .16s ease, color .16s ease, transform .16s ease; }
 .icon-button:hover { border-color: var(--acid); color: var(--acid); transform: rotate(8deg); }
 .icon-button:disabled { opacity: .45; cursor: wait; transform: none; }
-.execution-bar { display: grid; grid-template-columns: minmax(150px, .55fr) auto minmax(280px, 1.45fr); align-items: end; gap: 18px; margin-bottom: 18px; padding: 18px 22px; border: 1px solid var(--line); background: var(--panel); }
+.execution-bar { display: grid; grid-template-columns: minmax(120px, .5fr) minmax(180px, .8fr) auto minmax(240px, 1.2fr); align-items: end; gap: 18px; margin-bottom: 18px; padding: 18px 22px; border: 1px solid var(--line); background: var(--panel); }
+.run-profile-selector { min-width: 0; }
 .execution-bar h2 { font-size: 17px; }
 .command-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 8px; padding: 0 15px; border: 1px solid var(--acid); background: var(--acid); color: var(--ink); font-size: 11px; font-weight: 600; cursor: pointer; }
 .command-button:disabled { opacity: .5; cursor: wait; }
@@ -388,3 +389,54 @@ select option { background: var(--panel); color: var(--paper); }
 
 .idle-state { display: flex; align-items: center; gap: 0.6rem; }
 .idle-state > span:last-child { color: var(--muted, #8a9188); }
+
+/* Clip Actions: Approve, Reject, Delete below platform states */
+.clip-actions-bar { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(120, 135, 126, 0.16); display: flex; flex-direction: column; gap: 8px; }
+.clip-actions-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.clip-actions-buttons .action-btn { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; padding: 0 14px; font-size: 11px; font-weight: 500; cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.clip-actions-buttons .action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.clip-actions-buttons .action-btn.approve { border: 1px solid var(--acid); background: rgba(199, 243, 107, 0.12); color: var(--acid); }
+.clip-actions-buttons .action-btn.approve:hover:not(:disabled) { background: var(--acid); color: var(--ink); }
+.clip-actions-buttons .action-btn.reject { border: 1px solid #d3ae62; background: rgba(211, 174, 98, 0.1); color: #d3ae62; }
+.clip-actions-buttons .action-btn.reject:hover:not(:disabled) { background: #d3ae62; color: var(--ink); }
+.clip-actions-buttons .action-btn.delete { border: 1px solid var(--coral); background: rgba(255, 107, 107, 0.08); color: var(--coral); }
+.clip-actions-buttons .action-btn.delete:hover:not(:disabled) { background: var(--coral); color: var(--ink); }
+.clip-action-feedback { font-size: 11px; color: #aeb9b2; }
+
+/* Goals Tab: Obtain Monetization */
+.goals-board { display: grid; gap: 24px; }
+.goals-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 900px) { .goals-grid { grid-template-columns: 1fr; } }
+.goal-card { padding: 22px; display: flex; flex-direction: column; gap: 18px; }
+.goal-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.goal-card-header h2 { margin: 4px 0 0; font-size: 18px; }
+.goal-overall-progress { display: flex; flex-direction: column; gap: 6px; }
+.goal-progress-bar { width: 100%; height: 8px; background: #101414; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.goal-progress-fill { height: 100%; background: var(--acid); transition: width 0.3s ease; }
+.goal-progress-meta { display: flex; justify-content: space-between; font: 10px "IBM Plex Mono", monospace; color: var(--muted); }
+.section-subhead { font: 600 11px "IBM Plex Mono", monospace; text-transform: uppercase; color: #8f9b94; letter-spacing: 0.05em; margin-bottom: 10px; }
+.goal-metrics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.goal-metric-box { padding: 10px 12px; border: 1px solid rgba(120, 135, 126, 0.16); background: #101414; border-radius: 4px; display: flex; flex-direction: column; gap: 6px; }
+.goal-metric-box .metric-header { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.goal-metric-box .metric-label { font-size: 11px; color: #bbc5be; }
+.goal-metric-box .metric-fraction { font: 10px "IBM Plex Mono", monospace; color: var(--paper); }
+.goal-mini-bar { width: 100%; height: 4px; background: #192020; border-radius: 2px; overflow: hidden; }
+.goal-mini-fill { height: 100%; background: var(--acid); transition: width 0.3s ease; }
+.goal-metric-box .metric-footer { display: flex; justify-content: space-between; font: 9px "IBM Plex Mono", monospace; color: var(--muted); }
+.tier1-hint { color: #d3ae62; }
+.goal-restrictions-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.goal-restriction-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 8px 10px; border: 1px solid rgba(120, 135, 126, 0.12); background: #111616; border-radius: 4px; }
+.restriction-status-col { display: flex; align-items: center; justify-content: center; padding-top: 2px; }
+.badge-compliant { color: #86e3a4; }
+.badge-verified { color: #7cb7ff; }
+.badge-pending { color: #f0be65; }
+.badge-deferred { color: #8a9690; }
+.restriction-copy strong { font-size: 12px; color: var(--paper); display: block; margin-bottom: 2px; }
+.restriction-copy p { margin: 0; font-size: 11px; color: #8f9b94; line-height: 1.4; }
+.restriction-badge { padding: 2px 8px; border-radius: 3px; font: 9px "IBM Plex Mono", monospace; text-transform: uppercase; white-space: nowrap; }
+.restriction-badge.compliant { background: rgba(134, 227, 164, 0.12); color: #86e3a4; border: 1px solid rgba(134, 227, 164, 0.3); }
+.restriction-badge.verified { background: rgba(124, 183, 255, 0.12); color: #7cb7ff; border: 1px solid rgba(124, 183, 255, 0.3); }
+.restriction-badge.pending_action { background: rgba(240, 190, 101, 0.12); color: #f0be65; border: 1px solid rgba(240, 190, 101, 0.3); }
+.restriction-badge.deferred { background: rgba(138, 150, 144, 0.12); color: #8a9690; border: 1px solid rgba(138, 150, 144, 0.3); }
+.icon-button .spinning { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

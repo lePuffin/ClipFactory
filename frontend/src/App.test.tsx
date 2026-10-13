@@ -402,7 +402,9 @@ describe("ClipFactory operational frontend", () => {
   it("CF-REQ-856 explains when the API is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("Internal Server Error", { status: 500 })));
     render(<MemoryRouter><App /></MemoryRouter>);
-    expect(await screen.findAllByText("ClipFactory API is unavailable. Start the backend and retry.")).toHaveLength(3);
+    expect(await screen.findAllByText("ClipFactory API is unavailable. Start the backend and retry.")).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "Run Now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start Manual URL Run" })).toBeDisabled();
   });
 
   it("CF-REQ-605 retires an Asset and filters it by status", async () => {
@@ -454,6 +456,10 @@ describe("ClipFactory operational frontend", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url === "/api/content-profiles") return new Response(JSON.stringify({ items: [
+          { id: "world", name: "World News", is_active: true },
+          { id: "football", name: "Football", is_active: false },
+        ] }), { status: 200 });
         if (init?.method === "POST") {
           posts.push({ url, body: init.body?.toString() });
           return new Response(JSON.stringify({ run_id: "12345678-1234-1234-1234-123456789abc" }), { status: 202 });
@@ -468,14 +474,17 @@ describe("ClipFactory operational frontend", () => {
     const user = userEvent.setup();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await user.click(await screen.findByRole("button", { name: "Run Now" }));
+    expect(await screen.findByRole("button", { name: "Run Now" })).toBeDisabled();
+    await user.selectOptions(await screen.findByLabelText("Content Profile"), "football");
+    await user.click(screen.getByRole("button", { name: "Run Now" }));
     expect(await screen.findByText("Run 12345678 queued")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Content Profile"), "world");
     await user.type(screen.getByLabelText("Manual Source URL"), "https://news.example/article");
     await user.click(screen.getByRole("button", { name: "Start Manual URL Run" }));
 
     await waitFor(() => expect(posts).toHaveLength(2));
-    expect(posts[0]).toEqual({ url: "/api/runs", body: undefined });
-    expect(posts[1]).toEqual({ url: "/api/runs/manual-url", body: JSON.stringify({ url: "https://news.example/article" }) });
+    expect(posts[0]).toEqual({ url: "/api/runs", body: JSON.stringify({ profile_id: "football" }) });
+    expect(posts[1]).toEqual({ url: "/api/runs/manual-url", body: JSON.stringify({ url: "https://news.example/article", profile_id: "world" }) });
   });
 
   it("CF-REQ-602 CF-REQ-604 refreshes the Run record until it fails and shows the failure", async () => {

@@ -37,6 +37,11 @@ class RenderedClip:
 async def freeze_end_card(source: Path, *, storage: MediaStorage, runner: MediaExecutor, key: str) -> tuple[Path, str]:
     digest = await storage.put_file(source, key)
     path = storage.local_path(key)
+    await validate_end_card(path, runner=runner)
+    return path, digest
+
+
+async def validate_end_card(path: Path, *, runner: MediaExecutor) -> None:
     probe = await runner.probe(path)
     streams = probe.get("streams", [])
     video = [stream for stream in streams if stream.get("codec_type") == "video"]
@@ -45,7 +50,6 @@ async def freeze_end_card(source: Path, *, storage: MediaStorage, runner: MediaE
     if len(video) != 1 or len(audio) != 1 or abs(duration - 3) > 1 / 30:
         raise ValueError("End card must contain one video and one audio stream lasting three seconds")
     await runner.decode(path)
-    return path, digest
 
 
 async def render_clip(

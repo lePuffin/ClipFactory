@@ -7,7 +7,7 @@ import { AgentPersonas } from "./AgentPersonas";
 import type { ContentProfileItem, RunEvent, RunSummary } from "./api/client";
 
 const clip = { id: "clip-1", run_id: "run-1", status: "approved", story_title: "News fixture", created_at: "2026-10-01T10:00:00Z", cost_total: "0.1", social_metadata: {}, publications: [{ id: "pub-1", platform: "youtube", status: "published", mode: "live" }], preview: { duration_seconds: 60, width: 720, height: 1280, fps: 30, media_url: "/media/fixture.mp4" } };
-const profile = { name: "News", category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20 } };
+const profile: ContentProfileItem["profile"] = { name: "News", is_active: true, category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20, max_article_age_hours: 24 } };
 const run: RunSummary = { run_id: "run-1", trigger: "run_now", status: "queued", attempt: 1, revision_retries_used: 0, cost_total: "0", created_at: "2026-10-01T10:00:00Z" };
 function event(sequence: number, stage: string, type: string): RunEvent { return { sequence, stage, type, attempt: 1, level: "info", message: type, payload: {}, created_at: run.created_at }; }
 function response(value: unknown, status = 200) { return new Response(status === 204 ? null : JSON.stringify(value), { status }); }
@@ -40,7 +40,7 @@ it("CF-REQ-610 paginates Clips by 20 and resets offset across All, Published and
   expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
 });
 
-it.each(["/clips", "/publishes", "/assets"])("CF-REQ-605 CF-REQ-610 CF-REQ-613 %s gracefully handles an unavailable total", async (path) => {
+it.each(["/clips", "/assets"])("CF-REQ-605 CF-REQ-610 %s gracefully handles an unavailable total", async (path) => {
   vi.stubGlobal("fetch", vi.fn(async () => response({ items: [], currency: "EUR" })));
   page(path);
   await screen.findByText(/Page 1 of 1/);
@@ -48,18 +48,43 @@ it.each(["/clips", "/publishes", "/assets"])("CF-REQ-605 CF-REQ-610 CF-REQ-613 %
   expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
 });
 
-it("CF-REQ-613 names the workspace Review Board and paginates one Clip per row", async () => {
-  const fetchMock = vi.fn(async () => response({ items: [clip], total: 21 }));
+it("CF-REQ-613 provides Goals workspace tab displaying platform monetization milestones and update button", async () => {
+  const goalResponse = {
+    goal: {
+      id: "monetization",
+      title: "Obtain Monetization",
+      description: "Milestones and policy restrictions",
+      updated_at: "2026-10-01T10:00:00Z",
+      platforms: [
+        {
+          platform: "youtube",
+          name: "YouTube",
+          program: "YouTube Partner Program (Shorts)",
+          status: "in_progress",
+          published_clips: 5,
+          progress_pct: 25.5,
+          metrics: [
+            { id: "subscribers", label: "Subscribers", current: 255, target: 1000, unit: "subscribers", pct: 25.5 },
+          ],
+          restrictions: [
+            { id: "ai_disclosure", title: "EU AI Content Disclosure", description: "On-screen AI disclosure tag", status: "compliant" },
+          ],
+        },
+      ],
+    },
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/goals") return response(goalResponse);
+    return response({ currency: "EUR" });
+  });
   vi.stubGlobal("fetch", fetchMock);
-  const user = userEvent.setup(); page("/publishes");
-  expect(screen.getByRole("heading", { name: "Review Board" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Review Board" })).toHaveAttribute("href", "/publishes");
-  await screen.findByRole("article", { name: "Review News fixture" });
-  expect(screen.getByText("21 AWAITING")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText(/Page 2 of 2/);
-  expect(fetchMock).toHaveBeenCalledWith("/api/clips/pending-approval?limit=20&offset=20", expect.anything());
-  expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  page("/goals");
+  expect(screen.getByRole("heading", { name: "Obtain Monetization" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Goals" })).toHaveAttribute("href", "/goals");
+  await screen.findByRole("article", { name: "YouTube Monetization Goal" });
+  expect(screen.getByText("YouTube Partner Program (Shorts)")).toBeInTheDocument();
+  expect(screen.getByText("EU AI Content Disclosure")).toBeInTheDocument();
+  expect(screen.getByText("Compliant")).toBeInTheDocument();
 });
 
 it("CF-REQ-605 paginates Assets by 20 and resets the page on status changes", async () => {
@@ -79,7 +104,8 @@ it("CF-REQ-606 collapses settings groups using labelled buttons and aria-expande
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => response(String(input) === "/api/settings" ? { providers: [], settings: { environment: { llm_model: "writer" }, publishing: { mode: "dry_run" } } } : {})));
   const user = userEvent.setup(); page("/settings");
   await screen.findByLabelText("Llm Model");
-  for (const name of ["Environment", "Publishing", "Providers", "Schedule"]) {
+  expect(screen.queryByRole("button", { name: "Schedule" })).not.toBeInTheDocument();
+  for (const name of ["Environment", "Publishing", "Providers"]) {
     const button = screen.getByRole("button", { name });
     expect(button).toHaveAttribute("aria-expanded", "true");
     await user.click(button);

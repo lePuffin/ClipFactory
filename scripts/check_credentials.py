@@ -356,6 +356,14 @@ def check_facebook() -> str:
 
 
 def check_tiktok() -> str:
+    token = os.environ.get("TIKTOK_ACCESS_TOKEN")
+    if token and token.strip():
+        data = request(
+            "https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name",
+            headers={"Authorization": f"Bearer {token.strip()}"},
+        )
+        display = data.get("data", {}).get("user", {}).get("display_name")
+        return f"access token valid: {display}" if display else "access token valid"
     data = request(
         "https://open.tiktokapis.com/v2/oauth/token/",
         headers={"Content-Type": "application/x-www-form-urlencoded"},

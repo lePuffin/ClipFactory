@@ -33,7 +33,7 @@ export function AgentPersonas({ run, events }: { run: RunSummary | null; events:
   const resumed = events.filter((event) => event.type === "run_resumed").at(-1)?.sequence ?? 0;
   const current = events.filter((event) => event.sequence >= resumed);
   return <section className="agent-team" aria-label="Agent Roles">
-    <h3>Agent Roles <span>Stage-driven personas</span></h3>
+    <h3>Agents</h3>
     <div className="persona-grid">{roles.map((agent, index) => {
       const mood = roleMood(agent.stages, run, current);
       return <article className={`persona ${mood}`} key={agent.name} aria-label={`${agent.name}: ${captions[mood]}`}>
