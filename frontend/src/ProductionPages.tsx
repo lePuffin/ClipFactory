@@ -330,6 +330,7 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
     {item && brandingFolder && <div className="field">
       <label htmlFor="profile-branding-folder">Branding folder</label>
       <input id="profile-branding-folder" value={`branding/${brandingFolder}`} readOnly />
+      <small>Generate this profile's branding from the repository root: <code>uv run clipfactory branding branding/{brandingFolder}</code></small>
     </div>}
     <ObjectEditor value={Object.fromEntries(Object.entries(draft).filter(([key]) => !profileOwnedElsewhere.has(key)))} onChange={(next) => setDraft({ ...draft, ...next })} errors={errors} />
     <ProfileResearchSection

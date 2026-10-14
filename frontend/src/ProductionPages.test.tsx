@@ -36,9 +36,11 @@ describe("ClipFactory production pages", () => {
     const folder = await screen.findByLabelText("Branding folder");
     expect(folder).toHaveValue("branding/global-news-english");
     expect(folder).toHaveAttribute("readonly");
+    expect(screen.getByText("uv run clipfactory branding branding/global-news-english")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Saved profiles"), "football-id");
     expect(screen.getByLabelText("Branding folder")).toHaveValue("branding/football-news-english");
     expect(screen.getByText("uv run clipfactory branding branding/football-news-english")).toBeInTheDocument();
+    expect(screen.queryByText("uv run clipfactory branding branding/global-news-english")).not.toBeInTheDocument();
   });
 
   it("CF-REQ-502 CF-REQ-503 CF-REQ-504 CF-REQ-505 CF-REQ-603 renders analytics without inventing missing metrics", async () => {
