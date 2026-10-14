@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from clipfactory.domain.models import ContentCategory
 from clipfactory.research.discovery import RetrievedArticle
 
 
@@ -16,6 +17,7 @@ class StoryCandidate:
     title: str
     summary: str
     articles: tuple[RetrievedArticle, ...]
+    category: ContentCategory = ContentCategory.GENERAL
 
     @property
     def newest_published_at(self) -> datetime | None:
@@ -112,6 +114,7 @@ def score_stories(
     max_article_age_hours: float,
     preferred_independent_sources: int,
     weights: SelectionWeights | None = None,
+    profile_category: ContentCategory = ContentCategory.GENERAL,
 ) -> list[ScoredStory]:
     if len(candidates) != len(ratings):
         raise ValueError("every Story candidate requires one rating")
@@ -121,6 +124,8 @@ def score_stories(
     effective_weights.validate()
     scored: list[ScoredStory] = []
     for candidate, rating in zip(candidates, ratings, strict=True):
+        if profile_category != ContentCategory.GENERAL and candidate.category != profile_category:
+            continue
         if not 0 <= rating.profile_relevance <= 1 or not 0 <= rating.newsworthiness <= 1:
             raise ValueError("LLM ratings must be between 0 and 1")
         if rating.excluded_topic or rating.recently_covered:

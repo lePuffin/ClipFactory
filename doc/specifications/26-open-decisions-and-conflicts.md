@@ -7,6 +7,25 @@ any) and keep it behind the stated configuration or provider boundary.
 
 ## Open decisions
 
+Owner-directed reliability revision (2026-10-14): continue autonomously until
+three fresh Football Runs succeed. Repeated `script_too_short` before a Script
+passes may reveal a Story that passed the early evidence-size proxy but cannot
+fill the narration honestly. CF-REQ-117 now permits bounded fallback to
+persisted candidates in that case, retaining the existing shared two-fallback
+limit, revision allowance, historical evidence, factual gates and owner
+approval. Manual URL selection and already-passing Scripts are unchanged.
+
+Owner-approved research isolation (2026-10-13): the Research section belongs
+to each Content Profile, including feeds, publisher quality, article byte
+limit and novelty window as well as the existing research thresholds.
+Existing profiles retain their legacy research configuration through
+one-time materialization; explicit empty feeds remain empty. New Runs use
+their own profile snapshot, never the currently active profile's sources.
+Historical snapshots and produced Clips are unchanged. Story classification
+must not be fabricated from the target profile category: unrelated political
+news is ineligible for a sports profile. All global Settings groups start
+collapsed and remain individually expandable without discarding edits.
+
 Owner-approved profile branding isolation (2026-10-13): new Runs use
 `branding/<profile-slug>/` for the wordmark, badge, poster, voice and cached
 end card, superseding shared-logo/end-card selection in CF-REQ-360.
@@ -19,6 +38,11 @@ Owner revision (2026-10-13): use readable name-derived folders rather than
 bare UUIDs, with server-owned stable folder names and UUID collision suffixes.
 Preserve legacy paths with compatibility symlinks; exclude local branding
 assets from Git while retaining generic authoring instructions.
+Owner reliability correction (2026-10-13): continuing a failed Run applies
+current editable settings without changing that Run's profile branding.
+Use its retained profile snapshot, including after profile deletion; repair
+paths overwritten by an earlier continuation. Legacy snapshots without a
+named folder retain their previously frozen branding settings.
 
 Owner-approved scheduling/account extension (2026-10-13): multiple active
 profiles and multiple daily rules per profile replace the single-profile
@@ -73,7 +97,7 @@ are reflected in the referenced requirements; they stay here for history.
 | OD-009 | Publishing integrations | Decided: Instagram/Facebook signed URL; credentials/approvals are setup tasks ([setup guide](../setup/platform-credentials.md)) |
 | OD-010 | Revenue | Decided: default RPMs |
 | OD-011 | Captions | Decided: 6 % / 88 % / 10 %, 2 lines, centred, bold, box + shadow |
-| OD-012 | Smart cropping | Deferred post-v1.0 |
+| OD-012 | Smart cropping | Decided: local face-safe still portraits; video tracking deferred |
 | OD-013 | Music source | Decided: local library from YouTube Audio Library + Mixkit with manifest |
 | OD-014 | Multimodal evaluation | Revised 2026-10-06: bounded per-shot quality evidence; uncovered shots pending |
 | OD-015 | Performance targets | Decided: benchmark methodology now, targets from Phase 10 measurements |
@@ -197,8 +221,12 @@ restrictions and final review remain unchanged (CF-REQ-208).
 ### OD-012 — Smart cropping
 
 - **Question:** Subject-aware cropping (faces/saliency) instead of centre-crop / `fit_blur`?
-- **Provisional:** Deterministic centre-crop and `fit_blur` only (CF-REQ-255).
-- **Decides:** Post-v1.0.
+- **Decided (owner request 2026-10-14):** Verified person stills use local
+  dominant-face evidence to keep the face below the unchanged banner.
+  Owner feedback refinement: safe full-cover cropping is preferred over
+  exact-centred inset photos; only unsafe crops need blurred padding
+  (CF-REQ-255, ADR-020). All other Assets, or unavailable/ambiguous detection,
+  retain centre-crop / `fit_blur`. No video face tracking or saliency service.
 
 ### OD-013 — Royalty-free music source
 

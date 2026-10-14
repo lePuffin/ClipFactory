@@ -153,6 +153,8 @@ def _validate_spec(spec: CompositionSpec) -> None:
         raise ValueError("visual segment dimensions and durations must be positive")
     if any(segment.source_offset_seconds < 0 for segment in spec.segments):
         raise ValueError("visual segment source offsets must not be negative")
+    if any(segment.face_box is not None and segment.media_type != "image" for segment in spec.segments):
+        raise ValueError("face-centered framing is only supported for still images")
     if abs(sum(segment.duration_seconds for segment in spec.segments) - spec.duration_seconds) > 1 / spec.fps:
         raise ValueError("visual segments must cover Clip duration within one frame")
     for overlay in spec.overlays:
@@ -199,7 +201,9 @@ def _visual_filter(index: int, segment: VisualInput, spec: CompositionSpec) -> s
             f"{spec.height}",
         ]
     )
-    if segment.width / segment.height >= 1.0:
+    if segment.face_box is not None and segment.media_type == "image":
+        fit_filter = _portrait_filter(index, segment, spec, scale)
+    elif segment.width / segment.height >= 1.0:
         fit_filter = "".join(
             [
                 "split[bg",
@@ -230,7 +234,7 @@ def _visual_filter(index: int, segment: VisualInput, spec: CompositionSpec) -> s
     else:
         fit_filter = scale
     duration = _render_duration(spec, index)
-    motion = _motion_filter(segment.motion, spec, duration)
+    motion = _motion_filter("none" if segment.face_box is not None else segment.motion, spec, duration)
     hold = "tpad=stop_mode=clone:stop_duration=1," if segment.media_type == "video" else ""
     label = (
         "".join(
@@ -264,6 +268,64 @@ def _visual_filter(index: int, segment: VisualInput, spec: CompositionSpec) -> s
             f"{index}",
             "]",
         ]
+    )
+
+
+def _portrait_filter(index: int, segment: VisualInput, spec: CompositionSpec, background: str) -> str:
+    face = segment.face_box
+    if face is None:
+        raise ValueError("portrait fitting requires face bounds")
+    start = sum(item.duration_seconds for item in spec.segments[:index])
+    end = start + _render_duration(spec, index)
+    banner_bottom = max(
+        (
+            overlay.y + overlay.height
+            for overlay in spec.overlays
+            if overlay.start_seconds < end and overlay.end_seconds > start and overlay.y < spec.height * 0.28
+        ),
+        default=spec.height * 0.25,
+    )
+    safe_top = max(spec.height * 0.28, banner_bottom + spec.height * 0.03)
+    if safe_top >= spec.height * 0.8:
+        raise ValueError("top overlays leave no face-safe portrait area")
+    cover = max(spec.width / segment.width, spec.height / segment.height)
+    factor = min(
+        cover,
+        spec.width * 0.6 / (face.width * segment.width),
+        spec.height * 0.32 / (face.height * segment.height),
+        (spec.height * 0.8 - safe_top) / (1.3 * face.height * segment.height),
+    )
+    width = max(2, round(segment.width * factor / 2) * 2)
+    height = max(2, round(segment.height * factor / 2) * 2)
+    left, top = face.x * width, face.y * height
+    face_width, face_height = face.width * width, face.height * height
+    headroom = face_height * 0.3
+    target_y = min(
+        spec.height * 0.8 - face_height / 2,
+        max(spec.height * 0.43, safe_top + headroom + face_height / 2),
+    )
+    x = spec.width / 2 - left - face_width / 2
+    y = target_y - top - face_height / 2
+    x_min = max(spec.width - width, spec.width * 0.05 - left)
+    x_max = min(0, spec.width * 0.95 - left - face_width)
+    y_min = max(spec.height - height, safe_top + headroom - top)
+    y_max = min(0, spec.height * 0.8 - top - face_height)
+    if width >= spec.width and height >= spec.height and x_min <= x_max and y_min <= y_max:
+        crop_x = round(-min(x_max, max(x_min, x)) / 2) * 2
+        crop_y = round(-min(y_max, max(y_min, y)) / 2) * 2
+        return f"scale={width}:{height},crop={spec.width}:{spec.height}:{crop_x}:{crop_y}"
+    # Keep the sharp photo full-width when possible; pad only the edges a safe crop cannot cover.
+    x = min(0, max(spec.width - width, x)) if width >= spec.width else (spec.width - width) / 2
+    y = max(y, safe_top + headroom - top)
+    top_feather = max(1, min(48, top / 2))
+    bottom_feather = max(1, min(48, (height - top - face_height) / 2))
+    return (
+        f"split[bg{index}][fg{index}];[bg{index}]{background},"
+        f"boxblur=24:2,eq=brightness=-0.20[blur{index}];"
+        f"[fg{index}]scale={width}:{height},format=rgba,"
+        f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='255*min(1,min(Y/{top_feather:.3f},(H-1-Y)/{bottom_feather:.3f}))'[fit{index}];"
+        f"[blur{index}][fit{index}]overlay=x={round(x)}:y={round(y)}"
     )
 
 

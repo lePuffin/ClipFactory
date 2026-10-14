@@ -93,7 +93,10 @@ Value objects:
 - **Schedule** `{enabled: bool, local_time: "HH:MM", timezone: IANA name}`.
 - **ScheduleRule** `{id: UUID, local_time: "HH:MM", enabled: bool}` —
   independent daily occurrence in the backend host's local timezone.
-- **ResearchPolicy** `{max_candidate_articles, min_sources, preferred_independent_sources, max_article_age_hours, allowed_publishers?, blocked_publishers}`.
+- **ResearchPolicy** `{max_candidate_articles, min_sources, preferred_independent_sources, max_article_age_hours, allowed_publishers?, blocked_publishers, feeds, publisher_quality, max_article_bytes, story_novelty_window_hours, near_duplicate_threshold, max_additional_sources, selection_weights}`.
+  All editable research controls belong to the profile. Feed entries retain
+  `[publisher, http_or_https_url]` pair shape. Defaults and bounds are in
+  [18-configuration.md](18-configuration.md#research).
 - **MusicPolicy** `{enabled: bool, mood_tags: list[str], energy: enum(low|medium|high)?, ducked_level_db: float, unducked_level_db: float}` — levels relative to normalised narration (CF-REQ-321).
 - **GenerationPolicy** `{image_providers: list[str], video_providers: list[str]}` —
   provider names in order of preference; names must be among the providers

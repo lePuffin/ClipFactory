@@ -39,6 +39,17 @@ describe("ClipFactory operational frontend", () => {
     vi.useRealTimers();
   });
 
+  it.each(["completed", "failed", "running"])("CF-REQ-604 links the produced Clip from a %s Run header", async (status) => {
+    renderRun({ status, clip_id: "clip-1" });
+    expect(await screen.findByRole("link", { name: "View produced Clip" })).toHaveAttribute("href", "/clips/clip-1");
+  });
+
+  it("CF-REQ-604 omits the produced Clip link before a Clip exists", async () => {
+    renderRun({ clip_id: null });
+    await screen.findByText("EXECUTION");
+    expect(screen.queryByRole("link", { name: "View produced Clip" })).not.toBeInTheDocument();
+  });
+
   it.each(["video", "image", "audio"])("CF-REQ-605 previews %s Assets with their folder and filename", async (mediaType) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [{
       id: "asset-1", media_type: mediaType, category: "broll", storage_key: "assets/ab/example.mp4",

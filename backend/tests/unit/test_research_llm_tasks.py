@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from clipfactory.domain.models import ClaimKind, ClaimStatus
+from clipfactory.domain.models import ClaimKind, ClaimStatus, ContentCategory
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.llm import LLMMessage, LLMResult
 from clipfactory.ports.news import ArticleRef
@@ -76,6 +76,7 @@ async def test_rank_stories_makes_one_call_and_validates_merge_partition() -> No
             stories=[
                 RankedStoryDraft(
                     candidate_indexes=[0, 1],
+                    category=ContentCategory.GENERAL,
                     title="Bridge flooding",
                     summary="Floodwater closed a bridge.",
                     profile_relevance=0.9,
@@ -84,6 +85,7 @@ async def test_rank_stories_makes_one_call_and_validates_merge_partition() -> No
                 ),
                 RankedStoryDraft(
                     candidate_indexes=[2],
+                    category=ContentCategory.FINANCE,
                     title="Interest rate decision",
                     summary="The central bank changed its rate.",
                     profile_relevance=0.8,
@@ -116,6 +118,7 @@ def ranked(*groups: list[int]) -> RankStoriesResult:
         stories=[
             RankedStoryDraft(
                 candidate_indexes=group,
+                category=ContentCategory.GENERAL,
                 title=f"Story {index}",
                 summary="Summary.",
                 profile_relevance=0.5,
@@ -162,6 +165,54 @@ async def test_rank_stories_fails_as_invalid_llm_output_after_repairs() -> None:
 
     assert caught.value.code == "llm_invalid_output"
     assert "missing candidate_index values [0, 1]" in str(caught.value)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-112")
+@pytest.mark.req("CF-REQ-151")
+@pytest.mark.asyncio
+async def test_extract_claims_requests_complete_facts_beyond_key_fact_selection() -> None:
+    facts = [
+        "The city opened a bridge on Tuesday.",
+        "The bridge cost twelve million dollars.",
+        "The bridge crosses the river.",
+        "The bridge has two traffic lanes.",
+        "Construction began in March.",
+        "The old bridge closed in January.",
+        "The mayor attended the opening.",
+        "The bridge includes a footpath.",
+        "Buses began using the bridge on Wednesday.",
+    ]
+    grounded = source(1, " ".join(facts))
+    llm = ScriptedLLM(
+        ExtractClaimsResult(
+            claims=[
+                ExtractedClaimDraft(
+                    ref=f"c{index}",
+                    text=fact,
+                    kind=ClaimKind.FACT,
+                    evidence=[ClaimEvidenceDraft(source_id=grounded.id, excerpt=fact)],
+                )
+                for index, fact in enumerate(facts, start=1)
+            ],
+            key_fact_refs=["c1", "c2", "c3"],
+            refined_title="City bridge opens",
+            refined_summary=facts[0],
+        )
+    )
+
+    claims, key_fact_ids, _, _ = await extract_story_claims(llm, uuid4(), [grounded], max_input_chars=10_000)
+
+    assert len(llm.calls) == 1
+    prompt = llm.calls[0][1][0].content
+    assert "not a limit on the number of extracted Claims" in prompt
+    assert "complete, self-contained factual sentence" in prompt
+    assert "speaker and the complete supported statement" in prompt
+    assert "Do not invent facts to reach a count or duration" in prompt
+    assert "extract_claims.v2" in prompt
+    assert [claim.text for claim in claims] == facts
+    assert all(claim.status == ClaimStatus.ACCEPTED for claim in claims)
+    assert len(key_fact_ids) == 3
 
 
 @pytest.mark.unit

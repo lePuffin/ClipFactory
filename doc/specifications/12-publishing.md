@@ -112,9 +112,16 @@ live APIs in this repository. See OD-009.
 - **Description:** Each adapter shall expose whether it is configured
   (credentials present and structurally valid). An enabled but unconfigured
   platform yields a `failed` Publication with `error_code = not_configured`
-  in `live` mode, without calling the platform.
+  in `live` mode, without calling the platform. Check configuration, including
+  required public media delivery, before creating approval holds. Only
+  configured platforms may enter `awaiting_approval`. The UI displays
+  `Not Configured` in red instead of `Failed`, without an error-detail line
+  or placeholder metrics for this condition.
 - **Acceptance:**
   - Enabling TikTok without credentials in `live` mode yields `not_configured` and a warning event.
+  - With approval required, unconfigured platforms never await approval;
+    configured platforms remain held and no upload occurs. If none are
+    configured, the outcome is `not_published` and no auto-publish task exists.
 - **Related:** CF-REQ-753
 
 ### CF-REQ-458 — Metric collection scheduling

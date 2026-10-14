@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from clipfactory.domain.portrait import FaceBox
+
 MediaType = Literal["image", "video"]
 Motion = Literal["none", "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "ken_burns"]
 Transition = Literal["cut", "crossfade", "fade_black", "slide_left", "slide_up"]
@@ -24,6 +26,7 @@ class VisualInput:
     transition_in: Transition = "cut"
     source_label: Literal["ARCHIVE", "ILLUSTRATIVE", "FILE"] | None = None
     source_offset_seconds: float = 0.0
+    face_box: FaceBox | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,7 @@ class CompositionSpec:
     sound_effects: tuple[AudioInput, ...] = ()
     end_card_path: Path | None = None
     end_card_sha256: str | None = None
+    portrait_framing_version: str = "face-safe-v2"
 
     @property
     def duration_seconds(self) -> float:

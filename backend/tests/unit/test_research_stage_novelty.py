@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from clipfactory.domain.models import ContentProfile
+from clipfactory.domain.research_policy import ResearchControls
 from clipfactory.ports.research import CoveredStory
 from clipfactory.workflow.research_stages import ResearchStageUseCase
 
@@ -15,9 +16,15 @@ class FakeRuns:
 
     def get(self, run_id: object) -> dict[str, Any]:
         del run_id
+        profile = ContentProfile().model_dump(mode="json")
+        # This fixture represents an immutable Run written under the old split contract.
+        for key in ResearchControls.model_fields:
+            profile["research"].pop(key)
         return {
-            "profile_snapshot": ContentProfile().model_dump(mode="json"),
-            "settings_snapshot": {"research": self.research_settings},
+            "profile_snapshot": profile,
+            "settings_snapshot": {
+                "research": {"feeds": [["Fixture", "https://news.example/rss"]], **self.research_settings}
+            },
         }
 
     def append_event(self, *args: Any, **kwargs: Any) -> None:

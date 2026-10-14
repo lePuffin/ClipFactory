@@ -82,21 +82,42 @@ class PublishService:
         if mode == "disabled" or not platforms:
             return {"outcome": "not_published", "clip_id": str(clip_id)}
 
-        if mode == "live" and bool(settings.get("approval_required", True)) and not approval_resolved:
+        configured_platforms = []
+        if mode == "live":
             for platform in platforms:
-                await asyncio.to_thread(
+                publisher = self._publishers.get(platform)
+                message = None
+                if publisher is None or not publisher.is_configured(request.env_prefix):
+                    message = f"{platform.value} publisher is not configured"
+                elif platform in {Platform.INSTAGRAM, Platform.FACEBOOK} and self._public_url is None:
+                    message = "Public media URL is not configured"
+                if message is None:
+                    configured_platforms.append(platform)
+                    continue
+                existing = await asyncio.to_thread(
+                    self._store.prepare, clip_id, platform.value, mode, _as_dict(request), "failed"
+                )
+                if existing["status"] not in {"published", "publishing", "rejected", "dry_run"}:
+                    await asyncio.to_thread(self._store.mark_failed, UUID(existing["id"]), "not_configured", message)
+
+        if mode == "live" and bool(settings.get("approval_required", True)) and not approval_resolved:
+            awaiting = False
+            for platform in configured_platforms:
+                existing = await asyncio.to_thread(
                     self._store.prepare, clip_id, platform.value, mode, _as_dict(request), "awaiting_approval"
                 )
+                awaiting = awaiting or existing["status"] == "awaiting_approval"
             eligibility = getattr(self._store, "auto_publish_eligible", None)
             if (
-                settings.get("auto_publish_enabled", False)
+                awaiting
+                and settings.get("auto_publish_enabled", False)
                 and callable(eligibility)
                 and await asyncio.to_thread(eligibility, clip_id)
             ):
                 now = self._clock()
                 due = now + timedelta(minutes=int(settings.get("auto_publish_after_minutes", 10)))
                 await asyncio.to_thread(self._store.schedule_auto_publish, run_id, clip_id, due, now)
-            return {"outcome": "awaiting_approval", "clip_id": str(clip_id)}
+            return {"outcome": "awaiting_approval" if awaiting else "not_published", "clip_id": str(clip_id)}
 
         successes = 0
         for platform in platforms:

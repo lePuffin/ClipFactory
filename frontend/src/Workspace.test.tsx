@@ -7,7 +7,7 @@ import { AgentPersonas } from "./AgentPersonas";
 import type { ContentProfileItem, RunEvent, RunSummary } from "./api/client";
 
 const clip = { id: "clip-1", run_id: "run-1", status: "approved", story_title: "News fixture", created_at: "2026-10-01T10:00:00Z", cost_total: "0.1", social_metadata: {}, publications: [{ id: "pub-1", platform: "youtube", status: "published", mode: "live" }], preview: { duration_seconds: 60, width: 720, height: 1280, fps: 30, media_url: "/media/fixture.mp4" } };
-const profile: ContentProfileItem["profile"] = { name: "News", is_active: true, category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20, max_article_age_hours: 24 } };
+const profile: ContentProfileItem["profile"] = { name: "News", is_active: true, category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20, max_article_age_hours: 24, max_article_bytes: 5000000, story_novelty_window_hours: 48, near_duplicate_threshold: 0.8, max_additional_sources: 5 } };
 const run: RunSummary = { run_id: "run-1", trigger: "run_now", status: "queued", attempt: 1, revision_retries_used: 0, cost_total: "0", created_at: "2026-10-01T10:00:00Z" };
 function event(sequence: number, stage: string, type: string): RunEvent { return { sequence, stage, type, attempt: 1, level: "info", message: type, payload: {}, created_at: run.created_at }; }
 function response(value: unknown, status = 200) { return new Response(status === 204 ? null : JSON.stringify(value), { status }); }
@@ -105,12 +105,17 @@ it("CF-REQ-606 collapses settings groups using labelled buttons and aria-expande
   const user = userEvent.setup(); page("/settings");
   await screen.findByLabelText("Llm Model");
   expect(screen.queryByRole("button", { name: "Schedule" })).not.toBeInTheDocument();
-  for (const name of ["Environment", "Publishing", "Providers"]) {
+  expect(screen.queryByRole("button", { name: "Provider readiness" })).not.toBeInTheDocument();
+  for (const name of ["Environment", "Publishing"]) {
     const button = screen.getByRole("button", { name });
+    const content = document.getElementById(button.getAttribute("aria-controls")!);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(content).not.toBeVisible();
+    await user.click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(content).toBeVisible();
     await user.click(button);
     expect(button).toHaveAttribute("aria-expanded", "false");
-    const content = document.getElementById(button.getAttribute("aria-controls")!);
     expect(content).not.toBeVisible();
     await user.click(button);
     expect(content).toBeVisible();

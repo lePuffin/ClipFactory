@@ -99,6 +99,12 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
 - **Initial provider (OD-007, decided):** local faster-whisper with model
   `large-v3-turbo`; the model name is configuration
   (`WHISPER_MODEL`) so alternatives can be benchmarked.
+- **Device selection:** An explicit `cpu` or `cuda` selection is respected.
+  In `auto` mode only, missing cuBLAS/cuDNN runtime libraries trigger one
+  logged CPU/int8 fallback, reused for subsequent calls with unchanged
+  settings. Other transcription failures propagate unchanged; a failed CPU
+  fallback is not reported as successful transcription. Hosts without the
+  CUDA speech libraries should select `cpu` and `int8` explicitly in Settings.
 - **Hallucination controls:** The local decoder shall not condition each
   window on previously decoded text, shall apply voice-activity filtering, and
   shall discard decoded segments whose average log-probability is below −1.0
@@ -109,6 +115,8 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
   - The fake transcription provider returns the script words with evenly spaced timestamps.
   - A decoded segment with average log-probability below −1.0 contributes no recognised words; the decoder is invoked without previous-text conditioning and with VAD.
   - Word timestamps are monotonically non-decreasing and within the audio duration.
+  - Explicit CPU/int8 never attempts CUDA; explicit CUDA never silently falls
+    back. An unrelated runtime error does not trigger fallback.
 
 ### CF-REQ-311 — Alignment to script
 

@@ -4,6 +4,7 @@
 Makes read-only requests only. Secrets are never printed.
 Usage:
   python3 scripts/check_credentials.py [--env path/to/.env]
+  python3 scripts/check_credentials.py --profile football
   python3 scripts/check_credentials.py --youtube-auth   # one-time YouTube OAuth consent
 """
 
@@ -15,6 +16,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import secrets
 import select
 import shutil
@@ -34,6 +36,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT = 20
 YOUTUBE_REDIRECT_URI = "http://localhost:8000/auth/youtube/callback"
 YOUTUBE_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+PROFILE_PREFIX: str | None = None
 
 
 class Skip(Exception):
@@ -49,7 +52,7 @@ def load_env(path: Path) -> None:
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
-        os.environ[key.strip()] = value
+        os.environ.setdefault(key.strip(), value)
 
 
 def env(name: str) -> str:
@@ -62,6 +65,26 @@ def env(name: str) -> str:
 def env_path(name: str) -> Path:
     path = Path(env(name)).expanduser()
     return path if path.is_absolute() else ROOT / path
+
+
+def profile_prefix(value: str) -> str:
+    prefix = value.strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", prefix):
+        raise argparse.ArgumentTypeError("profile must start with a letter and contain only letters, digits or underscores")
+    return prefix
+
+
+def account_env(name: str) -> str:
+    key = f"{PROFILE_PREFIX}_{name}" if PROFILE_PREFIX else name
+    value = os.environ.get(key, "").strip()
+    if not value:
+        raise Skip(f"{key} not set")
+    return value
+
+
+def account_optional_env(name: str) -> str:
+    key = f"{PROFILE_PREFIX}_{name}" if PROFILE_PREFIX else name
+    return os.environ.get(key, "").strip()
 
 
 def request(
@@ -152,19 +175,33 @@ def check_higgsfield() -> str:
 
 
 def youtube_client() -> tuple[dict, Path]:
-    path = env_path("YOUTUBE_CLIENT_SECRETS_FILE")
+    if PROFILE_PREFIX:
+        secrets_dir = ROOT / "secrets"
+        client_path = account_optional_env("YOUTUBE_CLIENT_SECRETS_FILE")
+        token_file = account_optional_env("YOUTUBE_TOKEN_FILE")
+        path = Path(client_path).expanduser() if client_path else secrets_dir / "youtube_oauth.json"
+        token_path = Path(token_file).expanduser() if token_file else secrets_dir / f"{PROFILE_PREFIX.lower()}_youtube_token.json"
+        if client_path and not path.is_absolute():
+            path = ROOT / path
+        if token_file and not token_path.is_absolute():
+            token_path = ROOT / token_path
+    else:
+        path = env_path("YOUTUBE_CLIENT_SECRETS_FILE")
+        token_path = path.with_name("youtube_token.json")
     if not path.is_file():
         raise RuntimeError(f"file not found: {path}")
     info = json.loads(path.read_text(encoding="utf-8"))
     client = info.get("installed") or info.get("web")
     if not client or not client.get("client_id") or not client.get("client_secret"):
         raise RuntimeError("missing 'installed'/'web' client_id or client_secret")
-    return client, path.with_name("youtube_token.json")
+    return client, token_path
 
 
 def check_youtube() -> str:
     client, token_path = youtube_client()
     if not token_path.is_file():
+        if PROFILE_PREFIX:
+            raise Skip(f"scoped OAuth token file not found: {token_path}")
         return "client secrets file OK; run with --youtube-auth to authorise the channel"
     refresh_token = json.loads(token_path.read_text(encoding="utf-8"))["refresh_token"]
     token = request(
@@ -202,6 +239,7 @@ def youtube_save_refresh_token() -> int:
     if not refresh_token:
         print("No token entered.", file=sys.stderr)
         return 1
+    token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     token_path.write_text(json.dumps({"refresh_token": refresh_token}, indent=2), encoding="utf-8")
     token_path.chmod(0o600)
     try:
@@ -329,6 +367,7 @@ def youtube_auth() -> int:
     if "refresh_token" not in token:
         print("No refresh token returned; revoke the app at myaccount.google.com/permissions and retry.", file=sys.stderr)
         return 1
+    token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     token_path.write_text(json.dumps(token, indent=2), encoding="utf-8")
     token_path.chmod(0o600)
     print(f"Saved YouTube token to {token_path}")
@@ -337,9 +376,9 @@ def youtube_auth() -> int:
 
 
 def check_instagram() -> str:
-    query = urllib.parse.urlencode({"fields": "user_id,username", "access_token": env("INSTAGRAM_ACCESS_TOKEN")})
+    query = urllib.parse.urlencode({"fields": "user_id,username", "access_token": account_env("INSTAGRAM_ACCESS_TOKEN")})
     data = request(f"https://graph.instagram.com/me?{query}")
-    expected = os.environ.get("INSTAGRAM_USER_ID", "")
+    expected = account_optional_env("INSTAGRAM_USER_ID")
     actual = str(data.get("user_id") or data.get("id"))
     if expected and expected != actual:
         raise RuntimeError(f"token belongs to user {actual}, INSTAGRAM_USER_ID is {expected}")
@@ -347,9 +386,9 @@ def check_instagram() -> str:
 
 
 def check_facebook() -> str:
-    query = urllib.parse.urlencode({"fields": "id,name", "access_token": env("FACEBOOK_ACCESS_TOKEN")})
+    query = urllib.parse.urlencode({"fields": "id,name", "access_token": account_env("FACEBOOK_ACCESS_TOKEN")})
     data = request(f"https://graph.facebook.com/me?{query}")
-    expected = os.environ.get("FACEBOOK_PAGE_ID", "")
+    expected = account_optional_env("FACEBOOK_PAGE_ID")
     if expected and expected != data.get("id"):
         raise RuntimeError(f"token resolves to {data.get('name')} ({data.get('id')}), not FACEBOOK_PAGE_ID {expected}; use a Page access token")
     return f"Page '{data.get('name')}' ({data.get('id')})"
@@ -404,11 +443,14 @@ CHECKS: list[tuple[str, Callable[[], str]]] = [
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--env", type=Path, default=ROOT / ".env", help="env file (default: .env)")
+    parser.add_argument("--profile", type=profile_prefix, help="check YouTube, Instagram and Facebook credentials for this profile")
     parser.add_argument("--youtube-auth", action="store_true", help="run the one-time YouTube OAuth consent")
     parser.add_argument(
         "--youtube-refresh-token", action="store_true", help="store a refresh token obtained elsewhere (e.g. OAuth Playground)"
     )
     args = parser.parse_args()
+    global PROFILE_PREFIX
+    PROFILE_PREFIX = args.profile
 
     if not args.env.is_file():
         print(f"No env file at {args.env}", file=sys.stderr)
@@ -421,11 +463,14 @@ def main() -> int:
         return youtube_save_refresh_token()
 
     failed = 0
-    for name, check in CHECKS:
+    checks = [("YouTube", check_youtube), ("Instagram", check_instagram), ("Facebook", check_facebook)] if args.profile else CHECKS
+    for name, check in checks:
         try:
             print(f"[ OK ] {name}: {check()}")
         except Skip as exc:
-            # print(f"[SKIP] {name}: {exc}")
+            if args.profile:
+                failed += 1
+                print(f"[FAIL] {name}: {exc}")
             continue
         except Exception as exc:  # noqa: BLE001 - report every provider, keep going
             failed += 1

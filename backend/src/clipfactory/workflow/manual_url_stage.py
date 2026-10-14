@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from clipfactory.domain.models import ContentProfile, Stage
+from clipfactory.domain.research_snapshot import run_research_policy
 from clipfactory.research.manual_url import ManualURLFailure, ManualURLIngest
 from clipfactory.workflow.executor import StageFailure
 from clipfactory.workflow.graph import WorkflowState
@@ -25,15 +26,16 @@ class ManualURLStageUseCase:
         if not manual_url:
             raise StageFailure("url_unreachable", "Manual URL is missing from the Run")
         profile = ContentProfile.model_validate(detail["profile_snapshot"])
-        configured = detail["settings_snapshot"].get("research", {})
+        configured = run_research_policy(detail["profile_snapshot"], detail["settings_snapshot"])
+        profile = profile.model_copy(update={"research": configured})
         try:
             result = await self._ingest.execute(
                 run_id,
                 manual_url,
                 profile,
                 now=datetime.now(UTC),
-                max_article_bytes=int(configured.get("max_article_bytes", 5_000_000)),
-                publisher_quality=dict(configured.get("publisher_quality", {})),
+                max_article_bytes=configured.max_article_bytes,
+                publisher_quality=dict(configured.publisher_quality),
             )
         except ManualURLFailure as exc:
             raise StageFailure(exc.code, str(exc)) from exc

@@ -8,9 +8,11 @@ from typing import Any
 from uuid import UUID
 
 from clipfactory.domain.models import ContentProfile, Stage
+from clipfactory.domain.research_snapshot import run_research_policy
 from clipfactory.ports.errors import ProviderError
 from clipfactory.research.discovery import ResearchPolicy
 from clipfactory.research.pipeline import ResearchFailure
+from clipfactory.research.selection import SelectionWeights
 from clipfactory.research.service import ResearchUseCase
 from clipfactory.workflow.executor import StageFailure, StageUseCase
 from clipfactory.workflow.graph import WorkflowState
@@ -26,23 +28,48 @@ class ResearchStageUseCase:
         run_id = UUID(state["run_id"])
         detail = await asyncio.to_thread(self._runs.get, run_id)
         persisted = await asyncio.to_thread(self._repository.summary, run_id)
-        if persisted is not None:
+        if persisted is not None and not state.get("rejected_story_id"):
             return {"story_id": str(persisted["story_id"])}
         profile = ContentProfile.model_validate(detail["profile_snapshot"])
-        configured = detail["settings_snapshot"].get("research", {})
+        configured = run_research_policy(detail["profile_snapshot"], detail["settings_snapshot"])
+        profile = profile.model_copy(update={"research": configured})
+        if state.get("rejected_story_id"):
+            try:
+                story_id, used = await self._research.fallback(
+                    run_id,
+                    profile,
+                    UUID(str(state.get("rejected_story_id"))),
+                    state.get("story_fallbacks_used", 0),
+                    max_claim_input_chars=int(
+                        detail["settings_snapshot"].get("llm", {}).get("max_input_chars", 60_000)
+                    ),
+                    repository=self._repository,
+                )
+            except ResearchFailure as exc:
+                raise StageFailure(exc.code, str(exc)) from exc
+            except ProviderError as exc:
+                raise StageFailure("llm_unavailable", str(exc)) from exc
+            return {
+                "story_id": str(story_id),
+                "story_fallbacks_used": used,
+                "rejected_story_id": None,
+                "thin_story_attempts": 0,
+            }
+        if not configured.feeds:
+            raise StageFailure("no_candidates", "No research feeds configured in the Run snapshot")
         policy = ResearchPolicy(
             max_candidate_articles=profile.research.max_candidate_articles,
             max_article_age_hours=profile.research.max_article_age_hours,
-            max_article_bytes=int(configured.get("max_article_bytes", 5_000_000)),
-            feeds=[tuple(item) for item in configured.get("feeds", [])],
-            publisher_quality=dict(configured.get("publisher_quality", {})),
+            max_article_bytes=configured.max_article_bytes,
+            feeds=configured.feeds,
+            publisher_quality=dict(configured.publisher_quality),
             blocked_publishers=profile.research.blocked_publishers,
             allowed_publishers=profile.research.allowed_publishers,
             excluded_topics=profile.excluded_topics,
             preferred_topics=profile.topics,
         )
         now = datetime.now(UTC)
-        window_hours = float(configured.get("story_novelty_window_hours", 48))
+        window_hours = configured.story_novelty_window_hours
         covered = (
             await asyncio.to_thread(self._repository.recently_covered, now - timedelta(hours=window_hours))
             if window_hours > 0
@@ -54,6 +81,7 @@ class ResearchStageUseCase:
                 profile,
                 policy,
                 now=now,
+                selection_weights=SelectionWeights(**configured.selection_weights.model_dump()),
                 recently_covered=covered,
                 max_claim_input_chars=int(detail["settings_snapshot"].get("llm", {}).get("max_input_chars", 60_000)),
                 emit_events=False,

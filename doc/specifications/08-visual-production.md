@@ -98,9 +98,27 @@ Native Wan calls are bounded per Run by CF-REQ-266.
   sources with aspect ratio (w/h) < 1.0 are scaled and centre-cropped to cover
   the frame; sources with w/h ≥ 1.0 are fitted inside the frame over a blurred,
   darkened, cover-scaled copy of themselves (`fit_blur`).
+  Owner revision (2026-10-14): verified person stills with a confidently
+  detected dominant face use a face-safe crop, without changing the information
+  banner. Owner feedback refinement (2026-10-14): prefer edge-to-edge sharp
+  imagery rather than an inset photo with visible rectangular side margins.
+  Place the face in the upper-middle area below the active banner, retaining
+  headroom and limiting face enlargement. Use blurred padding only where a
+  full-cover crop cannot preserve those bounds, blending the sharp photo's
+  top/bottom edges into that padding without fading the face. Portrait shots remain still
+  rather than forcibly zooming/panning a face toward the exact frame centre.
+  Local detection is positioning evidence only, never identity verification.
+  Detection evidence is bound to the source hash and retained for Retry and
+  saved rendering. Missing or ambiguous detection preserves standard fitting
+  and emits a visible framing-unavailable warning.
 - **Acceptance:**
   - A 1920×1080 photo produces a 720×1280 frame whose central 720×405 band contains the whole photo.
-- **Related:** OD-012
+  - Portrait fixtures of landscape, square/9:16 and tall shapes retain the
+    complete face below the unchanged active top banner, with headroom and
+    face height at most 32% of output height. Sources that permit a safe
+    cover crop show no blurred margins. A replaced source cannot reuse old
+    face bounds; the framing revision participates in the composition hash.
+- **Related:** OD-012, ADR-020
 
 ### CF-REQ-256 — Timing reconciliation
 
@@ -170,6 +188,11 @@ instead of being silently reused. This does not affect the composed Clip.
 - **Run composition (owner request):** In a normal Run the top editorial panel shows context summaries only (`headline`, `place`, `number`, `quote` cues); `source` and `person` cues are not shown there, because spoken attribution and verified portraits already carry them. For each Script Segment the panel uses that segment's first context cue, otherwise the segment's Claim-grounded buzz line (CF-REQ-269) as a `headline`. Each label starts at its segment start (the first at Clip start) and stays until the next label replaces it or the story ends, so the panel is continuously visible until the branded ending. A label that cannot be rendered or read in its window is skipped and the previous label extends over it. The licensed information sound cue (CF-REQ-324) plays at every label change.
 - **Acceptance:** A factual label with an unknown Claim fails; a Source badge uses the cited publisher rather than the stock-media provider; subtitle changes do not change an independently timed person label.
   - Run panel labels exclude `source`/`person` cues, fall back to buzz lines per segment, cover Clip start to story end without gaps or overlap, and each change has one sound cue.
+  - Owner revision (2026-10-14): primary text in top editorial panels is
+    always rendered uppercase, independent of cue kind or input casing.
+    Wrapping and safe-width validation use that displayed uppercase text.
+    Secondary text, context-placement labels, captions and stored evidence
+    retain their original casing. Normal Runs and saved rendering share this rule.
 - **Related:** CF-REQ-161, CF-REQ-203, CF-REQ-269, CF-REQ-324, CF-REQ-406
 
 ### CF-REQ-260 — Verified identity and Shot Anchors
@@ -361,7 +384,17 @@ instead of being silently reused. This does not affect the composed Clip.
   anchor piece keeps the fallback graphic and the other pieces become
   narration-keyed footage without one (live Run 8e100c34 failed with
   `graphics_render_failed` after both pieces of a media segment fell back to
-  the same "Monday" `key_date` card).
+  the same "Monday" `key_date` card). A person piece's portrait fallback
+  follows the same rule: unless it is the anchor it holds narration-keyed
+  footage (or its media search without the fallback graphic), never a second
+  copy of the card. If a render nevertheless imports as an Asset already shown
+  in the Clip, `select_assets` records a blocking `generation_duplicate` gate
+  issue (not the generic `graphics_render_failed`, which remains for actual
+  renderer/validation failures) routed to `replan_visuals` for that Visual
+  only (CF-REQ-410, 11-evaluation-and-retry). The override is kept in the
+  saved plan for the same frozen Script, including when a mixed
+  `replan_visuals` retry rebuilds it, and unchanged Visuals keep their
+  selections (CF-REQ-412).
 - **Progress:** Run progress may report `generation_phase = rendering` and
   `progress_fraction` only when measured from actual rendered-frame counts.
   Unknown progress is indeterminate; watchdog heartbeats never advance the UI
@@ -374,6 +407,9 @@ instead of being silently reused. This does not affect the composed Clip.
   - A key_date Script Segment whose date is spoken only inside a person piece
     yields no graphic piece: the person piece keeps the portrait and the other
     pieces are footage.
+  - No person piece's portrait fallback repeats the Script Segment's graphic.
+  - A repeated render yields `generation_duplicate` and a targeted
+    `replan_visuals` retry, not a terminal `graphics_render_failed`.
   - Real local HyperFrames and Manim integration fixtures are each probed,
     fully decoded and imported as reusable video Assets with
     renderer/template provenance.

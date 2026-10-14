@@ -4002,6 +4002,69 @@
       },
       "ResearchPolicy": {
         "properties": {
+          "feeds": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "format": "uri"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Feeds"
+          },
+          "publisher_quality": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "high",
+                "standard",
+                "low",
+                "blocked"
+              ]
+            },
+            "type": "object",
+            "title": "Publisher Quality"
+          },
+          "max_article_bytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Article Bytes",
+            "default": 5000000
+          },
+          "story_novelty_window_hours": {
+            "type": "integer",
+            "maximum": 2160.0,
+            "minimum": 0.0,
+            "title": "Story Novelty Window Hours",
+            "default": 48
+          },
+          "near_duplicate_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.5,
+            "title": "Near Duplicate Threshold",
+            "default": 0.8
+          },
+          "max_additional_sources": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Max Additional Sources",
+            "default": 5
+          },
+          "selection_weights": {
+            "$ref": "#/components/schemas/ResearchSelectionWeights"
+          },
           "max_candidate_articles": {
             "type": "integer",
             "maximum": 50.0,
@@ -4052,6 +4115,48 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ResearchPolicy"
+      },
+      "ResearchSelectionWeights": {
+        "properties": {
+          "profile_relevance": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Profile Relevance",
+            "default": 0.3
+          },
+          "newsworthiness": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Newsworthiness",
+            "default": 0.25
+          },
+          "independent_sources": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Independent Sources",
+            "default": 0.2
+          },
+          "source_quality": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Source Quality",
+            "default": 0.15
+          },
+          "recency": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Recency",
+            "default": 0.1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ResearchSelectionWeights"
       },
       "RunCostsResponse": {
         "properties": {
@@ -4212,6 +4317,18 @@
               }
             ],
             "title": "Finished At"
+          },
+          "clip_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clip Id"
           },
           "profile_snapshot": {
             "additionalProperties": true,

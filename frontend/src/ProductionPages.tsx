@@ -4,10 +4,11 @@ import { NavLink, useParams } from "react-router-dom";
 
 import { ApiError, decideApproval, retryPublications, deleteClip, refreshGoals, type BudgetSummary, type Clip, type ClipList, type GoalsResponse, type PlatformGoal, type JsonObject, updateContentProfile, updateSettings, createContentProfile, saveContentProfile, activateContentProfile, deleteContentProfile, toggleActiveProfile, addProfileScheduleRule, updateProfileScheduleRule, deleteProfileScheduleRule, type ProfileScheduleItem, type ContentProfileItem, type ContentProfileList } from "./api/client";
 import { Collapsible } from "./Collapsible";
+import { isEditorObject, type EditorObject, type EditorValue } from "./editorValue";
+import { ProfileResearchSection } from "./ProfileResearch";
+import { composeProfile, readQualityRows, researchListKeys, validateResearch, type QualityRow } from "./researchPolicy";
 import { Pagination } from "./Pagination";
 import { useResource } from "./hooks/useResource";
-
-type EditorValue = string | number | boolean | null | EditorValue[] | { [key: string]: EditorValue };
 
 export function AnalyticsPage() {
   const [period, setPeriod] = useState("7d");
@@ -282,7 +283,9 @@ function ScheduleRuleRow({
 
 function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?: ContentProfileItem; onSaved: (item: ContentProfileItem | undefined, notice: string) => void }) {
   const brandingFolder = text(initial.branding_folder);
-  const [draft, setDraft] = useState({ ...initial, env_prefix: initial.env_prefix ?? null } as { [key: string]: EditorValue });
+  const [draft, setDraft] = useState({ ...initial, env_prefix: initial.env_prefix ?? null } as EditorObject);
+  const [hadQuality] = useState(() => isEditorObject(initial.research) && "publisher_quality" in initial.research);
+  const [qualityRows, setQualityRows] = useState<QualityRow[]>(() => readQualityRows(initial.research as EditorValue | undefined));
   const [name, setName] = useState(item?.name ?? "");
   const [newName, setNewName] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -290,20 +293,22 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteButton = useRef<HTMLButtonElement>(null);
+  const research = isEditorObject(draft.research) ? draft.research : {};
 
   async function perform(action: "save" | "create" | "activate" | "deactivate" | "delete") {
     setMessage("");
-    const validation = action === "save" || action === "create" ? validateProfile(draft) : {};
+    const profile = composeProfile(draft, qualityRows, hadQuality);
+    const validation = action === "save" || action === "create" ? { ...validateProfile(draft), ...validateResearch(draft.research, qualityRows) } : {};
     if ((action === "create" && !newName.trim()) || (action === "save" && item && !name.trim())) validation.form = "Enter a profile name.";
     setErrors(validation);
     if (Object.keys(validation).length) return;
     setSaving(true);
     try {
       let saved: ContentProfileItem | undefined = item;
-      if (action === "create") saved = await createContentProfile({ name: newName.trim(), profile: draft as JsonObject });
+      if (action === "create") saved = await createContentProfile({ name: newName.trim(), profile: profile as JsonObject });
       if (action === "save") {
-        if (item) saved = await saveContentProfile(item.id, { name: name.trim(), profile: draft as JsonObject });
-        else await updateContentProfile(draft as JsonObject);
+        if (item) saved = await saveContentProfile(item.id, { name: name.trim(), profile: profile as JsonObject });
+        else await updateContentProfile(profile as JsonObject);
       }
       if (action === "activate" && item) saved = await activateContentProfile(item.id);
       if (action === "deactivate" && item) saved = await toggleActiveProfile(item.id, false);
@@ -325,10 +330,16 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
     {item && brandingFolder && <div className="field">
       <label htmlFor="profile-branding-folder">Branding folder</label>
       <input id="profile-branding-folder" value={`branding/${brandingFolder}`} readOnly />
-      <p className="field-help">Place logo_letters.png and logo_badge.png here, then run from the repository root:</p>
-      <code>{`uv run clipfactory branding branding/${brandingFolder}`}</code>
     </div>}
-    <ObjectEditor value={Object.fromEntries(Object.entries(draft).filter(([key]) => key !== "schedule" && key !== "schedules" && key !== "branding_folder"))} onChange={(next) => setDraft({ ...draft, ...next })} errors={errors} />
+    <ObjectEditor value={Object.fromEntries(Object.entries(draft).filter(([key]) => !profileOwnedElsewhere.has(key)))} onChange={(next) => setDraft({ ...draft, ...next })} errors={errors} />
+    <ProfileResearchSection
+      research={research}
+      onChange={(next) => setDraft({ ...draft, research: next })}
+      qualityRows={qualityRows}
+      onQualityRowsChange={setQualityRows}
+      errors={errors}
+      limits={<ObjectEditor value={Object.fromEntries(Object.entries(research).filter(([key]) => !(researchListKeys as readonly string[]).includes(key)))} onChange={(next) => setDraft({ ...draft, research: { ...research, ...next } })} errors={errors} prefix="research" />}
+    />
     {errors.form && <p className="field-error" role="alert">{errors.form}</p>}
     <FormFooter saving={saving} message={message} onSave={() => void perform("save")} />
     <div className="profile-create"><div className="field"><label htmlFor="new-profile-name">New profile name</label><input id="new-profile-name" value={newName} onChange={(event) => setNewName(event.target.value)} /></div><button className="ghost-button" disabled={saving} onClick={() => void perform("create")}>Save as new profile</button></div>
@@ -336,18 +347,18 @@ function ProfileEditor({ initial, item, onSaved }: { initial: JsonObject; item?:
   </section>;
 }
 
+/** Profile keys edited by dedicated controls (schedules, read-only branding, Research section). */
+const profileOwnedElsewhere = new Set(["schedule", "schedules", "branding_folder", "research"]);
+/** Settings sections that belong to the selected Content Profile and are never offered here. */
+const profileOwnedSettings = new Set(["research"]);
+
 export function SettingsPage() {
   const [resource, reload] = useResource<unknown>("/api/settings");
   const payload = resource.status === "success" ? record(resource.data) : {};
-  const providers = objectArray(payload.providers);
   const settings = record(payload.settings);
-  return <Page title="Settings" eyebrow="SYSTEM / 07" lede="Runtime policy and provider readiness. Credentials remain environment-only." action={<IconButton label="Refresh settings" onClick={reload} />}>
+  return <Page title="Settings" eyebrow="SYSTEM / 07" lede="Runtime policy and configuration. Credentials remain environment-only." action={<IconButton label="Refresh settings" onClick={reload} />}>
     {resource.status === "loading" ? <Loading /> : resource.status === "error" ? <ErrorMessage message={resource.message} /> : <>
-      <Collapsible title="Providers"><section className="section-block provider-section">
-        <div className="section-head"><div><div className="eyebrow">CREDENTIAL PRESENCE</div><h2>Providers</h2></div><span className="privacy-note">VALUES NEVER DISPLAYED</span></div>
-        <div className="provider-grid">{providers.map((provider) => <div className="provider-row" key={text(provider.provider)}><span>{humanize(text(provider.provider))}</span><span className={`credential ${provider.credentials_configured === true ? "configured" : "missing"}`}>{provider.credentials_configured === true ? <Check size={13} /> : <X size={13} />}{provider.credentials_configured === true ? "Configured" : "Not configured"}</span></div>)}</div>
-      </section></Collapsible>
-      <div className="settings-stack">{Object.entries(settings).filter(([, value]) => isEditorObject(value)).sort(([left], [right]) => Number(right === "environment") - Number(left === "environment")).map(([section, value]) => <Collapsible key={section} title={humanize(section)}><SettingsSection name={section} initial={record(value)} onSaved={reload} /></Collapsible>)}</div>
+      <div className="settings-stack">{Object.entries(settings).filter(([section, value]) => isEditorObject(value) && !profileOwnedSettings.has(section)).sort(([left], [right]) => Number(right === "environment") - Number(left === "environment")).map(([section, value]) => <Collapsible key={section} title={humanize(section)}><SettingsSection name={section} initial={record(value)} onSaved={reload} /></Collapsible>)}</div>
     </>}
   </Page>;
 }
@@ -377,7 +388,7 @@ function SettingsSection({ name, initial, onSaved }: { name: string; initial: Js
   return <section className={`section-block form-section${name === "publishing" ? " prominent" : ""}`}>
     <div className="section-head"><div><div className="eyebrow">SETTINGS SECTION</div><h2>{humanize(name)}</h2></div>{name === "publishing" && <Settings2 size={18} />}</div>
     {name === "environment" && <p className="form-message">Defaults come from .env. Saved changes, including Wan FPS and inference steps, apply to new Runs and Continue Run; credentials and endpoints stay in .env.</p>}
-    <ObjectEditor value={draft} onChange={setDraft} errors={errors} prefix={name} />
+    <ObjectEditor value={draft} onChange={setDraft} errors={errors} prefix={name} collapsibleGroups />
     <FormFooter saving={saving} message={message} onSave={() => void save()} />
   </section>;
 }
@@ -660,11 +671,11 @@ function ClipActions({ clip, onModified }: { clip: Clip; onModified?: () => void
 }
 
 function ClipCard({ clip, currency, onModified }: { clip: Clip; currency: string | null; onModified?: () => void }) {
-  return <article className="section-block clip-card"><ClipPreview clip={clip} /><div className="clip-card-copy"><div className="section-head"><div><span className={`table-status ${clip.status}`}>{humanize(clip.status)}</span><h2><NavLink to={`/clips/${clip.id}`}>{clip.story_title || "Untitled Clip"}</NavLink></h2></div><span className="table-date">{formatDate(clip.created_at)}</span></div><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s</span><span>{clip.preview.width}×{clip.preview.height}</span></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onModified} /></div></article>;
+  return <article className="section-block clip-card"><ClipPreview clip={clip} /><div className="clip-card-copy"><div className="section-head"><div><span className={`table-status ${clip.status}`}>{humanize(clip.status)}</span><h2><NavLink to={`/clips/${clip.id}`}>{clip.story_title || "Untitled Clip"}</NavLink></h2></div><span className="table-date">{formatDate(clip.created_at)}</span></div><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{Math.round(clip.preview.duration_seconds)} sec</span><span>{clip.preview.width}×{clip.preview.height}</span></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onModified} /></div></article>;
 }
 
 function ClipDetail({ clip, currency, onChanged }: { clip: Clip; currency: string | null; onChanged: () => void }) {
-  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{clip.preview.duration_seconds}s · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onChanged} /></section></div>;
+  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{Math.round(clip.preview.duration_seconds)} sec · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onChanged} /></section></div>;
 }
 
 function RetryPublishButton({ clip, onRetried }: { clip: Clip; onRetried: () => void }) {
@@ -694,11 +705,14 @@ function ClipPreview({ clip }: { clip: Clip }) {
 
 function PublicationList({ clip }: { clip: Clip }) {
   if (!clip.publications.length) return <Empty message="No Publications recorded for this Clip." />;
-  return <div className="publication-list">{clip.publications.map((publication) => <div className="publication-row" key={publication.id}><div><strong>{platformLabel(publication.platform)}</strong><span className={`table-status ${publication.status}`}><span />{humanize(publication.status)}</span></div><div className="publication-metrics">{publication.latest_metrics ? <><span>{displayMetric(publication.latest_metrics.views)} views</span><span>{displayMetric(publication.latest_metrics.likes)} likes</span></> : <span>Metrics n/a</span>}</div>{publication.platform_url && <a className="row-open" href={publication.platform_url} target="_blank" rel="noreferrer" aria-label={`Open ${platformLabel(publication.platform)} Publication`}><ExternalLink size={15} /></a>}{publication.error_message && <small>{publication.error_message}</small>}</div>)}</div>;
+  return <div className="publication-list">{clip.publications.map((publication) => {
+    const unconfigured = publication.error_code === "not_configured";
+    return <div className="publication-row" key={publication.id}><div><strong>{platformLabel(publication.platform)}</strong><span className={`table-status ${unconfigured ? "not-configured" : publication.status}`}>{!unconfigured && <span />}{unconfigured ? "Not Configured" : humanize(publication.status)}</span></div>{!unconfigured && <><div className="publication-metrics">{publication.latest_metrics ? <><span>{displayMetric(publication.latest_metrics.views)} views</span><span>{displayMetric(publication.latest_metrics.likes)} likes</span></> : <span>Metrics n/a</span>}</div>{publication.platform_url && <a className="row-open" href={publication.platform_url} target="_blank" rel="noreferrer" aria-label={`Open ${platformLabel(publication.platform)} Publication`}><ExternalLink size={15} /></a>}{publication.error_message && <small>{publication.error_message}</small>}</>}</div>;
+  })}</div>;
 }
 
 function PublicationBadges({ clip }: { clip: Clip }) {
-  return <div className="publication-badges">{clip.publications.map((publication) => <span key={publication.id} className={`table-status ${publication.status}`}>{platformLabel(publication.platform)} · {humanize(publication.status)}</span>)}</div>;
+  return <div className="publication-badges">{clip.publications.map((publication) => <span key={publication.id} className={`table-status ${publication.error_code === "not_configured" ? "not-configured" : publication.status}`}>{platformLabel(publication.platform)} · {publication.error_code === "not_configured" ? "Not Configured" : humanize(publication.status)}</span>)}</div>;
 }
 
 function Countdown({ dueAt }: { dueAt?: string | null }) {
@@ -740,10 +754,32 @@ const settingOptions: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
-function ObjectEditor({ value, onChange, errors, prefix = "" }: { value: { [key: string]: EditorValue }; onChange: (value: { [key: string]: EditorValue }) => void; errors: Record<string, string>; prefix?: string }) {
+/** Bounds and guidance for numeric fields whose ranges are specified (18-configuration, CF-REQ-551). */
+const hints: Record<string, { min?: number; max?: number; step?: number; help?: string }> = {
+  "research.max_candidate_articles": { min: 1, max: 50, step: 1 },
+  "research.min_sources": { min: 1, step: 1 },
+  "research.preferred_independent_sources": { min: 1, step: 1 },
+  "research.max_article_age_hours": { min: 1, step: 1 },
+  "research.max_article_bytes": { min: 1, step: 1, help: "Largest article download accepted, in bytes." },
+  "research.story_novelty_window_hours": { min: 0, max: 2160, step: 1, help: "Hours during which a previously covered Story is not selected again (0–2160)." },
+  "research.near_duplicate_threshold": { min: 0.5, max: 1, step: 0.01, help: "Similarity from 0.5 to 1.0 above which articles count as the same Story." },
+  "research.max_additional_sources": { min: 0, max: 20, step: 1, help: "Extra Sources gathered for the selected Story (0–20)." },
+};
+
+/** Comma-separated list fields that may be null; the value is what an empty list is saved as. */
+const listFields: Record<string, EditorValue> = {
+  "research.allowed_publishers": null,
+  "research.blocked_publishers": [],
+};
+
+function ObjectEditor({ value, onChange, errors, prefix = "", collapsibleGroups = false }: { value: EditorObject; onChange: (value: EditorObject) => void; errors: Record<string, string>; prefix?: string; collapsibleGroups?: boolean }) {
   return <div className="object-editor">{Object.entries(value).map(([key, item]) => {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (isEditorObject(item)) return <fieldset key={key}><legend>{humanize(key)}</legend><ObjectEditor value={item} onChange={(next) => onChange({ ...value, [key]: next })} errors={errors} prefix={path} /></fieldset>;
+    if (isEditorObject(item)) {
+      const nested = <ObjectEditor value={item} onChange={(next) => onChange({ ...value, [key]: next })} errors={errors} prefix={path} collapsibleGroups={collapsibleGroups} />;
+      // Nested Settings groups start collapsed like their parent sections (CF-REQ-606).
+      return collapsibleGroups ? <Collapsible key={key} title={humanize(key)} level={3} className="settings-group nested-group">{nested}</Collapsible> : <fieldset key={key}><legend>{humanize(key)}</legend>{nested}</fieldset>;
+    }
     const id = `field-${path.replaceAll(".", "-")}`;
     const options = settingOptions[path];
     if (options) {
@@ -785,7 +821,7 @@ function ObjectEditor({ value, onChange, errors, prefix = "" }: { value: { [key:
         {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}
       </div>;
     }
-    return <div className="field" key={key}><label htmlFor={id}>{humanize(key)}</label>{typeof item === "boolean" ? <input id={id} type="checkbox" checked={item} onChange={(event) => onChange({ ...value, [key]: event.target.checked })} /> : <input id={id} type={typeof item === "number" ? "number" : "text"} value={Array.isArray(item) ? item.join(", ") : item ?? ""} onChange={(event) => onChange({ ...value, [key]: parseInput(event.target.value, item) })} />} {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}</div>;
+    return <div className="field" key={key}><label htmlFor={id}>{humanize(key)}</label>{typeof item === "boolean" ? <input id={id} type="checkbox" checked={item} onChange={(event) => onChange({ ...value, [key]: event.target.checked })} /> : <input id={id} type={typeof item === "number" ? "number" : "text"} min={hints[path]?.min} max={hints[path]?.max} step={typeof item === "number" ? hints[path]?.step ?? "any" : undefined} aria-invalid={errors[path] ? true : undefined} aria-describedby={hints[path]?.help ? `${id}-help` : undefined} value={Array.isArray(item) ? item.join(", ") : item ?? ""} onChange={(event) => onChange({ ...value, [key]: path in listFields ? parseList(event.target.value, listFields[path] ?? null) : parseInput(event.target.value, item) })} />}{hints[path]?.help && <small id={`${id}-help`}>{hints[path]?.help}</small>} {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}</div>;
   })}</div>;
 }
 
@@ -814,7 +850,7 @@ function Loading() { return <div className="loading-line"><span />Loading operat
 function ErrorMessage({ message }: { message: string }) { return <div className="inline-error" role="alert">{message}</div>; }
 function Empty({ message }: { message: string }) { return <div className="empty-state">{message}</div>; }
 
-function validateProfile(profile: { [key: string]: EditorValue }): Record<string, string> {
+function validateProfile(profile: EditorObject): Record<string, string> {
   const errors: Record<string, string> = {};
   if (text(profile.env_prefix) && !/^[A-Z][A-Z0-9_]{0,63}$/.test(text(profile.env_prefix))) errors.env_prefix = "Use letters, digits and underscores, starting with a letter (up to 64 characters).";
   const categories = ["general", "technology", "ai", "finance", "business", "science", "gaming", "sports", "entertainment", "politics"];
@@ -847,8 +883,8 @@ function serverErrors(error: unknown, prefix = ""): Record<string, string> {
 }
 function record(value: unknown): JsonObject { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : {}; }
 function objectArray(value: unknown): JsonObject[] { return Array.isArray(value) ? value.map(record) : []; }
-function isEditorObject(value: unknown): value is { [key: string]: EditorValue } { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function parseInput(value: string, previous: EditorValue): EditorValue { if (typeof previous === "number") return Number(value); if (Array.isArray(previous)) return value.split(",").map((item) => item.trim()).filter(Boolean); return value; }
+function parseList(value: string, empty: EditorValue): EditorValue { const items = value.split(",").map((item) => item.trim()).filter(Boolean); return items.length ? items : empty; }
 function number(value: EditorValue | undefined): number { return typeof value === "number" ? value : Number(value); }
 function text(value: unknown): string { return typeof value === "string" || typeof value === "number" ? String(value) : ""; }
 function display(value: unknown): string { return value == null || value === "" ? "n/a" : text(value) || "n/a"; }

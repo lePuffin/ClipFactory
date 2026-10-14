@@ -15,18 +15,33 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 
 - Given the fixture news set (≥ 40 references incl. the Reuters/AP/BBC/CNN/Blog set, a blocked publisher, stale items), when a Run starts, then at most `max_candidate_articles` articles are fetched, blocked/stale items are excluded, exact duplicates are stored once and the Blog copy is marked syndicated of Reuters.
 - Given one unreachable feed among working RSS, RDF and Atom feeds, research continues with the other feeds' references and a warning Run Event names the failing feed; when every feed fails, `no_candidates` lists each feed error.
+- Shared navigation, headers, sidebars and footers never enter extracted
+  article leads; unrelated articles on one publisher's site do not become
+  one Story merely because they share site chrome.
+- Two profiles with different research feeds query only their own feeds and
+  use their own limits, publisher tiers and novelty windows. Empty configured
+  feeds never borrow the other profile's sources. Legacy profile migration
+  preserves its previous configuration and does not rewrite historical Runs.
 - **Requirements:** CF-REQ-100–104, CF-REQ-118
 - **Verified by:** integration + E2E-1
 
 ### CF-AC-002 — Story selection
 
 - The syndication set forms one Story candidate with `article_count = 5`, `independent_source_count = 4`; selection is deterministic for fixed fake ratings; excluded topics and recently covered Stories are rejected with reasons visible in Run detail.
+- A sports profile cannot select a political Story merely because its
+  geography or keyword overlaps the profile. Candidate category is derived
+  from the candidate's news content, not copied from the target profile.
 - **Requirements:** CF-REQ-105–109, CF-REQ-111
 - **Verified by:** unit + E2E-1
 
 ### CF-AC-003 — Source grounding
 
 - Additional Sources are gathered up to the preferred count; every accepted Claim has verified verbatim evidence; fabricated excerpts are unverified; support levels are correct; single-source Claims are attributed in the script; a Story with < 3 accepted Claims falls back to the next candidate.
+- An automatic Run whose unwritten Story twice fails `script_too_short`
+  selects the next eligible persisted candidate within the shared two-fallback
+  limit and ordinary Retry allowance. It retains prior evidence and failures,
+  never repeats ranking/collection, never substitutes a Manual URL Story, and
+  fails explicitly when the allowance or eligible candidates are exhausted.
 - **Requirements:** CF-REQ-110, CF-REQ-112–117
 - **Verified by:** unit + integration
 
@@ -37,16 +52,24 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
   mentions fail the script gate and route to a bounded script revision.
   Per-segment attribution fields and description credits are preserved.
 - Rejected schema-valid drafts remain non-approved durable artifacts.
-  Narration-only retries merge bounded indexed corrections without changing
-  Claim IDs, unaffected narration, metadata or visuals; all gates still apply.
+  Narration-only retries merge bounded indexed corrections with Claim IDs
+  restricted to accepted Claims. Uncorrected Claim IDs, unaffected narration,
+  metadata, visuals and required attribution are preserved; all gates still apply.
 - **Requirements:** CF-REQ-150–162
 - **Verified by:** unit + E2E-1
 
 ### CF-AC-005 — Visual planning and asset reuse
 
 - Each Script Segment has Visual Segments with asset requirements, deterministic motion and transitions; a second Run needing the same subject reuses the library Asset without external calls; a retired Asset is never selected; the same Asset is not used twice in one Clip.
+- Verified person stills with confident dominant-face bounds retain the whole
+  face and headroom below the unchanged active information banner. Safe cover
+  crops are edge-to-edge; only unsafe crops need blurred padding. Portrait
+  shots remain still and face height is at most 32% of the output height.
+  Normal and saved rendering use source-hash-bound retained
+  framing; replaced Assets cannot inherit stale bounds. Ambiguous or missing
+  detection preserves standard fitting and emits a warning.
 - **Requirements:** CF-REQ-204–206, CF-REQ-211–213, CF-REQ-250–257
-- **Verified by:** unit + E2E-8
+- **Verified by:** unit + real FFmpeg portrait integration + E2E-8
 
 ### CF-AC-006 — Media acquisition, generation and provenance
 
@@ -68,12 +91,17 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-007 — Narration, transcription and captions
 
 - Narration is produced via `TTSProvider` (Google Chirp 3 HD, voice `en-US-Chirp3-HD-Leda` in live tests), stored as a non-reusable Asset, cached by text hash; duration gate produces actionable word deltas; transcription uses `large-v3-turbo` by default; captions use Script spelling with transcription timing, 2 centred lines within 6 % side margins, 88 % text width and 10 % bottom margin, readable box/shadow, and hostile caption text renders literally; music is selected from the local manifest-described library by metadata (no LLM), respects platform restrictions, ducks to −20 dB under narration, and its absence is only a warning.
+- Explicit CPU/int8 speech settings do not attempt CUDA; only `auto` may
+  fall back for missing CUDA libraries. Unrelated errors and failed fallback
+  remain visible.
 - **Requirements:** CF-REQ-300–305, CF-REQ-310–314, CF-REQ-320–322
 - **Verified by:** unit + integration
 
 ### CF-AC-008 — Evaluation and targeted retry
 
 - Quality evaluation supplies bounded per-shot evidence in one initial final-review request; missing visual evidence remains pending. A targeted irrelevant-shot issue revises only affected media, reusing unchanged narration/transcription/script; approval follows only complete review.
+- Duplicate rendered graphics remain a distinct failure and enter bounded
+  targeted visual replanning; repeated shots are not silently accepted.
 - **Requirements:** CF-REQ-400, CF-REQ-405–410, CF-REQ-412, CF-REQ-414–417
 - **Verified by:** unit + E2E-2
 
@@ -86,6 +114,9 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-010 — Publishing
 
 - Dry-run makes no platform calls; partial failure and idempotent resume behave as specified; disclosure flags are mapped. Human-review mode waits for explicit Approve/Reject indefinitely, including after ten minutes. Timeout publication requires eligible opt-in automatic mode. URL-pull platforms receive the signed expiring URL for the exact reviewed file.
+- Live configuration checks precede approval holds for every enabled platform.
+  Missing credentials or required public media delivery display only red
+  `Not Configured`; no approval hold or redundant failure-detail line is shown.
 - **Requirements:** CF-REQ-451–457, CF-REQ-459–461, CF-REQ-613, CF-NFR-114
 - **Verified by:** unit + integration + E2E-1, E2E-10
 
@@ -107,6 +138,8 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 - Clips support range-streamed preview playback, report unavailable media,
   hide approval controls after publication, and provide a labelled trash
   icon in the top-right corner with deletion confirmation.
+- Clip cards and detail pages round displayed durations to whole seconds,
+  without changing the stored media duration.
 - **Requirements:** CF-REQ-600–602, CF-REQ-608, CF-REQ-610, CF-REQ-613, CF-REQ-852
 - **Verified by:** E2E-6 (Playwright)
 
@@ -115,10 +148,15 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 - Named profiles can be created, edited, listed, activated atomically and
   deleted only when inactive; name conflicts and invalid values are rejected
   without changing stored state (CF-REQ-550–551).
-- The owner edits the Content Profile and application settings; invalid values are rejected with field errors; credential status is visible without secrets; edits affect only subsequent Runs.
+- The owner edits the Content Profile and application settings; invalid values are rejected with field errors; Settings never displays provider readiness or credential-status summaries and never accepts secrets; edits affect only subsequent Runs.
 - Fixed-choice Settings use labelled, dark-theme dropdowns for LLM output
   modes, Whisper device and publishing mode, with readable native options and
   visible keyboard focus. Open-ended values remain editable.
+- Research sources and policies are edited in the selected Content Profile,
+  not global Settings. Switching profiles shows that profile's research;
+  saving one profile leaves the other's sources unchanged.
+- Every Settings group is collapsed initially;
+  keyboard expansion and collapse retain unsaved values.
 - **Requirements:** CF-REQ-550–555, CF-REQ-606–607, CF-REQ-750–754
 - **Verified by:** E2E-7 + integration
 
@@ -132,11 +170,11 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 
 - After correcting an operational error, Continue Run resumes the failed
   checkpoint with current settings without repeating completed stages.
-  Active-run conflicts, missing checkpoints, exhausted retries and publication
+  Active-run conflicts, missing checkpoints and publication
   failures are rejected explicitly; failure history and costs are retained.
-  Raising `workflow.max_revision_retries` above a Run's own used retries makes
-  an `evaluation_failed_after_retries` Run continuable at `plan_retry`; retry
-  counters stay per Run.
+  Explicit continuation resets used revision retries to zero, including an
+  exhausted Run at `plan_retry`, while preserving historical Attempt numbers,
+  previous retry counts in events, costs and durable generation usage.
 - Stop cancels queued/running work without killing the Run worker, retains
   imported Assets, records `owner_stopped`, and rejects active publication.
 - Continue Run and Stop dispatch on a single click, without confirmation
@@ -198,6 +236,9 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-024 — LLM request governance
 
 - An uncached quality Run makes five initial requests (four for Manual URL), never more than eight total. Cache hits reduce counts and are visible. RPM/daily/cost checks precede dispatch and survive restart; start thresholds are trigger-specific. Permanent/daily/credit errors are not retried; exhaustion opens the circuit and retains pending artifacts. Dragonfly unavailability fails closed; durable usage/domain/workflow data remain in PostgreSQL.
+- An upstream error envelope, including an SSE error event or an error
+  accompanying partial choices, is never treated as a successful review.
+  Deadlines, cancellation, retry caps and request budgets remain enforced.
 - Endpoint/model pacing starts at the account RPM cadence, slows on transient
   429s and recovers by 10% on success without exceeding the configured ceiling.
   A 429 without a positive retry hint waits the full configured cooldown
@@ -239,6 +280,9 @@ The following scenarios extend the baseline by owner direction on 2026-10-06. Th
 
 ### CF-AC-027 — Grounded labels and mobile-safe overlays
 
+- Primary top-panel headers render uppercase for mixed/lowercase input across
+  cue kinds, in normal and saved renders. Wrapping measures displayed casing;
+  secondary lines, context labels, captions and stored evidence are unchanged.
 - A Clip includes independently timed person, place and Source labels with evidence bindings. A wrong-person fixture blocks approval; long names reflow or request review rather than overlap faces, subtitles or platform controls. All four platform-safe variants pass measured bounds and contrast checks. Archive and illustrative labels remain visible; media-author credits are distinct from news-source attribution. Static reading-focused graphics are permitted.
 - **Requirements:** CF-REQ-161, CF-REQ-203, CF-REQ-258–261, CF-REQ-313–314
 - **Verified by:** unit + real render integration + mobile frame review

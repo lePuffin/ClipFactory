@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from clipfactory.api.app import create_app
 from clipfactory.domain.models import ContentProfile, RunTrigger
 from clipfactory.infrastructure.db.base import Base
-from clipfactory.infrastructure.db.models import ContentProfileRow
+from clipfactory.infrastructure.db.models import ClipRow, ContentProfileRow
 from clipfactory.infrastructure.db.repositories import RunRepository
 from clipfactory.infrastructure.db.session import create_session_factory
 from clipfactory.infrastructure.http import SafeHTTPClient
@@ -57,6 +57,44 @@ def run_client(tmp_path: Path) -> Generator[tuple[TestClient, RunRepository]]:
     )
     yield client, repository
     engine.dispose()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-604")
+def test_run_detail_links_latest_produced_clip_even_after_failure(run_client) -> None:
+    client, repository = run_client
+    run_id = UUID(client.post("/api/runs").json()["run_id"])
+    assert client.get(f"/api/runs/{run_id}").json()["clip_id"] is None
+    latest = uuid4()
+    with repository.sessions.begin() as session:
+        for attempt, clip_id in ((2, latest), (1, uuid4())):
+            session.add(
+                ClipRow(
+                    id=clip_id,
+                    run_id=run_id,
+                    story_package_id=uuid4(),
+                    story_package_version=1,
+                    attempt=attempt,
+                    status="rejected",
+                    storage_key=f"clips/{clip_id}.mp4",
+                    sha256="a" * 64,
+                    duration_seconds=60,
+                    width=720,
+                    height=1280,
+                    fps=30,
+                    video_codec="h264",
+                    audio_codec="aac",
+                    size_bytes=100,
+                    composition_spec_hash="b" * 64,
+                    metadata_json={},
+                    created_at=datetime(2026, 10, 1, tzinfo=UTC),
+                )
+            )
+    repository.claim_next_queued(datetime(2026, 10, 1, tzinfo=UTC))
+    repository.fail(
+        run_id, "plan_retry", "evaluation_failed_after_retries", "Exhausted", datetime(2026, 10, 1, tzinfo=UTC)
+    )
+    assert client.get(f"/api/runs/{run_id}").json()["clip_id"] == str(latest)
 
 
 @pytest.mark.unit

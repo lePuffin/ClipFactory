@@ -20,6 +20,12 @@ wastes money and time and discards good work.
 - Revision retries are bounded (`workflow.max_revision_retries`, default 3);
   provider call retries are separate.
 - Only approved Clips can be published.
+- Owner-directed refinement (2026-10-14, CF-REQ-117): before a Script passes,
+  repeated short-script failures may use an ordinary Retry to select the next
+  persisted eligible Story. Ratings and Sources are reused; historical
+  artefacts remain, but changed Story inputs invalidate script corrections.
+  The shared two-fallback limit and revision allowance are not reset.
+  Manual URL Runs never substitute another Story.
 
 ## Consequences
 

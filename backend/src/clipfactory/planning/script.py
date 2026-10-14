@@ -170,7 +170,15 @@ class NarrationCorrection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     segment_index: int = Field(ge=0)
     text: str = Field(min_length=1)
-    attribution: str | None
+    attribution: str | None = None
+    claim_ids: list[UUID] | None = Field(default=None, min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def spoken_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("corrected narration must not be blank")
+        return value
 
 
 class BuzzLinesRepairResult(BaseModel):
@@ -228,7 +236,7 @@ async def generate_script(
     min_segments: int = 4,
     max_segments: int = 8,
     hook_max_seconds: float = 5.0,
-    prompt_version: str = "write_script.v3",
+    prompt_version: str = "write_script.v5",
     revision_instructions: Sequence[str] = (),
     target_word_count: int | None = None,
     source_attributions: Sequence[str] = (),
@@ -243,9 +251,11 @@ async def generate_script(
         raise ValueError("key facts must reference accepted Claims")
     publishers = claim_publishers or {}
     key_fact_ids = set(key_fact_claim_ids)
+    # Every accepted Claim is writer input (CF-REQ-153); key facts come first and are marked.
     claim_data = [
         {
             "claim_id": str(claim.id),
+            "key_fact": claim.id in key_fact_ids,
             "text": claim.text,
             "kind": claim.kind.value,
             "support_level": claim.support_level.value,
@@ -253,8 +263,7 @@ async def generate_script(
             "publishers": list(publishers.get(claim.id, ())),
             "evidence": [item.excerpt for item in claim.evidence if item.verified],
         }
-        for claim in accepted
-        if claim.id in key_fact_ids
+        for claim in sorted(accepted, key=lambda item: item.id not in key_fact_ids)
     ]
     words_per_minute = profile.voice.words_per_minute
     target_seconds = profile.duration.target_seconds - lead_in_seconds - tail_seconds
@@ -276,8 +285,14 @@ async def generate_script(
             f"The first segment must contain at most {int(hook_max_seconds * words_per_minute / 60)} words. "
             "Count every spoken word, including publisher credits, in that hook limit. "
             "Use one compact hook sentence; put supporting detail in the next segment. "
+            "Every segment must contain complete spoken sentences with initial capitalization and "
+            "sentence-final punctuation. Never copy a headline or incomplete evidence clause verbatim; "
+            "rewrite it as a complete sentence without introducing unsupported facts. "
             "The visuals array must have at least one entry per Script Segment, in matching order. "
             "Every factual statement must reference only accepted Claim IDs. "
+            "Cover the key facts (key_fact=true); other accepted Claims may add context and length. "
+            "Reach the length only with distinct accepted facts and their evidence, never by repeating a fact "
+            "or adding commentary; a Story too thin for the minimum length stays short and is rejected. "
             "Classify each visual kind: media (default), infographic, or scientific. "
             "Use infographic for statistic/comparison/timeline/key_date and scientific for "
             "function_plot/relationship_diagram. Illustrate one specific date with a key_date infographic whose "
@@ -429,6 +444,9 @@ async def generate_script(
             editable = {0}
         elif set(rejected_codes) <= {"script_too_short", "script_too_long"}:
             editable.discard(0)
+        cited = {claim_id for segment in rejected_draft.segments for claim_id in segment.claim_ids}
+        uncited = [str(claim.id) for claim in accepted if claim.id not in cited]
+        current_words = sum(len(segment.text.split()) for segment in rejected_draft.segments)
         repair_messages = [
             LLMMessage(
                 "system",
@@ -443,21 +461,36 @@ async def generate_script(
                 "unless an accepted Claim says so. "
                 "Never speak the same sentence twice; replace a repeated sentence with a different accepted fact. "
                 "Lengthen narration only with another accepted fact or necessary context, never with filler "
-                "adverbs such as notably, remarkably, impressively or truly. "
+                "adverbs such as notably, remarkably, impressively or truly. Never restate a fact already spoken "
+                "in other words to reach the length; if the accepted Claims cannot fill the minimum, return the "
+                "shorter grounded narration instead of padding. "
+                "Each segment's text states only the accepted Claims in its claim_ids. Keep corrected text on its "
+                "own segment_index; do not shift text between indexes. When corrected text states different "
+                "accepted Claims, return that segment's complete claim_ids; otherwise omit claim_ids. "
+                "Every segment is one or more complete spoken sentences ending with a full stop; never copy an "
+                "incomplete Claim text verbatim. "
                 "Keep each publisher's attribution field when required, but speak each publisher at most once "
-                "across the whole narration. Attribution fields are not spoken narration. "
+                "across the whole narration. Attribution fields are not spoken narration; an omitted attribution "
+                "keeps the segment's existing field. "
                 "Count words before returning; use plain spoken text, no URLs, markup or emoji. "
-                "Claim IDs, purpose, metadata and visuals are immutable and must not appear in the response. "
-                "Prompt version: repair_narration.v1.",
+                "Purpose, metadata and visuals are immutable and must not appear in the response. "
+                "Prompt version: repair_narration.v2.",
             ),
             messages[1],
             LLMMessage(
                 "user",
                 "Corrections required: "
                 + "; ".join(revision_instructions)
+                + f"\nCurrent narration: {current_words} words; required: {minimum_words} to {maximum_words} words."
+                + "\nAccepted Claim IDs not cited by any segment: "
+                + json.dumps(uncited)
                 + "\n<untrusted-rejected-narration>\n"
                 + json.dumps(
-                    [segment.model_dump(mode="json") for segment in rejected_draft.segments], ensure_ascii=False
+                    [
+                        {"segment_index": index, "words": len(segment.text.split()), **segment.model_dump(mode="json")}
+                        for index, segment in enumerate(rejected_draft.segments)
+                    ],
+                    ensure_ascii=False,
                 )
                 + "\n</untrusted-rejected-narration>",
             ),
@@ -471,12 +504,22 @@ async def generate_script(
             )
             error.draft = rejected_draft
             raise error
+        if any(not set(correction.claim_ids or ()) <= allowed_ids for correction in repaired.value.corrections):
+            error = ScriptGateError(
+                list(rejected_codes),
+                "Narration correction cites a Claim ID that is not an accepted Claim; the original defects remain",
+            )
+            error.draft = rejected_draft
+            raise error
         segments = list(rejected_draft.segments)
         for correction in repaired.value.corrections:
             original = segments[correction.segment_index]
-            segments[correction.segment_index] = original.model_copy(
-                update={"text": correction.text, "attribution": correction.attribution}
-            )
+            update: dict[str, object] = {"text": correction.text}
+            if correction.attribution and correction.attribution.strip():
+                update["attribution"] = correction.attribution
+            if correction.claim_ids:
+                update["claim_ids"] = list(dict.fromkeys(correction.claim_ids))
+            segments[correction.segment_index] = original.model_copy(update=update)
         draft = rejected_draft.model_copy(update={"segments": segments})
         model = repaired.model
     else:
@@ -501,7 +544,10 @@ async def generate_script(
         raise ValueError("visual plan draft must include at least one Visual Segment per Script Segment")
     script = _build_script(draft, profile, lead_in_seconds, tail_seconds)
     for index, visual in enumerate(script.visuals):
-        for spec in (visual.graphics_spec, visual.fallback_graphics_spec):
+        for field, spec in (
+            ("graphics_spec", visual.graphics_spec),
+            ("fallback_graphics_spec", visual.fallback_graphics_spec),
+        ):
             if spec is None:
                 continue
             try:
@@ -511,9 +557,11 @@ async def generate_script(
                     raise
                 error = ScriptGateError(
                     ["unsupported_statement"],
-                    f"Visual {index} graphics is not grounded ({exc}). Every graphics label must be a short phrase "
+                    f"Visual {index} {field} is not grounded ({exc}). Every graphics label must be a short phrase "
                     "copied verbatim from its referenced accepted Claim, and each value must follow its label in "
-                    "that Claim; otherwise use kind media for that visual.",
+                    "that Claim. In the full rewrite, correct the unsupported payload or use a sourceable media "
+                    "visual with kind=media, graphics_spec=null and fallback_graphics_spec=null. Setting "
+                    "kind=media alone retains an unsupported optional graphic and does not fix this failure.",
                 )
                 error.draft = draft
                 raise error from exc
@@ -845,9 +893,12 @@ _ORDINALS = {
 _SUFFIXES = ("ations", "ation", "ions", "ion", "ings", "ing", "ers", "er", "ies", "ied", "es", "ed", "s")
 
 
+_POSSESSIVE = re.compile(r"(?<=[^\W_])['\u2019]s\b")
+
+
 def _content_words(sentence: str) -> set[str]:
     words: set[str] = set()
-    for token in re.findall(r"[^\W_]+", sentence.casefold()):
+    for token in re.findall(r"[^\W_]+", _POSSESSIVE.sub("", sentence.casefold())):
         if token in _STOPWORDS:
             continue
         word = _ORDINALS.get(str(token), str(token))
@@ -1257,12 +1308,29 @@ def validate_script_gate(
     if not script.segments or not script.segments[0].claim_ids:
         issues.append("hook_ungrounded")
     duration = script.estimated_duration_seconds
+    words_per_minute = profile.voice.words_per_minute
     if duration < profile.duration.min_seconds:
         issues.append("script_too_short")
-        details.append(f"narration has {script.word_count} words; it is too short for the minimum duration")
+        minimum_words = ceil((profile.duration.min_seconds - lead_in_seconds - tail_seconds) * words_per_minute / 60)
+        cited = {claim_id for segment in script.segments for claim_id in segment.claim_ids}
+        uncited = sum(1 for claim_id in accepted if claim_id not in cited)
+        details.append(
+            f"narration has {script.word_count} words; it is too short for the minimum duration, which needs at "
+            f"least {minimum_words} words ({minimum_words - script.word_count} more). "
+            + (
+                f"{uncited} accepted Claims are not cited yet; add distinct facts from them"
+                if uncited
+                else "Every accepted Claim is already cited; add only unspoken detail from their evidence"
+            )
+            + ", never a restatement, filler or commentary"
+        )
     if duration > profile.duration.max_seconds:
         issues.append("script_too_long")
-        details.append(f"narration has {script.word_count} words; it is too long for the maximum duration")
+        maximum_words = floor((profile.duration.max_seconds - lead_in_seconds - tail_seconds) * words_per_minute / 60)
+        details.append(
+            f"narration has {script.word_count} words; it is too long for the maximum duration, which allows at "
+            f"most {maximum_words} words ({script.word_count - maximum_words} fewer)"
+        )
     if any(re.search(r"https?://|www\.|\[[^]]+\]\([^)]*\)|<[^>]+>", segment.text) for segment in script.segments):
         issues.append("forbidden_content")
     if issues:

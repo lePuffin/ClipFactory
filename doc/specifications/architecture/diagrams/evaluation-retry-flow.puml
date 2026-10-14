@@ -2,6 +2,14 @@
 ' Requirements: ../../11-evaluation-and-retry.md
 title ClipFactory — Evaluation and Targeted Retry
 
+legend bottom
+Pre-production CF-REQ-117 exception:
+two short-script gates before any passing Script
+may select the next persisted eligible Story.
+Original ratings/Sources and both limits are retained.
+Manual URL Runs never substitute another Story.
+endlegend
+
 start
 :Clip candidate (Attempt n);
 :validate_clip — deterministic\n(duration, resolution, aspect, FPS, streams,\ncodecs, decode, captions, assets, metadata, WER, drift);

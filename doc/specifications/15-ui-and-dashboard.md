@@ -124,11 +124,14 @@ Global header: product name, current Run indicator, **Run Now** button,
   reserve the end of each Visual's portion; stage completion finishes it.
 - **Acceptance:**
   - For a fixture Run failing with `evaluation_failed_after_retries`, the page shows the final blocking issues and all 4 Attempts.
+  - The Run record header links to the produced Clip when `clip_id` is present,
+    including on failed Runs; no Clip link is offered before one exists.
   - Initial and newly received events appear newest first without duplicates.
   - Execution updates elapsed time while running and freezes it at finish.
   - Generation phases update live and expose failures, including after reload.
   - Failed records offer Continue Run with current application settings,
-    preserving the Run ID and completed work (CF-REQ-657); conflicts are shown.
+    preserving the Run ID and completed work and resetting used revision
+    retries to zero (CF-REQ-657); conflicts are shown.
   - Continue Run and Stop are adjacent to Execution status. Stop is offered
     for queued/running Runs. Both act on one click without confirmation
     panels; descriptive button titles explain current-settings use and
@@ -163,11 +166,13 @@ Global header: product name, current Run indicator, **Run Now** button,
 ### CF-REQ-606 — Settings
 
 - **Description:** The settings page shall edit application settings
-  sections, display the publishing mode prominently, and show per-provider
-  selection and credential status (configured / not configured) without
-  displaying or accepting secrets.
+  sections, display the publishing mode prominently, and expose provider
+  selection without displaying or accepting secrets. Provider readiness and
+  credential-status summaries shall not appear on Settings.
 - **Acceptance:**
   - No input on the settings page accepts an API key or token.
+  - Provider readiness and its credential-status grid are absent, even when
+    the settings response includes provider credential-presence metadata.
   - Server-side validation errors are displayed next to the field.
   - Fixed-choice environment output modes, Whisper device and publishing
     mode use labelled dropdowns containing their configured allowed values.
@@ -185,8 +190,13 @@ Global header: product name, current Run indicator, **Run Now** button,
     Inactive profiles remain editable; activation controls dispatch only.
     Validation and API failures remain visible. Empty schedules allow adding
     a new rule. The profile editor exposes Account Env Prefix but no secrets.
-  - Each Settings group is a collapsible section that can be expanded or
-    collapsed independently without losing unsaved edits.
+  - Each Settings group, including Providers and nested setting groups, is a
+    collapsible section that starts collapsed, is operable by keyboard
+    (button with `aria-expanded`), and can be expanded or collapsed
+    independently without losing unsaved edits.
+  - Research policy belongs to the selected Content Profile (CF-REQ-607), not
+    Settings: the settings page never offers a Research section, even when a
+    legacy payload still contains one.
 - **Related:** CF-REQ-651, CF-REQ-752, CF-REQ-753
 
 ### CF-REQ-607 — Content Profile editor
@@ -204,6 +214,15 @@ Global header: product name, current Run indicator, **Run Now** button,
   - Entering `min 90 / max 60` shows a field error and does not submit.
   - Saving as new adds the profile to the selector; deleting the active
     profile is refused with the server's 409 message.
+  - The selected profile shows one dedicated, initially collapsed Research section containing the
+    research limits plus RSS feeds (`[publisher, url]` rows that can be added
+    and removed), publisher quality tiers by hostname, story novelty window,
+    maximum article bytes and the other profile research fields. Edits are
+    saved only with the selected profile. An empty feed list is saved as
+    `[]` and shown as an explicit empty state; it never inherits another
+    profile's feeds. Client checks mirror the backend exactly (duplicate feed
+    URLs and any hostname case are allowed; values are sent unnormalized);
+    labelled errors appear next to their fields and block submission.
 
 ### CF-REQ-608 — Run Now
 
@@ -261,6 +280,11 @@ Global header: product name, current Run indicator, **Run Now** button,
 - **Acceptance:**
   - Switching tab resets to page 1 and requests the matching filter;
     pagination controls reflect `total`.
+  - Clip duration is displayed rounded to the nearest whole second on cards
+    and detail pages; stored media duration remains precise.
+  - A Publication with `error_code=not_configured` displays only a red
+    `Not Configured` status, not `Failed` or an additional detail/metrics line.
+    This also applies to pending-approval platform badges (CF-REQ-457).
   - Seeking in the preview player issues range requests that the API serves with 206.
   - Published Clips show no Approve or Reject buttons, including when the
     Clip remains `approved` but a Publication is `published`.

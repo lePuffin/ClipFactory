@@ -60,7 +60,9 @@ references). They never call a `NewsSource` again.
   visual style), `script.*` settings, and — on revision — the Actions to apply.
 - **Behaviour:** One LLM request (task `write_script`) returns the script
   segments, the social metadata text (CF-REQ-160) and the visual plan draft
-  (CF-REQ-250, CF-REQ-263). Each visual draft has a typed `kind` and, for
+  (CF-REQ-250, CF-REQ-263). The request carries every accepted Claim, key
+  facts first and marked; other accepted Claims may supply context and length,
+  never a restated fact or commentary. Each visual draft has a typed `kind` and, for
   graphics, a schema-validated declarative payload from the bounded templates
   in CF-REQ-263; legacy drafts without a kind default to `media`. Factual
   graphic labels, values and text cite accepted Claim IDs. This remains the
@@ -122,6 +124,10 @@ references). They never call a `NewsSource` again.
 
 - **Description:** After `write_script`, a deterministic stage gate shall
   validate the script and produce a `stage_gate` Evaluation.
+  The initial writing prompt explicitly requests complete, capitalized spoken
+  sentences with final punctuation, rather than copying evidence fragments.
+  The same gate still blocks defective output; prompt guidance never repairs
+  unsupported facts or bypasses checks.
 - **Checks (each is a blocking issue code):**
   - `script_segment_count` — CF-REQ-156
   - `hook_too_long`, `hook_ungrounded` — CF-REQ-157
@@ -135,7 +141,9 @@ references). They never call a `NewsSource` again.
     across the complete narration; this is the deterministic form of
     CF-REQ-163's repetitive-narration `editorial_quality` rule. The same code
     flags a paraphrased restatement: a later sentence with four or more
-    content words (stopwords and request verbs such as "asked" removed,
+    content words (stopwords and request verbs such as "asked" removed, a
+    possessive "'s" ignored so "nation's" never matches "Ukraine's" (live Run
+    a3c8b36b),
     simple suffix stemming so "convicted" and "conviction" match, stems of
     five or more letters matching when one prefixes the other so "reduced"
     and "reduction" match, spelled ordinals as numbers) of which at least
@@ -227,7 +235,11 @@ references). They never call a `NewsSource` again.
     and "Greens urge block of US execution livestream", as segments 0 and 1
     and the next segment repeated them). The revision instruction names the
     segment and asks for one complete spoken sentence
-  - `script_too_short` / `script_too_long` — estimated duration outside `[min_seconds, max_seconds]`
+  - `script_too_short` / `script_too_long` — estimated duration outside
+    `[min_seconds, max_seconds]`. The revision instruction states the current
+    word count, the CF-REQ-155 word bound and the difference; for
+    `script_too_short` it also states how many accepted Claims no segment cites
+    yet (or that all are cited) and forbids restatement, filler or commentary
   - `forbidden_content` — URLs, Markdown, SSML/markup, emoji, or text in a different script than the profile language's expected script
 - **Failure:** A failed gate routes to a script revision (counts as a revision
   retry) with the issues as instructions.
@@ -250,11 +262,22 @@ references). They never call a `NewsSource` again.
   For a retained schema-valid draft whose only failures are hook length,
   narration length, missing/repeated attribution or forbidden narration
   formatting, repeated sentences, a spoken call to action, filler padding, a stage direction, unsupported commentary or a headline fragment, the existing single `write_script` retry request returns only
-  indexed narration corrections (`text`, `attribution`). Code merges these
-  into the draft, preserving Claim IDs, purposes, social metadata, visual
-  drafts and editorial overlays, then reruns every original gate. A hook-only
+  indexed narration corrections (`text`, optional `attribution`, optional
+  `claim_ids`). The request lists each segment with its index, word count,
+  Claim IDs and attribution, the current and required narration word counts,
+  and the accepted Claim IDs no segment cites. A correction whose text states
+  different accepted Claims returns that segment's complete `claim_ids`, so
+  provenance follows the narration (live Runs a3c8b36b and bae1afee moved
+  facts between segments under fixed Claim IDs); an omitted or blank
+  attribution keeps the segment's existing field; blank text is schema
+  invalid. When the accepted Claims cannot reach the minimum without
+  restating facts, the correction stays short and the gate reports
+  `script_too_short` rather than padding. Code merges corrections into the
+  draft, preserving purposes, social metadata, visual drafts, editorial
+  overlays and uncorrected Claim IDs, then reruns every original gate. A hook-only
   failure permits only index 0; duration-only corrections preserve a passing
-  hook. Duplicate, out-of-range or out-of-scope corrections are rejected.
+  hook. Duplicate, out-of-range or out-of-scope corrections, and corrections
+  citing a Claim that is not accepted, are rejected and the draft retained.
   Other failures continue to use the full writer output. No extra call,
   unbounded repair loop, word truncation or relaxed gate is introduced.
 - **Acceptance:**

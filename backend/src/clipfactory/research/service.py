@@ -10,11 +10,14 @@ from uuid import UUID
 from clipfactory.domain.models import ContentProfile
 from clipfactory.ports.llm import LLMProvider
 from clipfactory.ports.news import NewsSource
-from clipfactory.ports.research import CoveredStory, ResearchRepository
+from clipfactory.ports.research import CoveredStory, ResearchRepository, StoryFallbackRepository
 from clipfactory.research.discovery import ByteFetcher, ResearchPolicy
+from clipfactory.research.manual_url import ManualURLClaimExtractor, ManualURLFailure
 from clipfactory.research.pipeline import (
     GroundedStoryResult,
+    ResearchFailure,
     make_research_snapshot,
+    minimum_evidence_words,
     research_grounded_story,
 )
 from clipfactory.research.selection import SelectionWeights
@@ -48,6 +51,51 @@ class ResearchUseCase:
         self.llm = llm
         self.repository = repository
         self.events = events
+
+    async def fallback(
+        self,
+        run_id: UUID,
+        profile: ContentProfile,
+        rejected_story_id: UUID,
+        fallbacks_used: int,
+        *,
+        max_claim_input_chars: int,
+        repository: StoryFallbackRepository,
+    ) -> tuple[UUID, int]:
+        extractor = ManualURLClaimExtractor(self.llm, repository)
+        while fallbacks_used < 2:
+            selected = await asyncio.to_thread(
+                repository.select_fallback, run_id, rejected_story_id, profile.research.min_sources
+            )
+            if selected is None:
+                raise ResearchFailure(
+                    "insufficient_claims", "No eligible persisted Story remains after thin-script fallback"
+                )
+            story_id, fallbacks_used = selected
+            await asyncio.to_thread(
+                self.events.append_event,
+                run_id,
+                "progress",
+                "Rejected evidence-thin Story; extracting Claims for the next persisted candidate",
+                stage="research",
+                level="warning",
+                payload={
+                    "rejected_story_id": str(rejected_story_id),
+                    "story_id": str(story_id),
+                    "fallback_index": fallbacks_used,
+                },
+            )
+            try:
+                result = await extractor.execute(run_id, max_input_chars=max_claim_input_chars)
+            except ManualURLFailure as exc:
+                if exc.code != "insufficient_claims":
+                    raise
+            else:
+                words = sum(len(claim.text.split()) for claim in result.claims if claim.status.value == "accepted")
+                if words >= minimum_evidence_words(profile):
+                    return story_id, fallbacks_used
+            rejected_story_id = story_id
+        raise ResearchFailure("insufficient_claims", "The shared Story fallback allowance is exhausted")
 
     async def execute(
         self,
@@ -84,7 +132,9 @@ class ResearchUseCase:
             max_claim_input_chars=max_claim_input_chars,
             progress=progress,
         )
-        snapshot = make_research_snapshot(result, run_id=run_id, category=profile.category.value, now=now)
+        snapshot = make_research_snapshot(
+            result, run_id=run_id, now=now, near_duplicate_threshold=profile.research.near_duplicate_threshold
+        )
         await asyncio.to_thread(self.repository.persist, snapshot)
         if not emit_events:
             return result

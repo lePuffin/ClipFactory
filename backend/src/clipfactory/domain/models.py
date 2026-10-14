@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from clipfactory.domain.research_policy import ResearchControls
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -219,7 +221,7 @@ class ScheduleRule(StrictModel):
         return value
 
 
-class ResearchPolicy(StrictModel):
+class ResearchPolicy(ResearchControls):
     max_candidate_articles: int = Field(default=20, ge=1, le=50)
     min_sources: int = Field(default=1, ge=1)
     preferred_independent_sources: int = Field(default=3, ge=1)

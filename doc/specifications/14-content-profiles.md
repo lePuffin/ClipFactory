@@ -21,7 +21,7 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
 | schedule | Daily Run time (16) |
 | schedules | Independent daily rules in backend host local time (16); empty disables scheduling |
 | env_prefix | Account credential scope for publishing and metric collection (12, 13) |
-| research | Candidate limits and source thresholds (05) |
+| research | All research controls, including feed pairs, publisher tiers, retrieval, novelty, similarity, gathering and selection policy (05, 18) |
 | music | Music selection and mix (09) |
 
 ## Requirements
@@ -83,6 +83,12 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
   dimensions and 24 ≤ fps ≤ 60, valid IANA timezone and `HH:MM` time,
   platforms from the supported set, `1 ≤ min_sources ≤ preferred_independent_sources`,
   `1 ≤ max_candidate_articles ≤ 50`.
+- **Research controls:** Feed entries are exactly `[nonblank publisher, URL]`
+  pairs with valid HTTP(S) URLs and no embedded credentials; empty feed lists
+  are valid and disable automatic research, not Manual URL ingestion.
+  Publisher tiers are `high`, `standard`, `low` or `blocked`. Byte limits are
+  positive; novelty window, similarity threshold, additional-source limit and
+  normalized nonnegative selection weights follow the bounds in configuration.
 - **Behaviour:** Both named-profile creation/replacement and active-profile
   replacement validate ContentProfile values. Invalid profile JSON returns 422
   `{"error": {"code": "profile_validation_failed", "message":
@@ -125,6 +131,15 @@ Decision: [ADR-009](decisions/ADR-009-single-user-v1.md).
 
 - **Description:** A Run shall use the profile snapshot taken at Run start;
   edits during a Run do not affect it.
+- **Behaviour:** Manual, scheduled and continued Runs use their immutable
+  profile research snapshot, never the currently saved profile or global
+  research settings. Existing profiles materialize absent research fields
+  once from stored legacy global values over shared defaults, without replacing
+  explicit values (including empty feeds). Existing Run snapshots are not
+  rewritten: Runs with the old split contract continue using their stored
+  global research snapshot for formerly global fields. Deleting a profile
+  does not remove its Run snapshots. New profiles use shared starter defaults
+  for omitted fields, not legacy global overrides.
 - **Acceptance:**
   - Editing duration limits mid-Run does not change that Run's validation limits.
 - **Related:** CF-REQ-653

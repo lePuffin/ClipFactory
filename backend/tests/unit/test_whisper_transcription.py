@@ -10,6 +10,7 @@ from clipfactory.infrastructure.settings import EnvironmentSettings
 
 def _settings() -> EnvironmentSettings:
     values: dict[str, Any] = {
+        "_env_file": None,
         "APP_ENV": "test",
         "DATABASE_URL": "postgresql+psycopg://unused:unused@localhost/unused",
         "LLM_PROVIDER": "fake",
@@ -101,3 +102,69 @@ async def test_missing_cuda_library_falls_back_only_for_auto(tmp_path: Path, dev
         assert first.words[0].text == second.words[0].text == "hello"
         assert devices == ["auto", "cpu"]
         assert settings.whisper_device == "auto"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-310")
+@pytest.mark.asyncio
+async def test_explicit_cpu_int8_transcribes_without_cuda_attempt(tmp_path: Path) -> None:
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"mock audio")
+    calls: list[dict[str, Any]] = []
+
+    class Model:
+        def transcribe(self, path: str, **kwargs: Any):
+            return (
+                [SimpleNamespace(end=1.0, words=[SimpleNamespace(word="hello", start=0.0, end=1.0)])],
+                SimpleNamespace(duration=1.0, language="en"),
+            )
+
+    def factory(model_name: str, **kwargs: Any) -> Model:
+        calls.append({"model": model_name, **kwargs})
+        return Model()
+
+    settings = _settings()
+    settings.whisper_device = "cpu"
+    settings.whisper_compute_type = "int8"
+    provider = WhisperLocalTranscriptionProvider(settings, model_factory=factory)
+    transcript = await provider.transcribe(audio, "en")
+    assert transcript.words[0].text == "hello"
+    assert calls == [{"model": settings.whisper_model, "device": "cpu", "compute_type": "int8"}]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-310")
+@pytest.mark.asyncio
+async def test_auto_does_not_mask_unrelated_runtime_error(tmp_path: Path) -> None:
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"mock audio")
+    calls: list[str] = []
+
+    def factory(model_name: str, **kwargs: Any):
+        calls.append(kwargs["device"])
+        raise RuntimeError("invalid model weights")
+
+    provider = WhisperLocalTranscriptionProvider(_settings(), model_factory=factory)
+    with pytest.raises(RuntimeError, match="invalid model weights"):
+        await provider.transcribe(audio, "en")
+    assert calls == ["auto"]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-310")
+@pytest.mark.asyncio
+async def test_cpu_fallback_failure_propagates(tmp_path: Path) -> None:
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"mock audio")
+    calls: list[str] = []
+
+    def factory(model_name: str, **kwargs: Any):
+        calls.append(kwargs["device"])
+        if kwargs["device"] == "auto":
+            raise RuntimeError("Library libcudnn.so.9 is not found")
+        raise RuntimeError("CPU transcription model could not be loaded")
+
+    provider = WhisperLocalTranscriptionProvider(_settings(), model_factory=factory)
+    with pytest.raises(RuntimeError, match="CPU transcription model could not be loaded"):
+        await provider.transcribe(audio, "en")
+    assert calls == ["auto", "cpu"]

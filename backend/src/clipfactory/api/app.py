@@ -97,6 +97,7 @@ class EvaluationResponse(BaseModel):
 
 
 class RunDetailResponse(RunSummaryResponse):
+    clip_id: UUID | None = None
     profile_snapshot: dict[str, Any]
     settings_snapshot: dict[str, Any]
     events: list[RunEventResponse]
@@ -444,7 +445,8 @@ def create_app(
 
     async def effective_settings() -> dict[str, Any]:
         defaults = settings_snapshot(settings)
-        return await _in_thread(configuration.settings, defaults) if configuration else defaults
+        effective = await _in_thread(configuration.settings, defaults) if configuration else defaults
+        return {key: value for key, value in effective.items() if key != "research"}
 
     async def reconcile_profile_schedules() -> None:
         if schedule_repository is not None:
@@ -1368,21 +1370,6 @@ def settings_snapshot(settings: EnvironmentSettings) -> dict[str, Any]:
             "min_daily_requests_to_start_manual_run": 4,
             "circuit_failure_threshold": 3,
             "circuit_open_seconds": 300,
-        },
-        "research": {
-            "max_article_bytes": 5000000,
-            "story_novelty_window_hours": 48,
-            "feeds": [
-                ["BBC News - World", "https://feeds.bbci.co.uk/news/world/rss.xml"],
-                ["The Guardian - World", "https://www.theguardian.com/world/rss"],
-                ["Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml"],
-                ["NPR - World", "https://feeds.npr.org/1004/rss.xml"],
-                ["Deutsche Welle - World", "https://rss.dw.com/rdf/rss-en-world"],
-                ["France 24", "https://www.france24.com/en/rss"],
-                ["The New York Times - World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"],
-                ["CNN - World", "http://rss.cnn.com/rss/edition_world.rss"],
-            ],
-            "publisher_quality": {},
         },
         "script": {"min_segments": 4, "max_segments": 8, "hook_max_seconds": 5.0},
         "visual": {"min_segment_seconds": 1.5, "max_segment_seconds": 8.0},

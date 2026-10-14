@@ -28,6 +28,10 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
   Scripts are written from accepted Claims whose evidence is verified verbatim
   in Source text.
 - **Source text is untrusted input** to LLM prompts (CF-NFR-108).
+- Every `research.*` setting below resolves from the immutable
+  `ContentProfile.research` snapshot. Only historical Runs using the old split
+  contract read formerly global fields from their own stored settings snapshot,
+  never live global settings.
 
 ## Stage summary
 
@@ -86,7 +90,10 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
   title, author, publication time, language and main plain text.
 - **Behaviour:** Retrieval uses the safe HTTP client (CF-NFR-103). Extracted
   text is normalised (Unicode NFC, collapsed whitespace, control characters
-  removed). `canonical_url` is derived from `<link rel="canonical">` when
+  removed). Article content is preferred over the main landmark, with
+  page text used only when neither contains text. Navigation, headers,
+  footers and sidebars are excluded so shared site chrome cannot become
+  a Story lead or evidence. `canonical_url` is derived from `<link rel="canonical">` when
   present, otherwise from the final URL with tracking parameters (`utm_*`,
   `fbclid`, `gclid`) and fragments removed.
 - **Failure:** A failed or empty extraction marks the reference as skipped
@@ -94,6 +101,9 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
 - **Acceptance:**
   - Two URLs differing only by `utm_source` produce one `Source` record.
   - Extracted text contains no HTML tags or script content.
+  - Navigation preceding an article, including an empty advertising article,
+    is absent from the extracted lead. Pages without an article use their
+    main content without surrounding navigation or footer text.
 - **Related:** CF-REQ-102, CF-NFR-103, CF-NFR-107
 
 ### CF-REQ-102 — Exact duplicate removal
@@ -195,8 +205,16 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
   on title/summary, or LLM flag returned with the relevance rating) shall be
   ineligible, and candidates whose category differs from the profile category
   shall be ineligible unless the profile category is `general`.
+- **Behaviour:** The existing `rank_stories` structured response must classify
+  each candidate's actual category from its title and lead, independently of
+  the requested profile category. Code applies category eligibility before
+  weighted selection or fallback. Missing classification cannot be filled
+  from the profile category. Persist the candidate's actual classification.
+  Topics remain scoring preferences, not an additional hard eligibility gate.
 - **Acceptance:**
   - With `excluded_topics = ["celebrity"]`, a candidate titled "Celebrity divorce" is rejected with reason `excluded_topic`.
+  - A politics candidate is ineligible for sports even with a higher score;
+    a sports candidate remains eligible. General permits both.
 - **Related:** CF-REQ-551
 
 ### CF-REQ-109 — Story novelty [Derived]
@@ -356,11 +374,23 @@ Entities: `Source`, `Story`, `StorySource`, `Claim`, `Evidence` in
 - **Behaviour:** The workflow selects the next eligible Story candidate if
   one exists (at most 2 fallbacks per Run); otherwise the Run fails with
   `insufficient_claims`.
+  Owner-directed reliability revision (2026-10-14): before any Script has
+  passed, two `script_too_short` gates for the same Story also qualify it as
+  evidence-thin. Automatic Runs may select the next persisted eligible
+  candidate, reusing the original ratings and Sources without recollection or
+  reranking. This consumes one ordinary revision Retry and the same shared
+  two-fallback allowance; neither counter is reset. Manual URL Runs never
+  substitute the owner's chosen Story. Old Claims, drafts and Evaluations
+  remain retained, but are not reused for the replacement Story.
 - **Acceptance:**
   - A fixture Story with 2 accepted Claims triggers fallback to the next candidate and emits a `story_selected` event for it.
   - A fixture Story with 3 accepted Claims totalling 12 words is skipped with
     a progress message naming the 12 available and 60 required evidence
     words; with no other candidate the Run fails with `insufficient_claims`.
+  - Two short-script gates trigger bounded fallback before production.
+    Candidates already rejected for grounding, profile/category or insufficient
+    Sources are not retried. With no eligible candidate or no remaining
+    fallback allowance the Run fails explicitly; no padding is approved.
 - **Related:** CF-REQ-107
 
 ### CF-REQ-118 — Research persistence

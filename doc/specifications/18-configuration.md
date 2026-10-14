@@ -11,7 +11,7 @@ Security of secrets: [19-security.md](19-security.md).
 | Layer | Storage | Editable from UI | Contains |
 | --- | --- | --- | --- |
 | **Environment** | Process environment / `.env` file (never committed) | No | Deployment settings, provider selection, provider endpoints, credentials |
-| **Application settings** | PostgreSQL table `app_settings` (one JSON document per section, validated by Pydantic) | Yes (Settings page) | Workflow, provider call policy, research feeds, captions, composition, evaluation, publishing mode and approval gate, budget limits and price table, analytics, retention |
+| **Application settings** | PostgreSQL table `app_settings` (one JSON document per section, validated by Pydantic) | Yes (Settings page) | Workflow, provider call policy, captions, composition, evaluation, publishing mode and approval gate, budget limits and price table, analytics, retention |
 | **Content Profile** | PostgreSQL (`content_profile`) | Yes (Content Profile page) | Editorial settings — see [14-content-profiles.md](14-content-profiles.md) |
 | **Code defaults** | Pydantic model defaults | No | The defaults listed below |
 
@@ -122,6 +122,13 @@ explicitly under CF-REQ-264. Their executable/install paths are listed above.
 | `FACEBOOK_ACCESS_TOKEN` | — | Yes | Page access token |
 | `FACEBOOK_PAGE_ID` | — | Yes | |
 
+For hosts without cuBLAS/cuDNN speech runtime libraries, explicitly select
+`whisper_device=cpu` and `whisper_compute_type=int8` in the editable
+`environment` settings section (or the equivalent environment variables).
+This avoids repeated automatic CUDA attempts. `auto` retains its logged
+CPU/int8 fallback for missing CUDA libraries; explicit `cuda` errors remain
+visible rather than changing the owner's device choice.
+
 Wan model files are cached under `${DATA_DIR}/models/wan`, never checked into
 Git. First generation automatically downloads missing files from `WAN_MODEL`
 (Hugging Face model ID); a local directory uses existing weights. Install the
@@ -218,6 +225,15 @@ requests/day; verify against the account, OD-021).
 
 ### `research`
 
+All keys in this section are now owned by `ContentProfile.research`
+(owner-approved 2026-10-13), not editable application settings. Global Settings
+does not return a research section and rejects updates to it. A stored legacy
+`app_settings.research` row is retained solely as a one-time source for absent
+fields when materializing existing profiles; it never overrides explicit profile
+values, including `feeds: []`. New profiles use the shared defaults below.
+Historical Run snapshots remain unchanged and retain the old split research
+resolution contract; new Runs snapshot the complete profile research policy.
+
 | Key | Default | Range | Used by |
 | --- | --- | --- | --- |
 | `feeds` | curated list (see below) | | `RssNewsSource` |
@@ -225,11 +241,11 @@ requests/day; verify against the account, OD-021).
 | `max_additional_sources` | `5` | 0–20 | CF-REQ-110 |
 | `story_novelty_window_hours` | `48` | 0–2160 | CF-REQ-109 [Derived] |
 | `selection_weights` | `{profile_relevance: 0.30, newsworthiness: 0.25, independent_sources: 0.20, source_quality: 0.15, recency: 0.10}` | sum = 1.0 | CF-REQ-107 (Provisional) |
-| `publisher_quality` | mapping `publisher domain → tier` (`high` / `standard` / `low` / `blocked`); starter entries for the starter feeds are `high` | | CF-REQ-103 |
-| `max_article_bytes` | `5_000_000` | | CF-NFR-104 |
+| `publisher_quality` | `{}` (preserves the previous stored/default Settings behavior); mapping `publisher domain → tier` (`high` / `standard` / `low` / `blocked`), unknown publishers are `standard` | | CF-REQ-103 |
+| `max_article_bytes` | `5_000_000` | > 0 | CF-NFR-104 |
 
 `feeds` default: the starter list below (OD-003, decided), editable in
-Settings. Every URL must be verified to return a valid feed during Phase 3;
+the Content Profile editor. Every URL must be verified to return a valid feed during Phase 3;
 feeds that fail are removed from the seed and reported. Reuters and AP no
 longer publish official public RSS feeds, so their reporting enters mainly
 through syndication and `gather_sources`. An empty list makes automated
@@ -460,6 +476,16 @@ as `football_youtube_token.json`, `football_client_secrets.json` and
 Environment files use the existing settings paths; process variables override
 file values. The profile stores the prefix only, never the secrets.
 
+The owner authorization/check helper `scripts/check_credentials.py` uses
+the repository's `secrets/` directory for scoped YouTube files when explicit
+paths are absent: shared `youtube_oauth.json` and
+`<prefix>_youtube_token.json`. `DATA_DIR` does not change this helper default.
+When using these helper defaults, configure the corresponding scoped
+`YOUTUBE_CLIENT_SECRETS_FILE` and `YOUTUBE_TOKEN_FILE` paths for the publisher;
+its runtime defaults under `DATA_DIR/secrets/` remain unchanged.
+Authorization and refresh-token import create a missing destination parent
+directory before writing the private token file.
+
 The seeded default profile (created by the initial migration if none exists):
 
 | Field | Default |
@@ -480,7 +506,7 @@ The seeded default profile (created by the initial migration if none exists):
 | generation | `{image_providers: ["comfyui", "higgsfield"], video_providers: ["comfyui", "wan_local", "higgsfield"]}` — order of preference; entries not enabled in the environment are skipped (CF-REQ-208) |
 | platforms | `[]` (owner enables explicitly) |
 | schedule | `{enabled: true, local_time: "05:00", timezone: "Europe/Lisbon"}` (OD-008, decided) |
-| research | `{max_candidate_articles: 20, min_sources: 1, preferred_independent_sources: 3, max_article_age_hours: 24, allowed_publishers: null, blocked_publishers: []}` |
+| research | `{max_candidate_articles: 20, min_sources: 1, preferred_independent_sources: 3, max_article_age_hours: 24, allowed_publishers: null, blocked_publishers: []}` plus all shared controls/defaults in [`research`](#research), including starter feed pairs; explicit `feeds: []` disables automatic research |
 | music | `{enabled: true, mood_tags: ["news", "neutral"], energy: "low", ducked_level_db: -20, unducked_level_db: -12}` (levels relative to normalised narration; CF-REQ-321) |
 
 ## Requirements
@@ -527,6 +553,9 @@ unused, but selecting a visual that requires it fails explicitly.
 - **Behaviour:** Updates are validated with the same models as startup; an
   invalid update is rejected with field-level errors and nothing is stored.
   Successful updates emit a structured log entry listing changed keys.
+  Research is exclusively a Content Profile section: `GET /api/settings`
+  omits it and `PUT /api/settings/research` returns 422
+  `settings_validation_failed` without changing any retained legacy row.
 - **Acceptance:**
   - `PUT` with `workflow.max_revision_retries = 11` returns 422 and the stored value is unchanged.
   - A valid update is visible in a subsequent `GET` and used by the next Run.
@@ -624,6 +653,12 @@ unused, but selecting a visual that requires it fails explicitly.
 - **Behaviour:** On validation failure the provider wrapper re-asks with the
   validation errors, up to `providers.llm_max_schema_repairs` times; schema
   repairs are separate from call retries.
+  Explicit upstream error envelopes take precedence over partial `choices`,
+  even under HTTP 200. A non-streaming request receiving an SSE error event
+  reports the upstream failure, with the existing classification and safe
+  retry hints; it never reconstructs a partial streamed completion.
+  Malformed response envelopes produce `invalid_response`, not unhandled
+  parser exceptions. All retries remain governed by CF-REQ-670.
   The OpenAI-compatible adapter merges adjacent same-role messages (for
   example a schema-repair hint after the user prompt, or the output-format
   preamble before the task instructions) so requests alternate roles as

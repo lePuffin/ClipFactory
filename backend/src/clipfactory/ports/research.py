@@ -65,10 +65,6 @@ class CoveredStory:
     canonical_urls: frozenset[str]
 
 
-class ResearchRepository(Protocol):
-    def persist(self, snapshot: ResearchSnapshot) -> None: ...
-
-
 class ClaimExtractionRepository(Protocol):
     def selected_story_context(self, run_id: UUID) -> SelectedStoryContext: ...
 
@@ -80,3 +76,11 @@ class ClaimExtractionRepository(Protocol):
         title: str,
         summary: str,
     ) -> None: ...
+
+
+class ResearchRepository(Protocol):
+    def persist(self, snapshot: ResearchSnapshot) -> None: ...
+
+
+class StoryFallbackRepository(ResearchRepository, ClaimExtractionRepository, Protocol):
+    def select_fallback(self, run_id: UUID, rejected_story_id: UUID, min_sources: int) -> tuple[UUID, int] | None: ...

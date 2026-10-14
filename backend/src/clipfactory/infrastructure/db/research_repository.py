@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
@@ -123,6 +124,63 @@ class ResearchRepository:
                 )
                 covered.append(CoveredStory(title, frozenset(urls)))
             return tuple(covered)
+
+    def select_fallback(self, run_id, rejected_story_id, min_sources: int) -> tuple[UUID, int] | None:
+        with self.sessions.begin() as session:
+            run = session.scalar(select(RunRow).where(RunRow.id == run_id).with_for_update())
+            if run is None:
+                raise ResearchRunMissing(str(run_id))
+            current = session.get(StoryRow, run.selected_story_id)
+            if current is None:
+                raise LookupError("selected Story is missing")
+            used = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(StoryRow)
+                    .where(
+                        StoryRow.run_id == run_id,
+                        StoryRow.rejection_reason.in_(("grounding_failed", "insufficient_claims")),
+                    )
+                )
+                or 0
+            )
+            if current.id != rejected_story_id:
+                return current.id, used
+            if used >= 2:
+                return None
+            candidates = list(
+                session.scalars(
+                    select(StoryRow).where(
+                        StoryRow.run_id == run_id, StoryRow.rejection_reason == "lower_selection_score"
+                    )
+                )
+            )
+            candidates.sort(
+                key=lambda story: (
+                    int((story.score_breakdown or {}).get("candidate_rank", 0)),
+                    -(story.selection_score or 0),
+                    story.title,
+                )
+            )
+            for candidate in candidates:
+                independent = (
+                    session.scalar(
+                        select(func.count())
+                        .select_from(StorySourceRow)
+                        .where(StorySourceRow.story_id == candidate.id, StorySourceRow.is_independent.is_(True))
+                    )
+                    or 0
+                )
+                if independent < min_sources:
+                    candidate.rejection_reason = "insufficient_sources"
+                    continue
+                current.status = "rejected"
+                current.rejection_reason = "insufficient_claims"
+                candidate.status = "selected"
+                candidate.rejection_reason = None
+                run.selected_story_id = candidate.id
+                return candidate.id, used + 1
+            return None
 
     def summary(self, run_id) -> dict[str, object] | None:
         with self.sessions() as session:

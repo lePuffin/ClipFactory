@@ -15,6 +15,7 @@ from PIL import ImageFont
 from pydantic import BaseModel, ConfigDict, Field
 
 from clipfactory.assets.title_card import render_title_card
+from clipfactory.composition.framing import portrait_framing
 from clipfactory.composition.render import MediaExecutor, freeze_end_card, render_clip
 from clipfactory.composition.spec import AudioInput, CompositionSpec, OverlayInput, VisualInput
 from clipfactory.domain.models import Asset, AssetStatus, ContentProfile, Platform
@@ -327,9 +328,19 @@ class SavedNewsRenderer:
             )
             if asset.provenance.attribution_required and not continuation:
                 credits.append(asset.provenance.attribution_text)
+        portrait_metadata = []
         for segment, (path, asset), motion in zip(
             metadata["visual_segments"], visual_paths, choose_shot_motions(shots), strict=True
         ):
+            face, framing = await portrait_framing(
+                path,
+                is_person_still=asset.media_type == "image"
+                and (asset.category == "person" or segment.get("selection_reason") == "person_portrait"),
+                retained=segment.get("portrait_framing"),
+                detector=getattr(self.media, "detect_portrait_face", None),
+                source_sha256=asset.sha256,
+            )
+            portrait_metadata.append(framing)
             segments.append(
                 VisualInput(
                     path,
@@ -341,6 +352,7 @@ class SavedNewsRenderer:
                     segment["transition_in"] if request.transition_policy == "planned" else "cut",
                     segment.get("source_label"),
                     float(segment.get("source_offset_seconds", 0.0)) if asset.media_type == "video" else 0.0,
+                    face_box=face,
                 )
             )
         sounds = []
@@ -431,6 +443,7 @@ class SavedNewsRenderer:
             "storage_key": rendered.storage_key,
             "sha256": rendered.sha256,
             "composition_spec_hash": spec.sha256(),
+            "portrait_framing": portrait_metadata,
             "request": request.model_dump(mode="json"),
             "probe": rendered.probe,
             "credits": list(dict.fromkeys(credit for credit in credits if credit)),

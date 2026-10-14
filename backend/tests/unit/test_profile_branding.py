@@ -247,3 +247,141 @@ async def test_normal_run_never_borrows_global_outro_inputs(tmp_path: Path) -> N
     with pytest.raises(MediaProcessError, match=r"logo_badge\.png"):
         await MediaRunner().prepare_profile_outro(directory, tmp_path / "font.ttf")
     assert not (directory / "outro.mp4").exists()
+
+
+def _fail_at_composition(repository: RunRepository, run_id: UUID) -> None:
+    now = datetime.now(UTC)
+    repository.claim_next_queued(now)
+    repository.start_stage(run_id, "compose", now)
+    repository.fail(run_id, "compose", "composition_failed", "Composition failed", now)
+
+
+GLOBAL_SETTINGS: dict[str, Any] = {
+    "composition": {
+        "logo_file": "/repo/logo_letters.png",
+        "end_card_file": "/repo/branding/outro.mp4",
+        "tail_seconds": 1,
+        "font_file": "current.ttf",
+    },
+    "workflow": {"stage_timeout_seconds": 7200},
+}
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.req("CF-REQ-360")
+@pytest.mark.parametrize("delete_profile", [False, True])
+def test_continuation_reapplies_run_profile_branding_not_global_or_active_profile(
+    tmp_path: Path, delete_profile: bool
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    Base.metadata.create_all(engine)
+    try:
+        sessions = create_session_factory(engine)
+        root = tmp_path / "branding"
+        configuration = ConfigurationRepository(sessions, clock=lambda: datetime.now(UTC), branding_root=root)
+        configuration.create_profile("World", ContentProfile(), activate=True)
+        football = configuration.create_profile("Football News (English)", ContentProfile())
+        repository = RunRepository(sessions, branding_root=root)
+        run = repository.create(
+            RunTrigger.RUN_NOW,
+            manual_url=None,
+            settings_snapshot={"composition": {"logo_file": "old.png", "tail_seconds": 1}},
+            profile_id=UUID(football["id"]),
+        )
+        rid = UUID(run["run_id"])
+        original = repository.get(rid)["settings_snapshot"]["composition"]
+        _fail_at_composition(repository, rid)
+        if delete_profile:
+            configuration.delete_profile(UUID(football["id"]))
+            from clipfactory.infrastructure.db.models import RunRow
+
+            with sessions.begin() as session:  # PostgreSQL applies ON DELETE SET NULL; SQLite here does not.
+                row = session.get(RunRow, rid)
+                assert row is not None
+                row.profile_id = None
+            assert repository.get(rid)["profile_id"] is None
+
+        repository.continue_failed(
+            rid, settings_snapshot=GLOBAL_SETTINGS, expected_stage="compose", now=datetime.now(UTC)
+        )
+
+        detail = repository.get(rid)
+        composition = detail["settings_snapshot"]["composition"]
+        expected = (root / "football-news-english").resolve()
+        assert composition["logo_file"] == original["logo_file"] == str(expected / "logo_letters.png")
+        assert composition["end_card_file"] == original["end_card_file"] == str(expected / "outro.mp4")
+        assert composition["branding_directory"] == str(expected)
+        assert composition["tail_seconds"] == 3
+        assert composition["font_file"] == "current.ttf"
+        assert detail["settings_snapshot"]["workflow"] == {"stage_timeout_seconds": 7200}
+        assert detail["profile_snapshot"]["id"] == football["id"]
+        resumed = detail["events"][-1]
+        assert resumed["type"] == "run_resumed"
+        assert resumed["payload"]["settings_snapshot"] == detail["settings_snapshot"]
+        assert resumed["payload"]["previous_settings_snapshot"]["composition"] == original
+        assert GLOBAL_SETTINGS["composition"]["logo_file"] == "/repo/logo_letters.png"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.req("CF-REQ-360")
+def test_continuation_repairs_snapshot_previously_overwritten_by_global_branding(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    Base.metadata.create_all(engine)
+    try:
+        sessions = create_session_factory(engine)
+        root = tmp_path / "branding"
+        configuration = ConfigurationRepository(sessions, clock=lambda: datetime.now(UTC), branding_root=root)
+        football = configuration.create_profile("Football", ContentProfile())
+        repository = RunRepository(sessions, branding_root=root)
+        rid = UUID(
+            repository.create(
+                RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={}, profile_id=UUID(football["id"])
+            )["run_id"]
+        )
+        _fail_at_composition(repository, rid)
+        from clipfactory.infrastructure.db.models import RunRow
+
+        with sessions.begin() as session:
+            row = session.get(RunRow, rid)
+            assert row is not None
+            row.settings_snapshot = GLOBAL_SETTINGS
+
+        repository.continue_failed(
+            rid, settings_snapshot=GLOBAL_SETTINGS, expected_stage="compose", now=datetime.now(UTC)
+        )
+
+        composition = repository.get(rid)["settings_snapshot"]["composition"]
+        assert composition["logo_file"] == str((root / "football").resolve() / "logo_letters.png")
+        assert composition["end_card_file"] == str((root / "football").resolve() / "outro.mp4")
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.req("CF-REQ-360")
+def test_legacy_snapshot_continuation_retains_its_frozen_branding_paths(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    Base.metadata.create_all(engine)
+    try:
+        repository = RunRepository(create_session_factory(engine))
+        legacy = {"composition": {"logo_file": "legacy.png", "end_card_file": None, "tail_seconds": 1}}
+        rid = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot=legacy)["run_id"])
+        _fail_at_composition(repository, rid)
+
+        repository.continue_failed(
+            rid, settings_snapshot=GLOBAL_SETTINGS, expected_stage="compose", now=datetime.now(UTC)
+        )
+
+        composition = repository.get(rid)["settings_snapshot"]["composition"]
+        assert composition["logo_file"] == "legacy.png"
+        assert composition["end_card_file"] is None
+        assert "branding_directory" not in composition
+        assert composition["tail_seconds"] == 1
+        assert composition["font_file"] == "current.ttf"
+    finally:
+        engine.dispose()

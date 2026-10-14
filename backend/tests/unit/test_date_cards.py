@@ -201,3 +201,75 @@ def test_a_date_spoken_only_in_a_portrait_piece_shows_no_early_card() -> None:
     assert [segment.requirement["graphics_spec"] for segment in plan] == [None] * len(plan)
     assert plan[0].requirement["kind"] == "media"
     assert any("October 16" in segment.narration_text and segment.requirement.get("person") for segment in plan)
+
+
+def _graphics_in(requirement: dict) -> list[object]:
+    """Every graphic a Visual could render, including a portrait's fallback."""
+    found = [requirement.get("graphics_spec"), requirement.get("fallback_graphics_spec")]
+    person = requirement.get("person")
+    if isinstance(person, dict):
+        found += _graphics_in(person["fallback"])
+    return [item for item in found if item is not None]
+
+
+@pytest.mark.req("CF-REQ-265")
+@pytest.mark.req("CF-REQ-268")
+def test_a_portrait_fallback_never_repeats_the_segment_graphic() -> None:
+    cited = _claim("Kristalina Georgieva will open the meetings on October 16.")
+    text = (
+        "The annual meetings open on October 16 in Washington with finance ministers from many nations. "
+        "Kristalina Georgieva will lead the talks with central bankers and senior officials."
+    )
+    spec = KeyDate.model_validate({"template": "key_date", "date": {"text": "October 16", "claim_ids": [cited.id]}})
+    people = (PersonDraft(name="Kristalina Georgieva", mentions=["Kristalina Georgieva"]),)
+    primary = CALENDAR.model_copy(update={"kind": "infographic", "graphics_spec": spec})
+    fallback = VisualDraft(
+        objective="Mark the day.",
+        media_type="video",
+        category="infographic",
+        description="Washington meetings",
+        search_queries=["Washington finance meetings"],
+        fallback_graphics_spec=spec,
+    )
+    for draft in (primary, fallback):
+        script = replace(
+            _script(text, (cited.id,), draft),
+            segments=(ScriptSegment(0, text, (cited.id,), None, 9),),
+            people=people,
+        )
+
+        plan = build_visual_plan(script, allow_generated_media=True)
+
+        person = next(segment for segment in plan if segment.requirement.get("person"))
+        assert _graphics_in(person.requirement) == []
+        assert person.requirement["person"]["fallback"]["kind"] == "media"
+        assert [len(_graphics_in(segment.requirement)) for segment in plan].count(1) == 1
+        assert sum(len(_graphics_in(segment.requirement)) for segment in plan) == 1
+        assert "October 16" in next(s for s in plan if _graphics_in(s.requirement)).narration_text
+
+
+@pytest.mark.req("CF-REQ-265")
+@pytest.mark.req("CF-REQ-268")
+def test_a_date_spoken_only_in_a_portrait_piece_leaves_no_card_in_its_fallback() -> None:
+    cited = _claim("Kristalina Georgieva will open the meetings on October 16.")
+    text = (
+        "Finance ministers from many nations will gather in Washington for the annual meetings this autumn. "
+        "Kristalina Georgieva will open the talks on October 16."
+    )
+    card = CALENDAR.model_copy(
+        update={
+            "kind": "infographic",
+            "graphics_spec": KeyDate.model_validate(
+                {"template": "key_date", "date": {"text": "October 16", "claim_ids": [cited.id]}}
+            ),
+        }
+    )
+    script = replace(
+        _script(text, (cited.id,), card),
+        segments=(ScriptSegment(0, text, (cited.id,), None, 9),),
+        people=(PersonDraft(name="Kristalina Georgieva", mentions=["Kristalina Georgieva"]),),
+    )
+
+    plan = build_visual_plan(script, allow_generated_media=True)
+
+    assert [_graphics_in(segment.requirement) for segment in plan] == [[]] * len(plan)

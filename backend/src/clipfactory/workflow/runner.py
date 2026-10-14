@@ -11,7 +11,6 @@ from threading import Event
 from typing import Any, Protocol
 from uuid import UUID
 
-from clipfactory.domain.routing import revision_limit_raised
 from clipfactory.ports.generation import GENERATION_ABORT
 from clipfactory.ports.runs import RunContinuationConflict
 from clipfactory.workflow.executor import StageFailure
@@ -144,13 +143,6 @@ class WorkflowRunner:
         run = await asyncio.to_thread(self._runs.get, run_id)
         if run["status"] != "failed":
             raise RunContinuationConflict("Only failed Runs can be continued")
-        if run.get("failure_code") == "evaluation_failed_after_retries" and not revision_limit_raised(
-            int(run.get("revision_retries_used", 0)), settings_snapshot
-        ):
-            raise RunContinuationConflict(
-                "Revision retries are exhausted; raise workflow.max_revision_retries above "
-                f"{run.get('revision_retries_used', 0)} or start a new Run"
-            )
         stage = run.get("failure_stage")
         if not stage or stage == "publish":
             raise RunContinuationConflict("This failure cannot be safely continued; check publication outcomes")

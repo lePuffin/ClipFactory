@@ -140,7 +140,8 @@ def render_editorial_graphic(
     secondary_font = ImageFont.truetype(str(font_file), round(22 * scale))
     lines: list[str] = []
     line = ""
-    for word in cue.text.split():
+    display_text = cue.text.upper() if cue.placement == "top" else cue.text
+    for word in display_text.split():
         candidate = f"{line} {word}".strip()
         if font.getlength(candidate) > panel_width - 2 * padding:
             if not line or font.getlength(word) > panel_width - 2 * padding:

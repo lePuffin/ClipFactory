@@ -58,6 +58,7 @@ from clipfactory.infrastructure.providers.transcription.whisper_local import Whi
 from clipfactory.infrastructure.providers.tts.google import GoogleTTSProvider
 from clipfactory.infrastructure.providers.wan_local import WanLocalVideoProvider
 from clipfactory.infrastructure.public_media import PublicMediaStaging
+from clipfactory.infrastructure.research_defaults import new_profile_research
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.infrastructure.settings_validation import ProviderCallSettings, apply_runtime_environment
 from clipfactory.infrastructure.storage import LocalStorageProvider
@@ -243,6 +244,7 @@ def create_application(settings: EnvironmentSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         nonlocal lifecycle
+        await asyncio.to_thread(configuration_repository.initialize_research)
         await asyncio.to_thread(configuration_repository.initialize_branding)
         async with open_postgres_checkpointer(configured.database_url.get_secret_value()) as checkpointer:
             application.state.checkpointer = checkpointer
@@ -389,7 +391,7 @@ def seed_defaults(settings: EnvironmentSettings | None = None) -> None:
                 select(ContentProfileRow.id).where(ContentProfileRow.is_active.is_(True)).limit(1)
             )
             if active_profile is None:
-                profile = ContentProfile()
+                profile = new_profile_research(ContentProfile())
                 connection.execute(
                     insert(ContentProfileRow).values(
                         id=profile.id,

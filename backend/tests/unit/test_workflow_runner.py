@@ -3,19 +3,20 @@ import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy import create_engine
 
-from clipfactory.domain.models import RunTrigger, Stage
+from clipfactory.domain.models import Action, ActionType, Evaluation, EvaluationLayer, RunTrigger, Stage
 from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.repositories import RunRepository
 from clipfactory.infrastructure.db.session import create_session_factory
 from clipfactory.ports.runs import ActiveRunConflict, RunContinuationConflict
 from clipfactory.workflow.executor import StageFailure
 from clipfactory.workflow.graph import WorkflowState, build_workflow
+from clipfactory.workflow.production_stages import ProductionStageService
 from clipfactory.workflow.runner import ActionableWorkflowError, RunLifecycleService, WorkflowRunner
 
 NOW = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
@@ -132,9 +133,11 @@ async def test_owner_continuation_preserves_run_and_resumes_checkpoint_with_curr
     assert queued["failure_code"] is None
     assert queued["finished_at"] is None
     assert queued["attempt"] == 2
-    assert queued["revision_retries_used"] == 1
+    assert queued["revision_retries_used"] == 0
     assert queued["events"][-1]["type"] == "run_resumed"
     assert queued["events"][-1]["payload"]["previous_settings_snapshot"] == {"old": True}
+    assert queued["events"][-1]["payload"]["previous_revision_retries_used"] == 1
+    assert queued["events"][-1]["payload"]["revision_retries_used"] == 0
     await runner.run_next()
     assert graph.inputs == [None]
     assert prepared == [{"workflow": {"stage_timeout_seconds": 7200}}]
@@ -144,20 +147,15 @@ async def test_owner_continuation_preserves_run_and_resumes_checkpoint_with_curr
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-657")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["missing_checkpoint", "exhausted", "publication", "not_failed", "active_run"])
+@pytest.mark.parametrize("reason", ["missing_checkpoint", "publication", "not_failed", "active_run"])
 async def test_unsafe_continuations_are_rejected_without_modifying_run(repository, reason) -> None:
     created = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
     rid = UUID(created["run_id"])
     repository.claim_next_queued(NOW)
-    if reason == "exhausted":
-        for used in (1, 2, 3):
-            repository.apply_retry(rid, attempt=used + 1, revision_retries_used=used)
     stage = "publish" if reason == "publication" else "select_assets"
     repository.start_stage(rid, stage)
     if reason != "not_failed":
-        repository.fail(
-            rid, stage, "evaluation_failed_after_retries" if reason == "exhausted" else "stage_timeout", "Failure", NOW
-        )
+        repository.fail(rid, stage, "stage_timeout", "Failure", NOW)
     if reason == "active_run":
         repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
     graph = FakeGraph()
@@ -173,10 +171,8 @@ async def test_unsafe_continuations_are_rejected_without_modifying_run(repositor
 @pytest.mark.req("CF-REQ-657")
 @pytest.mark.req("CF-REQ-411")
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("maximum", "allowed"), [(3, False), (2, False), (4, True), (6, True)])
-async def test_exhausted_run_continues_only_when_limit_exceeds_its_own_used_retries(
-    repository, maximum, allowed
-) -> None:
+@pytest.mark.parametrize("maximum", [0, 2, 3, 4, 6])
+async def test_exhausted_run_continuation_resets_its_allowance_without_changing_other_runs(repository, maximum) -> None:
     other = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
     repository.claim_next_queued(NOW)
     repository.apply_retry(other, attempt=2, revision_retries_used=1)
@@ -191,18 +187,71 @@ async def test_exhausted_run_continues_only_when_limit_exceeds_its_own_used_retr
     graph.next = ("plan_retry",)
     runner = WorkflowRunner(repository, graph, clock=lambda: NOW, default_stage_timeout_seconds=1)
     settings = {"workflow": {"max_revision_retries": maximum}}
-    if not allowed:
-        with pytest.raises(RunContinuationConflict, match="max_revision_retries"):
-            await runner.continue_run(rid, settings)
-        assert repository.get(rid)["status"] == "failed"
-        return
     await runner.continue_run(rid, settings)
     resumed = repository.get(rid)
     assert resumed["status"] == "queued"
     assert resumed["current_stage"] == "plan_retry"
-    assert resumed["revision_retries_used"] == 3
+    assert resumed["revision_retries_used"] == 0
+    assert resumed["attempt"] == 4
+    assert resumed["events"][-1]["payload"]["previous_revision_retries_used"] == 3
     assert resumed["settings_snapshot"] == settings
     assert repository.get(other)["revision_retries_used"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.req("CF-REQ-411")
+@pytest.mark.asyncio
+async def test_real_exhausted_checkpoint_receives_full_retry_allowance_on_each_continuation(repository) -> None:
+    evaluations: dict[UUID, Evaluation] = {}
+    service = ProductionStageService(
+        production=None,
+        runs=repository,
+        assets=None,
+        evaluations=SimpleNamespace(get=evaluations.get),
+        storage=None,
+        llm=None,
+        tts=None,
+        transcription=None,
+        media=None,
+        clock=lambda: NOW,
+    )
+
+    class Executor:
+        async def execute(self, stage: Stage, state: WorkflowState) -> dict[str, Any]:
+            if stage == Stage.WRITE_SCRIPT:
+                evaluation = Evaluation(
+                    run_id=UUID(state["run_id"]),
+                    attempt=state.get("attempt", 1),
+                    layer=EvaluationLayer.DETERMINISTIC,
+                    evaluator="fake",
+                    actions=[Action(type=ActionType.REVISE_SCRIPT, target_stage=Stage.WRITE_SCRIPT)],
+                )
+                evaluation_id = uuid4()
+                evaluations[evaluation_id] = evaluation
+                return {"last_evaluation_ids": [str(evaluation_id)]}
+            if stage == Stage.PLAN_RETRY:
+                return await service.plan_retry(state)
+            return {}
+
+        async def evaluation_passed(self, state: WorkflowState) -> bool:
+            return False
+
+    settings = {"workflow": {"max_revision_retries": 3}}
+    rid = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot=settings)["run_id"])
+    graph = build_workflow(Executor(), checkpointer=MemorySaver(), stage_observer=repository)
+    runner = WorkflowRunner(repository, graph, clock=lambda: NOW, default_stage_timeout_seconds=1)
+    await runner.run_next()
+    assert repository.get(rid)["attempt"] == 4
+    for expected_attempt in (7, 10):
+        await runner.continue_run(rid, settings)
+        assert repository.get(rid)["revision_retries_used"] == 0
+        await runner.run_next()
+        detail = repository.get(rid)
+        assert detail["failure_code"] == "evaluation_failed_after_retries"
+        assert detail["attempt"] == expected_attempt
+        assert detail["revision_retries_used"] == 3
+    assert len([event for event in detail["events"] if event["type"] == "retry_started"]) == 9
 
 
 @pytest.mark.unit

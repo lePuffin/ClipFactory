@@ -3,7 +3,10 @@ import type { ContentProfileItem } from "../src/api/client";
 
 const profile = { name: "News", category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20 } };
 const clip = { id: "clip-1", run_id: "run-1", status: "approved", story_title: "Solar breakthrough", cost_total: "0.1", created_at: "2026-10-11T10:00:00Z", social_metadata: { description: "A grounded briefing on new solar research.", hashtags: ["Science"], source_attributions: ["Original source attribution"] }, publications: [{ id: "pub-1", platform: "youtube", status: "published", mode: "live" }], preview: { duration_seconds: 60, width: 720, height: 1280, fps: 30, media_url: "/media/fixture.mp4" } };
+/** Clip approve/reject/delete requests captured by the mocked API for the current test. */
+let clipDecisions: { id: string; method: string; body: unknown }[] = [];
 async function mocks(page: Page) {
+  clipDecisions = [];
   let profiles: ContentProfileItem[] = [{ id: "daily", name: "Daily", profile, is_active: true, updated_at: "2026-10-11T10:00:00Z" }, { id: "weekly", name: "Weekly", profile, is_active: false, updated_at: "2026-10-11T10:00:00Z" }];
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -24,7 +27,12 @@ async function mocks(page: Page) {
       else { const body = request.postDataJSON() as Partial<ContentProfileItem>; profiles = profiles.map((item) => item.id === id ? { ...item, ...body } : item); }
       payload = profiles.find((item) => item.id === id);
     }
-    if (url.pathname === "/api/clips" || url.pathname === "/api/clips/pending-approval") payload = { items: Array.from({ length: url.searchParams.get("offset") === "20" ? 1 : 20 }, (_, i) => ({ ...clip, id: `clip-${i}`, story_title: `Solar breakthrough ${i + 1}` })), total: 21 };
+    if (url.pathname === "/api/clips" || url.pathname === "/api/clips/pending-approval") payload = { items: Array.from({ length: url.searchParams.get("offset") === "20" ? 1 : 20 }, (_, i) => ({ ...clip, id: `clip-${i}`, story_title: `Solar breakthrough ${i + 1}`, ...(i === 0 ? { publications: [{ id: "pub-0", platform: "youtube", status: "awaiting_approval", mode: "live" }] } : {}) })), total: 21 };
+    const clipAction = /^\/api\/clips\/(clip-\d+)(\/approval)?$/.exec(url.pathname);
+    if (clipAction && (method === "POST" || method === "DELETE")) {
+      clipDecisions.push({ id: clipAction[1]!, method, body: method === "POST" ? request.postDataJSON() : null });
+      return method === "DELETE" ? route.fulfill({ status: 204 }) : route.fulfill({ json: {} });
+    }
     if (url.pathname === "/api/assets") payload = { items: [], total: 21 };
     if (url.pathname === "/api/settings") payload = { providers: [{ provider: "youtube", credentials_configured: true }], settings: { publishing: { mode: "dry_run" }, environment: { llm_model: "writer" } } };
     if (url.pathname === "/api/runs/active") payload = { run_id: "run-1", status: "running", trigger: "run_now", attempt: 1, revision_retries_used: 0, cost_total: "0", created_at: "2026-10-11T10:00:00Z", current_stage: "extract_claims" };
@@ -40,6 +48,29 @@ async function visual(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true });
 }
 test.beforeEach(async ({ page }) => mocks(page));
+
+test("CF-REQ-457 CF-REQ-610 displays compact unconfigured platforms and whole-second Clip durations", async ({ page }, info) => {
+  const fixture = {
+    ...clip,
+    preview: { ...clip.preview, duration_seconds: 69.033333 },
+    publications: [
+      { id: "pub-1", platform: "youtube", status: "awaiting_approval", mode: "live" },
+      { id: "pub-2", platform: "tiktok", status: "failed", mode: "live", error_code: "not_configured", error_message: "tiktok publisher is not configured" },
+    ],
+  };
+  await page.route("**/api/clips?*", (route) => route.fulfill({ json: { items: [fixture], total: 1 } }));
+  await page.route("**/api/clips/clip-1", (route) => route.fulfill({ json: fixture }));
+  await page.goto("/clips");
+  await expect(page.getByText("69 sec", { exact: true })).toBeVisible();
+  const missing = page.locator(".publication-row").filter({ has: page.getByText("TikTok", { exact: true }) });
+  await expect(missing).toHaveText("TikTokNot Configured");
+  await expect(missing.locator(".not-configured")).toHaveCSS("color", "rgb(244, 141, 115)");
+  await expect(page.getByText("tiktok publisher is not configured")).toHaveCount(0);
+  await page.getByRole("link", { name: "Solar breakthrough", exact: true }).click();
+  await expect(page.getByText("69 sec · 720×1280 · 30 fps", { exact: true })).toBeVisible();
+  await expect(missing).toHaveText("TikTokNot Configured");
+  await visual(page, info, "compact-publications");
+});
 
 test("CF-REQ-600 CF-REQ-601 CF-REQ-602 Overview expands Current Run with compact human personas and removes obsolete sections", async ({ page }, info) => {
   await page.goto("/");
@@ -76,9 +107,27 @@ test("CF-REQ-600 CF-REQ-601 CF-REQ-602 Overview expands Current Run with compact
   await visual(page, info, "persona-idle");
 });
 
-test("CF-REQ-600 CF-REQ-605 CF-REQ-610 CF-REQ-613 navigates tabs and paginated Clips, Review Board and Assets", async ({ page }, info) => {
+test("CF-REQ-600 CF-REQ-605 CF-REQ-610 CF-REQ-613 navigates tabs and paginated Clips with per-Clip approval actions, and Assets", async ({ page }, info) => {
+  const decisions = clipDecisions;
   await page.goto("/clips");
   await expect(page.locator(".clip-card")).toHaveCount(20);
+  // The former Review Board is folded into Clips: no separate navigation entry remains.
+  await expect(page.getByRole("link", { name: "Review Board", exact: true })).toHaveCount(0);
+  const awaiting = page.getByRole("button", { name: "Approve Solar breakthrough 1", exact: true });
+  await expect(awaiting).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reject Solar breakthrough 1", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve Solar breakthrough 2", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delete Solar breakthrough 2", exact: true })).toBeVisible();
+  await awaiting.click();
+  await expect.poll(() => decisions.length).toBe(1);
+  expect(decisions[0]).toEqual({ id: "clip-0", method: "POST", body: { decision: "approve" } });
+  await page.getByRole("button", { name: "Reject Solar breakthrough 1", exact: true }).click();
+  await expect.poll(() => decisions.length).toBe(2);
+  expect(decisions[1]).toEqual({ id: "clip-0", method: "POST", body: { decision: "reject" } });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Delete Solar breakthrough 2", exact: true }).click();
+  await expect.poll(() => decisions.length).toBe(3);
+  expect(decisions[2]).toEqual({ id: "clip-1", method: "DELETE", body: null });
   await expect(page.locator(".table-status.published").first()).toHaveCSS("color", "rgb(134, 227, 164)");
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator(".clip-card")).toHaveCount(1);
@@ -87,13 +136,6 @@ test("CF-REQ-600 CF-REQ-605 CF-REQ-610 CF-REQ-613 navigates tabs and paginated C
   await page.getByRole("tab", { name: "Published", exact: true }).press("ArrowRight");
   await expect(page.getByRole("tab", { name: "Failed" })).toBeFocused();
   await visual(page, info, "clips");
-  await page.getByRole("link", { name: "Review Board", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Review Board" })).toBeVisible();
-  await expect(page.locator(".review-card")).toHaveCount(20);
-  expect(await page.locator(".review-board").evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(" ").length)).toBe(1);
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(page.locator(".review-card")).toHaveCount(1);
-  await visual(page, info, "review-board");
   await page.getByRole("link", { name: "Assets", exact: true }).click();
   await expect(page.getByText("Page 1 of 2 · 21 Assets")).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
@@ -104,12 +146,19 @@ test("CF-REQ-600 CF-REQ-605 CF-REQ-610 CF-REQ-613 navigates tabs and paginated C
 test("CF-REQ-600 CF-REQ-606 collapses and reopens Settings groups with keyboard controls", async ({ page }, info) => {
   await page.goto("/settings");
   const button = page.getByRole("button", { name: "Environment", exact: true });
-  await expect(page.getByLabel("Llm Model")).toBeVisible();
+  await expect(page.getByText("Provider readiness", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Credential status", { exact: true })).toHaveCount(0);
+  for (const name of ["Environment", "Publishing"]) await expect(page.getByRole("button", { name, exact: true })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Research", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Llm Model")).toBeHidden();
   await button.focus(); await button.press("Enter");
+  await expect(button).toHaveAttribute("aria-expanded", "true");
+  await page.getByLabel("Llm Model").fill("writer-draft");
+  await button.press("Space");
   await expect(button).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByLabel("Llm Model")).toBeHidden();
-  await button.press("Space");
-  await expect(page.getByLabel("Llm Model")).toBeVisible();
+  await button.press("Enter");
+  await expect(page.getByLabel("Llm Model")).toHaveValue("writer-draft");
   await visual(page, info, "settings");
 });
 
@@ -133,4 +182,31 @@ test("CF-REQ-600 CF-REQ-607 manages named profiles, activation and confirmed del
   await expect(page.getByRole("option", { name: "Renamed", exact: true })).toHaveCount(0);
   await expect(page.getByText("Active profile", { exact: true })).toBeVisible();
   await visual(page, info, "profile");
+});
+
+test("CF-REQ-100 CF-REQ-607 edits Research feeds on the selected profile only", async ({ page }, info) => {
+  await page.goto("/profile");
+  await page.getByLabel("Saved profiles").selectOption("weekly");
+  const research = page.getByRole("button", { name: "Research", exact: true });
+  await expect(research).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Add feed", exact: true })).toBeHidden();
+  await research.focus(); await research.press("Enter");
+  await expect(research).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText(/No feeds configured for this profile/)).toBeVisible();
+  await page.getByRole("button", { name: "Add feed", exact: true }).click();
+  await expect(page.getByLabel("Feed 1 publisher", { exact: true })).toBeFocused();
+  await page.getByLabel("Feed 1 publisher", { exact: true }).fill("Pitch Report");
+  await page.getByLabel("Feed 1 URL", { exact: true }).fill("https://pitch.example/rss");
+  await research.press("Enter");
+  await expect(page.getByLabel("Feed 1 URL", { exact: true })).toBeHidden();
+  await research.press("Space");
+  await expect(page.getByLabel("Feed 1 URL", { exact: true })).toHaveValue("https://pitch.example/rss");
+  await visual(page, info, "profile-research");
+  const saved = page.waitForRequest((request) => request.method() === "PUT" && request.url().endsWith("/api/content-profiles/weekly"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const body = (await saved).postDataJSON() as { profile: { research: { feeds: string[][] } } };
+  expect(body.profile.research.feeds).toEqual([["Pitch Report", "https://pitch.example/rss"]]);
+  await page.getByLabel("Saved profiles").selectOption("daily");
+  await page.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByText(/No feeds configured for this profile/)).toBeVisible();
 });

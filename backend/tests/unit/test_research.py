@@ -48,6 +48,38 @@ def test_article_extraction_strips_scripts_and_canonicalizes_tracking_url() -> N
 
 
 @pytest.mark.unit
+@pytest.mark.req("CF-REQ-101")
+@pytest.mark.req("CF-REQ-104")
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<body><nav>Scores Transfers Tickets</nav><article class='ad-300'></article>"
+        "<header>Shared football site links</header><article>"
+        "<header>Related headline</header><p>Distinct verified event.</p>"
+        "<aside>Unrelated results.</aside><footer>Legal terms.</footer></article>"
+        "<p>Recommended unrelated story.</p></body>",
+        "<body>Shared site links<main><p>Distinct verified event.</p>"
+        "<nav>Related stories</nav></main><footer>Legal terms.</footer></body>",
+        "<body><nav>Scores Transfers Tickets</nav><p>Distinct verified event.</p><footer>Legal terms.</footer></body>",
+    ],
+)
+def test_article_extraction_keeps_main_news_not_shared_site_chrome(html: str) -> None:
+    article = extract_article(html, "https://news.example/story")
+    assert article["text"] == "Distinct verified event."
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-101")
+def test_article_extraction_does_not_treat_navigation_only_page_as_news() -> None:
+    article = extract_article(
+        "<body><nav>Shared site links</nav><article></article><footer>Legal terms.</footer></body>",
+        "https://news.example/story",
+    )
+    assert article["text"] is None
+    assert article["text_hash"] is None
+
+
+@pytest.mark.unit
 @pytest.mark.req("CF-REQ-102")
 def test_canonical_url_removes_tracking_and_fragment() -> None:
     assert canonicalize_url("https://Example.org/news?a=1&utm_medium=x#part") == "https://example.org/news?a=1"

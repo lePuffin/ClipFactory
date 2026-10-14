@@ -144,18 +144,18 @@ Run Events, API and UI.
 
 - **Owner revision (2026-10-07):** The owner may explicitly continue a failed
   Run through `POST /api/runs/{run_id}/continue`. It retains the Run ID,
-  Content Profile, completed work, accumulated cost and revision counters,
+  Content Profile, completed work and accumulated cost,
   resumes the pending saved checkpoint, and captures current application
   settings for remaining stages. Previously completed outputs are not
   regenerated when settings change. The previous settings and failure are
   retained in a `run_resumed` event. Only failed Runs with a pending checkpoint
-  matching the failed stage are eligible. Revision retries are counted per
-  Run (`revision_retries_used`) and never shared between Runs; each new Run
-  starts at 0. A Run that failed with `evaluation_failed_after_retries` may be
-  continued only when the current `workflow.max_revision_retries` exceeds that
-  Run's `revision_retries_used`; it then resumes `plan_retry` and receives only
-  the additional retries. Otherwise exhausted retries, and failures at
-  publication, are rejected; publication outcomes must be checked
+  matching the failed stage are eligible. Each explicit owner continuation
+  resets `revision_retries_used` to 0, granting the current configured revision
+  allowance even after `evaluation_failed_after_retries` at `plan_retry`.
+  Attempt numbers remain monotonic to preserve artifacts and Evaluation history.
+  The previous retry count is retained in `run_resumed`. Automatic restart
+  resumption does not reset retries. Costs and durable generation allowances
+  are never reset. Failures at publication are rejected; outcomes must be checked
   separately to avoid duplicate uploads. Missing checkpoints return a clear
   conflict rather than restarting research. Concurrent Runs remain forbidden.
   The UI exposes single-click Continue Run on failed records without a

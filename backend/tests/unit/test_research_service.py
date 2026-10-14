@@ -7,7 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, select
 
-from clipfactory.domain.models import ClaimKind, ContentProfile, RunTrigger
+from clipfactory.domain.models import ClaimKind, ContentCategory, ContentProfile, RunTrigger
 from clipfactory.domain.models import ResearchPolicy as ProfileResearchPolicy
 from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.models import ClaimEvidenceRow, ClaimRow, SourceRow, StoryRow
@@ -67,6 +67,7 @@ class GroundedFakeLLM:
                 stories=[
                     RankedStoryDraft(
                         candidate_indexes=[0],
+                        category=ContentCategory.SCIENCE,
                         title="Scientists confirm three results",
                         summary="Researchers confirmed several results.",
                         profile_relevance=0.9,
@@ -119,6 +120,7 @@ class GroundedFakeLLM:
 @pytest.mark.req("CF-REQ-850")
 @pytest.mark.req("CF-REQ-113")
 @pytest.mark.asyncio
+@pytest.mark.req("CF-REQ-108")
 async def test_research_use_case_persists_grounded_story_and_emits_events(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'research-service.db'}")
     Base.metadata.create_all(engine)
@@ -157,6 +159,9 @@ async def test_research_use_case_persists_grounded_story_and_emits_events(tmp_pa
     with sessions() as session:
         assert session.scalar(select(SourceRow.id)) is not None
         assert session.scalar(select(StoryRow.id).where(StoryRow.status == "selected")) == result.story_id
+        # A general profile must not stamp "general" onto the independently
+        # classified science Story.
+        assert session.scalar(select(StoryRow.category).where(StoryRow.id == result.story_id)) == "science"
         assert len(list(session.scalars(select(ClaimRow.id)))) == 3
         assert len(list(session.scalars(select(ClaimEvidenceRow.id)))) == 3
     detail = runs.get(UUID(run["run_id"]))

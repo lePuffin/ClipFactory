@@ -582,3 +582,85 @@ def test_evaluation_fallback_role_selects_the_configured_fallback_model(
 @pytest.mark.req("CF-REQ-405")
 def test_evaluation_fallback_defaults_to_prompt_json_transport() -> None:
     assert settings().llm_output_mode_evaluation_fallback == "prompt_json"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-670")
+@pytest.mark.req("CF-REQ-758")
+@pytest.mark.parametrize("wire_format", ["json", "sse"])
+@pytest.mark.parametrize("status", [200, 502])
+async def test_injected_upstream_error_never_becomes_a_candidate_judgment(wire_format: str, status: int) -> None:
+    body = {
+        "error": {"code": 502, "message": "JSON error injected into SSE stream secret-test-key"},
+        "choices": [{"message": {"content": '{"answer":"partial"}'}}],
+    }
+    if wire_format == "sse":
+        response = httpx.Response(
+            status,
+            headers={"Content-Type": "text/event-stream", "Retry-After": "5"},
+            text=(
+                ': keepalive\r\n\r\ndata: {"choices":[{"delta":{"content":"partial"}}]}\r\n\r\n'
+                f"event: error\r\ndata: {json.dumps(body)}\r\n\r\ndata: [DONE]\r\n\r\n"
+            ),
+        )
+    else:
+        response = httpx.Response(status, json=body, headers={"Retry-After": "5"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
+        provider = OpenAICompatibleLLMProvider(settings(), client=client)
+        with pytest.raises(ProviderError) as caught:
+            await provider.generate_structured(
+                "review_media_candidates", [LLMMessage("user", "review")], Answer, model_role="evaluation"
+            )
+    assert caught.value.code == "http_502"
+    assert caught.value.transient
+    assert caught.value.retry_after_seconds == 5
+    assert "JSON error injected into SSE stream [redacted]" in str(caught.value)
+    assert "secret-test-key" not in str(caught.value)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-670")
+@pytest.mark.req("CF-NFR-111")
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"choices": [None]},
+        {"choices": [{"message": None}]},
+        {"choices": [{"message": {"content": '{"answer":"ok"}'}}], "usage": ["malformed"]},
+    ],
+)
+async def test_malformed_completion_envelope_is_a_permanent_provider_error(body: Any) -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body))) as client:
+        with pytest.raises(ProviderError) as caught:
+            await OpenAICompatibleLLMProvider(settings(), client=client).generate_structured(
+                "review_media_candidates", [LLMMessage("user", "review")], Answer
+            )
+    assert caught.value.code == "invalid_response"
+    assert not caught.value.transient
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-670")
+@pytest.mark.req("CF-REQ-758")
+@pytest.mark.parametrize(
+    ("status", "text", "code", "transient"),
+    [
+        (502, "data: {malformed secret-test-key}\n\n", "http_502", True),
+        (200, "data: {malformed secret-test-key}\n\n", "invalid_response", False),
+        (200, 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n', "invalid_response", False),
+        (200, 'data: {"error":{"code":429,"message":"daily quota"}}\n\n', "llm_budget_exhausted", False),
+        (200, 'data: {"error":{"code":400,"message":"context length exceeded"}}\n\n', "http_400", False),
+    ],
+)
+async def test_sse_errors_remain_selective_and_do_not_reconstruct_partial_answers(
+    status: int, text: str, code: str, transient: bool
+) -> None:
+    response = httpx.Response(status, text=text, headers={"Content-Type": "text/event-stream"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
+        with pytest.raises(ProviderError) as caught:
+            await OpenAICompatibleLLMProvider(settings(), client=client).generate_structured(
+                "review_media_candidates", [LLMMessage("user", "review")], Answer
+            )
+    assert caught.value.code == code
+    assert caught.value.transient is transient
+    assert "secret-test-key" not in str(caught.value)

@@ -77,7 +77,7 @@ pixel count per frame, reducing encode time, storage and upload size.
   boundaries match CF-REQ-256.
 - **Acceptance:**
   - A 3-segment spec with two 0.4 s crossfades produces a Clip whose duration equals the narration-based duration.
-- **Related:** CF-REQ-254, CF-REQ-255
+- **Related:** CF-REQ-254, CF-REQ-255, ADR-020 (source-bound portrait positioning)
 
 ### CF-REQ-356 — Loudness
 
@@ -172,6 +172,14 @@ pixel count per frame, reducing encode time, storage and upload size.
   Missing or invalid inputs fail composition explicitly. Rename, activation,
   schedule changes and profile deletion do not rename or delete branding.
   Existing Run snapshots and their frozen end cards remain unchanged.
+  Continue Run (CF-REQ-657) captures current application settings but
+  reapplies the Run's own profile branding from its `profile_snapshot`
+  `branding_folder` (also after the profile is deleted), never the global
+  `logo_file`/`end_card_file` or the active profile; it also repairs a
+  snapshot previously overwritten by global branding (live Run 58dbb7a6
+  failed composition after continuation switched to the shared logo/outro).
+  Legacy snapshots without a branding folder keep their frozen
+  `logo_file`, `end_card_file` and `branding_directory`.
   The explicit command `uv run clipfactory branding <folder>` validates both
   PNG logos, generates `outro-voice.wav` through configured Google TTS once,
   and authors `outro.png` and the validated three-second `outro.mp4`.

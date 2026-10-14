@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from clipfactory.domain.models import ContentProfile
 from clipfactory.infrastructure.db.models import AppSettingsRow, ContentProfileRow
 from clipfactory.infrastructure.media.profile_branding import allocate_branding_folder, profile_branding_directory
+from clipfactory.infrastructure.research_defaults import materialize_research, new_profile_research
 from clipfactory.ports.configuration import ActiveProfileDeleteForbidden, ProfileNameConflict, ProfileNotFound
 
 
@@ -37,6 +38,13 @@ class ConfigurationRepository:
             for row in _locked_profiles(session):
                 self._ensure_branding(row)
 
+    def initialize_research(self) -> None:
+        """Compatibility for existing installations; never touch Run snapshots."""
+        with self._sessions.begin() as session:
+            legacy = session.get(AppSettingsRow, "research")
+            for row in _locked_profiles(session):
+                row.value = materialize_research(row.value, legacy.value if legacy else {})
+
     def _now(self) -> datetime:
         now: datetime = self._clock()
         if self._last_now is not None and now <= self._last_now:
@@ -46,8 +54,11 @@ class ConfigurationRepository:
 
     def settings(self, defaults: dict[str, Any]) -> dict[str, Any]:
         result = {key: dict(value) if isinstance(value, dict) else value for key, value in defaults.items()}
+        result.pop("research", None)
         with self._sessions() as session:
             for row in session.scalars(select(AppSettingsRow)):
+                if row.section == "research":
+                    continue
                 base = result.get(row.section)
                 result[row.section] = {**base, **row.value} if isinstance(base, dict) else row.value
         return result
@@ -98,6 +109,7 @@ class ConfigurationRepository:
             ]
 
     def create_profile(self, name: str, profile: ContentProfile, *, activate: bool = False) -> dict[str, Any]:
+        profile = new_profile_research(profile)
         now = self._now()
         try:
             with self._sessions.begin() as session:
@@ -132,6 +144,7 @@ class ConfigurationRepository:
                     _check_name(rows, name, excluding=profile_id)
                     row.name = name
                 if profile is not None:
+                    profile = new_profile_research(profile)
                     row.value = {**profile.model_dump(mode="json"), "branding_folder": row.value.get("branding_folder")}
                 if is_active is not None:
                     row.is_active = is_active
@@ -165,6 +178,7 @@ class ConfigurationRepository:
             session.delete(row)
 
     def replace_active_profile(self, profile: ContentProfile) -> ContentProfile:
+        profile = new_profile_research(profile)
         now = self._now()
         try:
             with self._sessions.begin() as session:

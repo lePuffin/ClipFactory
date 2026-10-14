@@ -87,6 +87,7 @@ async def _generate_video_asset(
     excluded_asset_ids: frozenset[str],
     start_permit: Callable[[str], Awaitable[bool]] | None,
 ) -> Asset | None:
+    duplicate_asset_id: str | None = None
     for provider in providers:
         if not provider.is_configured():
             if request.graphics_spec is not None:
@@ -215,8 +216,17 @@ async def _generate_video_asset(
             if str(imported.asset.id) in excluded_asset_ids:
                 await progress(
                     "Generated media duplicates a shot already used in this Clip",
-                    {"provider": provider.name, "generation_phase": "failed", "error_code": "generation_duplicate"},
+                    {
+                        "provider": provider.name,
+                        "generation_phase": "failed",
+                        "error_code": "generation_duplicate",
+                        "asset_id": str(imported.asset.id),
+                    },
                 )
+                if request.graphics_spec is not None:
+                    # A deterministic render repeats byte-identically; the visual must be replanned (CF-REQ-265).
+                    duplicate_asset_id = str(imported.asset.id)
+                    break
                 continue
             await progress(
                 (
@@ -249,4 +259,11 @@ async def _generate_video_asset(
             if imported_successfully:
                 await asyncio.to_thread(destination.unlink, missing_ok=True)
                 await asyncio.to_thread(storage.local_path(metadata_key).unlink, missing_ok=True)
+    if duplicate_asset_id is not None:
+        raise ProviderError(
+            "generation_duplicate",
+            "Rendered graphic duplicates a shot already used in this Clip",
+            transient=False,
+            detail=duplicate_asset_id,
+        )
     return None

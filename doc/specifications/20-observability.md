@@ -45,7 +45,7 @@ the others are additions required for diagnosis.
 | `warning` | Non-blocking condition (e.g. `budget_degraded`, `no_music_available`) | `code`, `message` |
 | ● `run_completed` | Run completed | `outcome`, `clip_id` |
 | ● `run_failed` | Run failed | `failure_stage`, `failure_code`, `failure_message` |
-| `run_resumed` | Owner queued continuation | `resume_stage`, `failure_code`, `failure_message`, `previous_settings_snapshot`, `settings_snapshot` |
+| `run_resumed` | Owner queued continuation | `resume_stage`, `failure_code`, `failure_message`, `previous_settings_snapshot`, `settings_snapshot`, `previous_revision_retries_used`, `revision_retries_used` |
 | `run_stop_requested` | Owner requested immediate Stop; cleanup pending | stage in event envelope |
 
 ## Requirements

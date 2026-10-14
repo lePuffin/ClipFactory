@@ -91,8 +91,10 @@ class Publisher:
         self.configured = configured
         self.calls = 0
         self.requests: list[PublicationRequest] = []
+        self.configuration_scopes: list[str | None] = []
 
     def is_configured(self, env_prefix: str | None = None) -> bool:
+        self.configuration_scopes.append(env_prefix)
         return self.configured
 
     async def publish(self, request: PublicationRequest, clip_file: Path) -> PublicationResult:
@@ -238,6 +240,62 @@ async def test_approval_gate_holds_without_timeout_or_platform_call() -> None:
     assert store.prepared == [("youtube", "awaiting_approval")]
     assert store.auto_publish_due is None
     assert publisher.calls == 0
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-457")
+@pytest.mark.req("CF-REQ-459")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", list(Platform))
+async def test_unconfigured_platform_does_not_await_approval(platform: Platform) -> None:
+    store = Store(platforms=[platform.value])
+    store.context_value["settings"]["publishing"].update({"approval_required": True, "auto_publish_enabled": True})
+    publisher = Publisher(configured=False)
+    result = await PublishService(store, Storage(), {platform: publisher}, clock=lambda: NOW).execute(
+        uuid4(), store.clip_id
+    )
+    assert result["outcome"] == "not_published"
+    assert store.prepared == [(platform.value, "failed")]
+    assert store.failed == [("not_configured", f"{platform.value} publisher is not configured")]
+    assert store.auto_publish_due is None
+    assert publisher.calls == 0
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-457")
+@pytest.mark.req("CF-REQ-461")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", [Platform.FACEBOOK, Platform.INSTAGRAM])
+async def test_missing_public_media_delivery_is_detected_before_approval(platform: Platform) -> None:
+    store = Store(platforms=[platform.value])
+    store.context_value["settings"]["publishing"]["approval_required"] = True
+    publisher = Publisher()
+    result = await PublishService(store, Storage(), {platform: publisher}, clock=lambda: NOW).execute(
+        uuid4(), store.clip_id
+    )
+    assert result["outcome"] == "not_published"
+    assert store.prepared == [(platform.value, "failed")]
+    assert store.failed == [("not_configured", "Public media URL is not configured")]
+    assert publisher.calls == 0
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-457")
+@pytest.mark.req("CF-REQ-459")
+@pytest.mark.asyncio
+async def test_mixed_platforms_hold_only_configured_accounts_for_approval() -> None:
+    store = Store(platforms=["youtube", "tiktok"])
+    store.context_value["profile_snapshot"] = {"env_prefix": "FOOTBALL"}
+    store.context_value["settings"]["publishing"]["approval_required"] = True
+    publisher = Publisher()
+    result = await PublishService(store, Storage(), {Platform.YOUTUBE: publisher}, clock=lambda: NOW).execute(
+        uuid4(), store.clip_id
+    )
+    assert result["outcome"] == "awaiting_approval"
+    assert store.prepared == [("tiktok", "failed"), ("youtube", "awaiting_approval")]
+    assert store.failed == [("not_configured", "tiktok publisher is not configured")]
+    assert publisher.calls == 0
+    assert publisher.configuration_scopes == ["FOOTBALL"]
 
 
 @pytest.mark.unit

@@ -24,6 +24,8 @@ class WorkflowState(TypedDict):
     trigger: str
     story_id: NotRequired[str | None]
     story_fallbacks_used: NotRequired[int]
+    rejected_story_id: NotRequired[str | None]
+    thin_story_attempts: NotRequired[int]
     story_package_id: NotRequired[str | None]
     story_package_version: NotRequired[int | None]
     attempt: NotRequired[int]

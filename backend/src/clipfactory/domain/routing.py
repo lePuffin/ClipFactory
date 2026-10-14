@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from clipfactory.domain.models import ActionType, Stage
 
@@ -62,7 +61,14 @@ ISSUE_ROUTES: dict[str, Route] = {
     },
     **{
         code: Route(Stage.PLAN_VISUALS, ActionType.REPLAN_VISUALS)
-        for code in ("segment_too_short", "segment_too_long", "visual_timing_drift", "poor_pacing")
+        for code in (
+            "segment_too_short",
+            "segment_too_long",
+            "visual_timing_drift",
+            "poor_pacing",
+            # A deterministic graphic render repeating a shot already in the Clip (CF-REQ-265).
+            "generation_duplicate",
+        )
     },
     **{
         code: Route(Stage.COMPOSE_CLIP, ActionType.RECOMPOSE)
@@ -91,9 +97,3 @@ _STAGE_ORDER = {stage: index for index, stage in enumerate(Stage)}
 def earliest_reentry(routes: list[Route]) -> Stage | None:
     targets = [route.target_stage for route in routes if route.target_stage is not None]
     return min(targets, key=_STAGE_ORDER.__getitem__) if targets else None
-
-
-def revision_limit_raised(revision_retries_used: int, settings_snapshot: dict[str, Any]) -> bool:
-    """True when the given settings allow a Run more revision retries than it has already used."""
-    maximum = int(settings_snapshot.get("workflow", {}).get("max_revision_retries", 3))
-    return maximum > revision_retries_used

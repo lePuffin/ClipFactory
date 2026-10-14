@@ -1,6 +1,6 @@
 import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, Clock3, FileVideo2, Images, Play, RefreshCw, Send, Settings2, SlidersHorizontal, Target } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
-import { Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
 
 import type { components } from "./api/schema";
 import { continueRun, patchAsset, startManualURL, startRunNow, stopRun, type ContentProfileList } from "./api/client";
@@ -222,7 +222,10 @@ function RunPage() {
     <section className="page-wrap">
       <div className="page-heading">
         <div><div className="eyebrow">OPERATIONS / RUN DETAIL</div><h1>Run record</h1><p className="page-lede mono-id">{runId}</p></div>
-        <button className="icon-button" onClick={reload} title="Refresh Run" aria-label="Refresh Run"><RefreshCw size={17} /></button>
+        <div className="run-control-buttons">
+          {resource.status === "success" && resource.data.clip_id && <Link className="command-button" to={`/clips/${encodeURIComponent(resource.data.clip_id)}`}>View produced Clip</Link>}
+          <button className="icon-button" onClick={reload} title="Refresh Run" aria-label="Refresh Run"><RefreshCw size={17} /></button>
+        </div>
       </div>
       {resource.status === "loading" ? <LoadingLine /> : resource.status === "error" ? <InlineError message={resource.message} /> : <RunDetailView key={`${runId}:${resource.data.events.filter((event) => event.type === "run_resumed").at(-1)?.sequence ?? 0}`} run={resource.data} reload={reload} />}
     </section>
@@ -409,7 +412,7 @@ function RunControls({ run, events, reload }: { run: RunDetail; events: RunDetai
   }
   return <div className="run-controls">
     <div className="run-control-buttons"><span className={`table-status ${run.status}`}><span />{stopping ? "stopping" : run.status}</span>
-      {run.status === "failed" && <button className="filter-button" disabled={busy} title="Continue from the saved checkpoint using current application settings. Completed work and approval rules are preserved." onClick={() => void act("continue")}>{busy ? "Continuing…" : "Continue Run"}</button>}
+      {run.status === "failed" && <button className="filter-button" disabled={busy} title="Continue from the saved checkpoint using current application settings and reset used revision retries to zero. Completed work, costs and approval rules are preserved." onClick={() => void act("continue")}>{busy ? "Continuing…" : "Continue Run"}</button>}
       {["queued", "running"].includes(run.status) && <button className="filter-button stop-button" disabled={busy || stopping} title="Stop this Run now. Unfinished generation may be lost; imported Assets remain saved." onClick={() => void act("stop")}>{busy || stopping ? "Stopping…" : "Stop"}</button>}
     </div>
     {error && <InlineError message={error} />}

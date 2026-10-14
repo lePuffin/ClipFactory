@@ -42,8 +42,6 @@ class ProductionRepository:
     def create_story_package(self, run_id: UUID, now: datetime) -> dict[str, Any]:
         with self.sessions.begin() as session:
             existing = session.scalar(select(StoryPackageRow).where(StoryPackageRow.run_id == run_id))
-            if existing is not None:
-                return _package_summary(existing)
             run = session.scalar(select(RunRow).where(RunRow.id == run_id).with_for_update())
             story = session.scalar(select(StoryRow).where(StoryRow.run_id == run_id, StoryRow.status == "selected"))
             if run is None or story is None:
@@ -54,6 +52,16 @@ class ProductionRepository:
             ranked = [UUID(value) for value in story.key_fact_claim_ids]
             if not 3 <= len(ranked) <= 8 or not set(ranked) <= accepted_ids:
                 raise ValueError("persisted key facts must contain 3-8 accepted Claims")
+            if existing is not None:
+                if existing.story_id != story.id:
+                    if session.scalar(
+                        select(ScriptVersionRow.version).where(ScriptVersionRow.story_package_id == existing.id)
+                    ):
+                        raise ValueError("cannot replace a Story after a Script has passed")
+                    existing.story_id = story.id
+                    existing.key_fact_claim_ids = [str(value) for value in ranked]
+                    existing.updated_at = now
+                return _package_summary(existing)
             package = StoryPackageRow(
                 id=uuid4(),
                 run_id=run_id,

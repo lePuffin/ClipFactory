@@ -8,6 +8,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from clipfactory.domain.models import Asset, AssetOrigin, ContentProfile, Provenance
+from clipfactory.domain.portrait import FaceBox
 from clipfactory.infrastructure.storage import LocalStorageProvider
 from clipfactory.workflow.saved_news_render import SavedNewsRenderer, SavedNewsRenderRequest
 
@@ -24,9 +25,14 @@ class Font:
 @pytest.mark.req("CF-REQ-361")
 @pytest.mark.req("CF-REQ-417")
 @pytest.mark.req("CF-REQ-360")
+@pytest.mark.req("CF-REQ-255")
 @pytest.mark.parametrize("with_end_card", [False, True])
+@pytest.mark.parametrize("portrait_mode", ["ordinary", "detected", "unavailable", "retained"])
+@pytest.mark.parametrize("profile_name", ["News", "Football"])
 @pytest.mark.asyncio
-async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(tmp_path, with_end_card):
+async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(
+    tmp_path, with_end_card, portrait_mode, profile_name
+):
     storage = LocalStorageProvider(tmp_path)
     await storage.put_bytes("assets/photo.jpg", b"fake image")
     await storage.put_bytes("cache/tts/voice.wav", b"retained narration")
@@ -49,7 +55,7 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
     ]
     asset = Asset(
         media_type="image",
-        category="photo",
+        category="photo" if portrait_mode == "ordinary" else "person",
         storage_key="assets/photo.jpg",
         sha256="a" * 64,
         mime_type="image/jpeg",
@@ -71,7 +77,13 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
         description="Owner-provided brand mark",
         provenance=Provenance(origin=AssetOrigin.IMPORTED, provider="manual_import", license="owner-provided"),
     )
-    profile = ContentProfile().model_dump(mode="json")
+    profile = ContentProfile(name=profile_name).model_dump(mode="json")
+    retained_framing = {
+        "version": "face-centered-v1",
+        "source_sha256": asset.sha256,
+        "status": "detected",
+        "face_box": {"x": 0.3, "y": 0.1, "width": 0.2, "height": 0.2},
+    }
     stored = []
     card_path = tmp_path / "frozen-card.mp4"
     card_path.write_bytes(b"frozen ending")
@@ -108,6 +120,7 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
                                 "end_seconds": 73.3 if with_end_card else 71.3,
                                 "motion": "ken_burns",
                                 "transition_in": "cut",
+                                **({"portrait_framing": retained_framing} if portrait_mode == "retained" else {}),
                             }
                         ],
                     }
@@ -123,6 +136,12 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
 
     class Media:
         command = None
+        face_calls = 0
+
+        async def detect_portrait_face(self, path):
+            self.face_calls += 1
+            assert portrait_mode in {"detected", "unavailable"}
+            return FaceBox(0.3, 0.1, 0.2, 0.2) if portrait_mode == "detected" else None
 
         async def ffmpeg(self, arguments, **kwargs):
             self.command = arguments
@@ -163,6 +182,17 @@ async def test_saved_render_reuses_retained_inputs_and_persists_pending_output(t
         assert rendered_logo.size == (112, 112)
         assert rendered_logo.getchannel("A").getbbox() is not None
     filter_graph = command[command.index("-filter_complex") + 1]
+    if portrait_mode in {"detected", "retained"}:
+        assert "[fg0]scale=720:1280" in filter_graph
+        assert "[blur0][fit0]overlay=x=0:" in filter_graph
+        assert "zoompan" not in filter_graph
+        assert result["portrait_framing"][0]["status"] == "detected"
+    elif portrait_mode == "unavailable":
+        assert result["portrait_framing"][0]["status"] == "unavailable"
+        assert "overlay=x='W/2-w*" not in filter_graph
+    else:
+        assert result["portrait_framing"] == [None]
+    assert media.face_calls == int(portrait_mode in {"detected", "unavailable"})
     expected_duration = "73.3" if with_end_card else "71.3"
     assert f"overlay=x=584:y=24:eof_action=pass:enable='between(t,0,{expected_duration})'" in filter_graph
     assert result["status"] == "pending_review"

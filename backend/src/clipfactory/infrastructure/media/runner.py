@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from clipfactory.domain.portrait import FaceBox
 from clipfactory.ports.media import MediaProcessError
 
 
@@ -26,6 +27,11 @@ class MediaRunner:
 
     async def ffprobe(self, arguments: Sequence[str], *, timeout_seconds: float | None = None) -> tuple[bytes, bytes]:
         return await self._run(self.ffprobe_path, arguments, timeout_seconds=timeout_seconds)
+
+    async def detect_portrait_face(self, path: Path) -> FaceBox | None:
+        from clipfactory.infrastructure.media.portraits import detect_portrait_face
+
+        return await asyncio.to_thread(detect_portrait_face, path)
 
     async def prepare_profile_outro(self, directory: Path, font: Path) -> None:
         from clipfactory.infrastructure.media.brand_outro import generate_outro

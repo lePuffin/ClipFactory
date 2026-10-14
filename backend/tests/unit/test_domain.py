@@ -82,3 +82,36 @@ def test_evaluation_passes_only_when_no_blocking_issues() -> None:
     blocking = Issue(code="weak_hook", severity=IssueSeverity.BLOCKING, stage=Stage.WRITE_SCRIPT, message="weak")
     failed = Evaluation(run_id=uuid4(), attempt=1, layer=EvaluationLayer.SEMANTIC, issues=[blocking], evaluator="fake")
     assert not failed.passed
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-407")
+@pytest.mark.req("CF-REQ-411")
+@pytest.mark.parametrize(
+    ("used", "reentry", "failure"), [(0, Stage.PLAN_VISUALS, None), (3, None, "evaluation_failed_after_retries")]
+)
+def test_duplicate_render_routes_to_bounded_visual_replanning(
+    used: int, reentry: Stage | None, failure: str | None
+) -> None:
+    from clipfactory.domain.models import ActionType
+    from clipfactory.evaluation.retry import plan_retry
+    from clipfactory.evaluation.validation import EvaluationContext, build_evaluation
+
+    route = ISSUE_ROUTES["generation_duplicate"]
+    assert (route.target_stage, route.action_type) == (Stage.PLAN_VISUALS, ActionType.REPLAN_VISUALS)
+    evaluation = build_evaluation(
+        EvaluationContext(uuid4(), None, used + 1),
+        issues=[
+            Issue(
+                code="generation_duplicate",
+                severity=IssueSeverity.BLOCKING,
+                stage=Stage.SELECT_ASSETS,
+                message="Visual 5 repeats a shown card",
+                refs={"segment_index": 5, "duplicate_asset_id": "asset"},
+            )
+        ],
+    )
+    retry = plan_retry(evaluation, revision_retries_used=used, max_revision_retries=3)
+    assert retry.reentry_stage == reentry
+    assert retry.failure_code == failure
+    assert retry.affected_segments == (5,)

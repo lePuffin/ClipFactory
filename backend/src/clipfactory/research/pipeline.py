@@ -171,9 +171,19 @@ async def research_grounded_story(
         pre_groups,
         topics=profile.topics,
         excluded_topics=profile.excluded_topics,
+        profile_category=profile.category,
         recently_covered_titles=tuple(story.title for story in recently_covered),
     )
     ranked = await _apply_novelty(ranked, recently_covered, report)
+    for item in ranked:
+        if profile.category.value != "general" and item.candidate.category != profile.category:
+            await report(
+                f"Skipping '{item.candidate.title}': category_mismatch "
+                f"({item.candidate.category.value}, profile {profile.category.value})",
+                reason="category_mismatch",
+                category=item.candidate.category.value,
+                profile_category=profile.category.value,
+            )
     scored = score_stories(
         [item.candidate for item in ranked],
         [item.rating for item in ranked],
@@ -181,6 +191,7 @@ async def research_grounded_story(
         max_article_age_hours=profile.research.max_article_age_hours,
         preferred_independent_sources=profile.research.preferred_independent_sources,
         weights=selection_weights or SelectionWeights(),
+        profile_category=profile.category,
     )
     if not scored:
         raise ResearchFailure("no_suitable_story", "All Story candidates were excluded by profile or novelty rules")
@@ -195,7 +206,9 @@ async def research_grounded_story(
         if fallbacks_used > story_fallback_limit:
             break
         title = scored_story.candidate.title
-        candidate_sources = detect_syndication(scored_story.candidate.articles)
+        candidate_sources = detect_syndication(
+            scored_story.candidate.articles, threshold=profile.research.near_duplicate_threshold
+        )
         independent = independent_source_count(candidate_sources)
         if independent < profile.research.min_sources:
             await report(
@@ -249,11 +262,13 @@ def make_research_snapshot(
     result: GroundedStoryResult,
     *,
     run_id: UUID,
-    category: str,
     now: datetime,
+    near_duplicate_threshold: float = 0.8,
 ) -> ResearchSnapshot:
     selected_source_ids = {source.article.canonical_url: source.id for source in result.sources}
-    grounded_sources = detect_syndication(result.research.articles, source_ids=selected_source_ids)
+    grounded_sources = detect_syndication(
+        result.research.articles, source_ids=selected_source_ids, threshold=near_duplicate_threshold
+    )
     sources = tuple(
         ResearchSourceRecord(
             id=source.id,
@@ -275,7 +290,12 @@ def make_research_snapshot(
     source_id_by_url = {source.canonical_url: source.id for source in sources}
     selected_urls = {source.article.canonical_url for source in result.sources}
     story_records: list[ResearchStoryRecord] = []
-    for scored in result.candidates:
+    selected_rank = next(
+        index
+        for index, scored in enumerate(result.candidates)
+        if {article.canonical_url for article in scored.candidate.articles} == selected_urls
+    )
+    for rank, scored in enumerate(result.candidates):
         candidate_urls = {article.canonical_url for article in scored.candidate.articles}
         is_selected = candidate_urls == selected_urls
         candidate_source_ids = tuple(source_id_by_url[url] for url in candidate_urls if url in source_id_by_url)
@@ -285,11 +305,13 @@ def make_research_snapshot(
                 status="selected" if is_selected else "rejected",
                 title=result.title if is_selected else scored.candidate.title,
                 summary=result.summary if is_selected else scored.candidate.summary,
-                category=category,
+                category=scored.candidate.category.value,
                 selection_score=scored.score,
-                score_breakdown=scored.breakdown,
+                score_breakdown={**scored.breakdown, "candidate_rank": rank},
                 selection_rationale=scored.rationale,
-                rejection_reason=None if is_selected else "lower_selection_score",
+                rejection_reason=None
+                if is_selected
+                else ("grounding_failed" if rank < selected_rank else "lower_selection_score"),
                 source_ids=candidate_source_ids,
             )
         )

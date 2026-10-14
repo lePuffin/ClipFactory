@@ -3,8 +3,13 @@
 Keep credentials in the ignored root `.env` file or in private files referenced
 by environment variables. Never put a credential in a source file, settings
 API request, issue, log, or Git commit. The repository's `secrets/` directory
-is ignored; the application runtime stores OAuth tokens under
-`${DATA_DIR}/secrets/` with owner-only permissions.
+is ignored. OAuth token paths follow
+[18-configuration.md](../specifications/18-configuration.md); explicit paths
+can point into `secrets/`, while runtime fallback paths use
+`${DATA_DIR}/secrets/`.
+
+For channel-specific authorization, token lifetimes and empty Facebook Page
+lists, follow the [YouTube, Facebook and Instagram profile authorization guide](profile-channel-authorization.md).
 
 ## Local startup
 
@@ -38,7 +43,8 @@ the current implementation already provides the commands.
   needed. Wikimedia Commons requires a descriptive `WIKIMEDIA_USER_AGENT`.
   Observe attribution, licence and provider download-tracking requirements.
 - **YouTube:** configure an OAuth client and set
-  `YOUTUBE_CLIENT_SECRETS_FILE`. OAuth tokens belong under `${DATA_DIR}/secrets/`.
+  `YOUTUBE_CLIENT_SECRETS_FILE`. Use separate channel authorizations for separate
+  profiles; see the [profile authorization guide](profile-channel-authorization.md).
 - **Instagram and Facebook:** configure eligible professional/Page accounts
   and their Graph API access. Their publishing APIs fetch media from a public
   URL; configure `PUBLIC_MEDIA_BASE_URL` and a random signing key of at least

@@ -5,6 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
+/** Settings groups start collapsed (CF-REQ-606); open the named groups as the owner would. */
+async function expandSettings(user: ReturnType<typeof userEvent.setup>, ...names: string[]) {
+  for (const name of names) {
+    const button = await screen.findByRole("button", { name });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+  }
+}
+
 describe("ClipFactory production pages", () => {
   afterEach(() => {
     cleanup();
@@ -75,7 +85,7 @@ describe("ClipFactory production pages", () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
   });
 
-  it("CF-REQ-606 CF-REQ-753 shows credential presence without secret inputs", async () => {
+  it("CF-REQ-606 CF-REQ-753 omits provider readiness and credential presence without secret inputs", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       providers: [
         { provider: "google_tts", credentials_configured: true },
@@ -85,11 +95,14 @@ describe("ClipFactory production pages", () => {
     }), { status: 200 })));
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
 
-    expect(await screen.findByText("Google Tts")).toBeInTheDocument();
-    expect(screen.getByText("Configured")).toBeInTheDocument();
-    expect(screen.getByText("Not configured")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Publishing" });
+    expect(screen.queryByText("Google Tts")).not.toBeInTheDocument();
+    expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not configured")).not.toBeInTheDocument();
+    expect(screen.queryByText(/provider readiness/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Credential status")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/api key|secret|access token/i)).not.toBeInTheDocument();
-    expect(screen.getByText("VALUES NEVER DISPLAYED")).toBeInTheDocument();
+    expect(screen.queryByText("VALUES NEVER DISPLAYED")).not.toBeInTheDocument();
   });
 
   it("CF-REQ-550 CF-REQ-551 saves an account prefix without exposing credentials", async () => {
@@ -129,6 +142,7 @@ describe("ClipFactory production pages", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+    await expandSettings(user, "Environment");
     const steps = await screen.findByLabelText("Wan Inference Steps");
     const fps = screen.getByLabelText("Wan Fps");
     await user.clear(steps); await user.type(steps, "25");
@@ -200,6 +214,7 @@ describe("ClipFactory production pages", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+    await expandSettings(user, "Environment", "Publishing");
     const device = await screen.findByRole("combobox", { name: "Whisper Device" });
     const mode = screen.getByRole("combobox", { name: "Mode" });
     expect([...device.querySelectorAll("option")].map((option) => option.value)).toEqual(["auto", "cpu", "cuda"]);
@@ -227,6 +242,7 @@ describe("ClipFactory production pages", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+    await expandSettings(user, "Publishing");
     const mode = await screen.findByRole("combobox", { name: "Mode" });
     expect(mode).toHaveValue("future-mode");
     expect(screen.getByRole("option", { name: "future-mode (unrecognized)" })).toBeInTheDocument();
@@ -246,6 +262,7 @@ describe("ClipFactory production pages", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+    await expandSettings(user, "Environment");
     const main = await screen.findByRole("combobox", { name: "Llm Output Mode" });
     const evaluation = screen.getByRole("combobox", { name: "Llm Output Mode Evaluation" });
     expect(main).toHaveValue("json_schema");
@@ -274,6 +291,7 @@ describe("ClipFactory production pages", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+    await expandSettings(user, "Environment");
     const cap = await screen.findByLabelText("Wan Max Generations Per Run");
     expect(cap).toHaveValue(2);
     expect(cap).toHaveAttribute("min", "0");
@@ -299,6 +317,7 @@ describe("ClipFactory production pages", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+    await expandSettings(user, "Environment");
     const cap = await screen.findByLabelText("Wan Max Generations Per Run");
     await user.clear(cap); await user.type(cap, limit);
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -384,6 +403,42 @@ describe("ClipFactory production pages", () => {
     }
   });
 
+  it.each(["/clips", "/clips/clip-9", "/clips/approval"])("CF-REQ-457 CF-REQ-610 shows only red Not Configured without failure details at %s", async (route) => {
+    const clip = {
+      id: "clip-9", run_id: "run-9", status: "approved", story_title: "Unconfigured fixture",
+      created_at: "2026-10-14", cost_total: "0", social_metadata: {},
+      preview: { media_url: "/api/clips/clip-9/media", duration_seconds: 69.033333, width: 720, height: 1280, fps: 30 },
+      publications: [{ id: "pub-1", platform: "tiktok", status: "failed", mode: "live", error_code: "not_configured", error_message: "tiktok publisher is not configured" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/budget" ? { currency: "EUR" } : String(input) === "/api/clips/clip-9" ? clip : { items: [clip], total: 1 }
+    ), { status: 200 })));
+    render(<MemoryRouter initialEntries={[route]}><App /></MemoryRouter>);
+    expect(await screen.findByText(route === "/clips/approval" ? "TikTok · Not Configured" : "Not Configured")).toHaveClass("not-configured");
+    expect(screen.queryByText("tiktok publisher is not configured")).not.toBeInTheDocument();
+    expect(screen.queryByText("Metrics n/a")).not.toBeInTheDocument();
+    expect(screen.queryByText("Awaiting Approval")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve Unconfigured fixture" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["/clips", 69.033333, "69 sec"], ["/clips/clip-9", 69.033333, "69 sec"],
+    ["/clips", 77.4, "77 sec"], ["/clips/clip-9", 77.4, "77 sec"],
+    ["/clips", 77.6, "78 sec"],
+  ])("CF-REQ-610 rounds duration %s %s to %s", async (route, duration, expected) => {
+    const clip = {
+      id: "clip-9", run_id: "run-9", status: "approved", story_title: "Duration fixture",
+      created_at: "2026-10-14", cost_total: "0", social_metadata: {}, publications: [],
+      preview: { media_url: "/api/clips/clip-9/media", duration_seconds: duration, width: 720, height: 1280, fps: 30 },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/budget" ? { currency: "EUR" } : String(input) === "/api/clips/clip-9" ? clip : { items: [clip], total: 1 }
+    ), { status: 200 })));
+    render(<MemoryRouter initialEntries={[route]}><App /></MemoryRouter>);
+    expect(await screen.findByText(route === "/clips" ? expected : `${expected} · 720×1280 · 30 fps`)).toBeInTheDocument();
+    expect(screen.queryByText(`${duration} sec`)).not.toBeInTheDocument();
+  });
+
   it("CF-REQ-610 reports unavailable Clip media and clears the error when metadata loads", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input) === "/api/budget" ? { currency: "EUR" } : { items: [{
@@ -437,7 +492,7 @@ describe("ClipFactory production pages", () => {
     render(<MemoryRouter initialEntries={["/clips/11111111-1111-1111-1111-111111111111"]}><App /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Ocean heat record" })).toBeInTheDocument();
-    expect(screen.getByText("72s · 720×1280 · 30 fps")).toBeInTheDocument();
+    expect(screen.getByText("72 sec · 720×1280 · 30 fps")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open source Run" })).toHaveAttribute("href", "/runs/22222222-2222-2222-2222-222222222222");
     expect(screen.queryByRole("button", { name: "Retry publish" })).not.toBeInTheDocument();
   });

@@ -1459,6 +1459,36 @@ export interface components {
         };
         /** ResearchPolicy */
         ResearchPolicy: {
+            /** Feeds */
+            feeds?: [
+                string,
+                string
+            ][];
+            /** Publisher Quality */
+            publisher_quality?: {
+                [key: string]: "high" | "standard" | "low" | "blocked";
+            };
+            /**
+             * Max Article Bytes
+             * @default 5000000
+             */
+            max_article_bytes: number;
+            /**
+             * Story Novelty Window Hours
+             * @default 48
+             */
+            story_novelty_window_hours: number;
+            /**
+             * Near Duplicate Threshold
+             * @default 0.8
+             */
+            near_duplicate_threshold: number;
+            /**
+             * Max Additional Sources
+             * @default 5
+             */
+            max_additional_sources: number;
+            selection_weights?: components["schemas"]["ResearchSelectionWeights"];
             /**
              * Max Candidate Articles
              * @default 20
@@ -1483,6 +1513,34 @@ export interface components {
             allowed_publishers?: string[] | null;
             /** Blocked Publishers */
             blocked_publishers?: string[];
+        };
+        /** ResearchSelectionWeights */
+        ResearchSelectionWeights: {
+            /**
+             * Profile Relevance
+             * @default 0.3
+             */
+            profile_relevance: number;
+            /**
+             * Newsworthiness
+             * @default 0.25
+             */
+            newsworthiness: number;
+            /**
+             * Independent Sources
+             * @default 0.2
+             */
+            independent_sources: number;
+            /**
+             * Source Quality
+             * @default 0.15
+             */
+            source_quality: number;
+            /**
+             * Recency
+             * @default 0.1
+             */
+            recency: number;
         };
         /** RunCostsResponse */
         RunCostsResponse: {
@@ -1539,6 +1597,8 @@ export interface components {
             started_at?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /** Clip Id */
+            clip_id?: string | null;
             /** Profile Snapshot */
             profile_snapshot: {
                 [key: string]: unknown;

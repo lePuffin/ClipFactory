@@ -34,6 +34,7 @@ Entity: `Evaluation`, `Issue`, `Action` in [04-domain-model.md](04-domain-model.
 | `narration_mismatch` | deterministic | `generate_narration` | `regenerate_narration` |
 | `missing_asset`, `asset_too_short`, `asset_render_failed`, `asset_unavailable`, `asset_license_missing` | gate / deterministic | `select_assets` | `reselect_asset` |
 | `segment_too_short`, `segment_too_long`, `visual_timing_drift` | gate / deterministic | `plan_visuals` | `replan_visuals` |
+| `generation_duplicate` (a deterministic graphic render imports as an Asset already shown in this Clip, CF-REQ-265) | stage gate | `plan_visuals` | `replan_visuals` (only that Visual becomes narration-keyed footage; other Visuals keep their selections) |
 | `unsourceable_visual` (a `missing_asset` repeated after a `reselect_asset` Retry for the same segment, CF-REQ-266) | stage gate | `write_script` | `revise_script` (rewrite that Visual as a stock-findable scene; narration unchanged) |
 | `caption_out_of_bounds` | deterministic | `write_script` | `revise_script` (rephrase the offending text) |
 | `duration_out_of_range` | deterministic | `write_script` | `revise_script` |
@@ -50,6 +51,13 @@ Entity: `Evaluation`, `Issue`, `Action` in [04-domain-model.md](04-domain-model.
 | `composition_defect` | deterministic | — | `abort` |
 
 Adding an issue code requires adding a row here.
+
+Pre-production exception (CF-REQ-117): two short-script gates for an automatic
+Run with no passing Script route the existing Retry to `research` solely to
+select/extract the next persisted eligible candidate. This is deterministic,
+uses the original ratings/Sources and shared two-fallback allowance, clears
+old script corrections, and never resets the revision count. Manual URL and
+already-passing Script retries use the normal table above.
 
 ## Requirements
 
@@ -209,12 +217,24 @@ Adding an issue code requires adding a row here.
   - A `reselect_asset` for segment 2 only re-selects segment 2; other segments keep their Assets.
   - A failed `select_assets` gate enters `plan_retry` before narration or
     composition; successful reselection records a passing gate for that Attempt.
+  - A graphic render that duplicates a shot already in the Clip (live Run
+    8e100c34: `generation_duplicate` for Visual 5, then a generic terminal
+    `graphics_render_failed`) records a blocking `generation_duplicate`
+    `select_assets` gate issue instead of failing the Run. The re-entry at
+    `plan_visuals` (same frozen Script and plan version) replaces only the
+    referenced Visuals (or a person Visual's fallback) with narration-keyed
+    footage under the normal acquisition, review and `missing_asset` rules,
+    keeps every other Visual's selected Asset, and consumes one revision
+    retry under CF-REQ-411; no extra limit, repeated card or substitute
+    render is introduced.
 - **Related:** ADR-008
 
 ### CF-REQ-411 — Bounded revision retries
 
 - **Description:** A Run shall perform at most `workflow.max_revision_retries`
-  revision retries (default 3, i.e. at most 4 Attempts).
+  revision retries per execution allowance (default 3, i.e. at most 4 Attempts
+  before owner continuation). Explicit Continue Run resets the used revision
+  allowance under CF-REQ-657 without resetting historical Attempt numbers.
 - **Failure:** When exhausted, the Run fails with
   `failure_code = evaluation_failed_after_retries`, the last Evaluation linked,
   and no Publication is created. `abort` Actions fail the Run immediately with
@@ -228,6 +248,10 @@ Adding an issue code requires adding a row here.
 - **Description:** Revision retries shall reuse unchanged artefacts:
   narration (CF-REQ-302), selected Assets for unchanged Visual Segments, and
   rendered segment intermediates keyed by their segment spec hash.
+  The bounded pre-production thin-Story fallback in CF-REQ-117 changes the
+  Story input: it retains historical artefacts but clears pending script
+  corrections and extracts fresh Claims before rebuilding the Story Package.
+  It does not apply after a Script has passed or to Manual URL Runs.
 - **Acceptance:**
   - A retry that changes only segment 2's Asset re-renders only segment 2's intermediate and makes no TTS or transcription calls.
 - **Related:** CF-REQ-159, CF-REQ-302

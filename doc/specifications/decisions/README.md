@@ -26,6 +26,7 @@ decision; do not edit an accepted decision's substance.
 | [ADR-017](ADR-017-layered-news-composition.md) | Layered deterministic news composition | Accepted direction (owner authorized 2026-10-06) |
 | [ADR-018](ADR-018-budgeted-quality-review.md) | Budgeted quality review and owner-controlled publication | Accepted direction (owner authorized 2026-10-06) |
 | [ADR-019](ADR-019-local-typed-graphics-renderers.md) | Local typed renderers for infographic and scientific graphics | Accepted (owner authorized 2026-10-08); partially supersedes ADR-017 |
+| [ADR-020](ADR-020-local-portrait-framing.md) | Local face-centred portrait framing without banner changes | Accepted direction (owner requested 2026-10-14) |
 
 New ADR: copy the structure of an existing one, take the next number, add it
 to this table, and reference it from the affected specification sections.

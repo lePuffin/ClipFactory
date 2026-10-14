@@ -13,15 +13,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from clipfactory.domain.models import ContentProfile, RunTrigger
-from clipfactory.domain.routing import revision_limit_raised
-from clipfactory.infrastructure.db.models import ContentProfileRow, EvaluationRow, LLMRequestRow, RunEventRow, RunRow
+from clipfactory.infrastructure.db.models import (
+    ClipRow,
+    ContentProfileRow,
+    EvaluationRow,
+    LLMRequestRow,
+    RunEventRow,
+    RunRow,
+)
 from clipfactory.infrastructure.media.profile_branding import (
     allocate_branding_folder,
     profile_branding_directory,
     profile_branding_settings,
 )
+from clipfactory.infrastructure.research_defaults import new_profile_research
 from clipfactory.ports.configuration import ProfileNotFound
 from clipfactory.ports.runs import ActiveRunConflict, LLMBudgetExhausted, RunContinuationConflict, RunNotFound
+
+_BRANDING_KEYS = ("branding_directory", "logo_file", "end_card_file")
 
 
 class RunRepository:
@@ -121,7 +130,7 @@ class RunRepository:
                 if profile is None:
                     if profile_id is not None:
                         raise ProfileNotFound(str(profile_id))
-                    default_profile = ContentProfile()
+                    default_profile = new_profile_research(ContentProfile())
                     profile = ContentProfileRow(
                         id=default_profile.id,
                         name=default_profile.name,
@@ -183,6 +192,13 @@ class RunRepository:
             if run is None:
                 raise RunNotFound(str(run_id))
             result = _run_summary(run)
+            clip_id = session.scalar(
+                select(ClipRow.id)
+                .where(ClipRow.run_id == run_id)
+                .order_by(ClipRow.attempt.desc(), ClipRow.created_at.desc())
+                .limit(1)
+            )
+            result["clip_id"] = str(clip_id) if clip_id else None
             result["profile_id"] = str(run.profile_id) if run.profile_id else None
             result["manual_url"] = run.manual_url
             result["profile_snapshot"] = run.profile_snapshot
@@ -249,19 +265,17 @@ class RunRepository:
                     raise RunNotFound(str(run_id))
                 if run.status != "failed" or run.failure_stage != expected_stage:
                     raise RunContinuationConflict("Run is no longer failed at the saved checkpoint stage")
-                exhausted = run.failure_code == "evaluation_failed_after_retries" and not revision_limit_raised(
-                    run.revision_retries_used, settings_snapshot
-                )
-                if exhausted or expected_stage == "publish":
-                    raise RunContinuationConflict("Exhausted retries or publication failures cannot be continued")
+                if expected_stage == "publish":
+                    raise RunContinuationConflict("Publication failures cannot be continued")
                 active = session.scalar(select(RunRow).where(RunRow.status.in_(("queued", "running"))).limit(1))
                 if active is not None:
                     raise ActiveRunConflict(active.id)
+                settings_snapshot = self._continuation_settings(run, settings_snapshot)
                 _append_event(
                     session,
                     run,
                     "run_resumed",
-                    "Failed Run queued to continue with current application settings",
+                    "Failed Run queued to continue with current application settings and its own profile branding",
                     now,
                     stage=expected_stage,
                     payload={
@@ -270,9 +284,12 @@ class RunRepository:
                         "previous_settings_snapshot": run.settings_snapshot,
                         "settings_snapshot": settings_snapshot,
                         "resume_stage": expected_stage,
+                        "previous_revision_retries_used": run.revision_retries_used,
+                        "revision_retries_used": 0,
                     },
                 )
                 run.settings_snapshot = settings_snapshot
+                run.revision_retries_used = 0
                 run.status = "queued"
                 run.current_stage = expected_stage
                 run.finished_at = None
@@ -283,6 +300,27 @@ class RunRepository:
         except IntegrityError as exc:
             active = self.active()
             raise ActiveRunConflict(UUID(active["run_id"]) if active else None) from exc
+
+    def _continuation_settings(self, run: RunRow, settings_snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Keep the Run's own research and Content Profile branding."""
+        # Legacy Runs own their original split research snapshot. Continuation
+        # may refresh other settings, never research or the profile snapshot.
+        if "research" in run.settings_snapshot:
+            settings_snapshot = {**settings_snapshot, "research": run.settings_snapshot["research"]}
+        folder = run.profile_snapshot.get("branding_folder")
+        if self.branding_root is not None and folder:
+            profile_id = run.profile_id or UUID(str(run.profile_snapshot["id"]))
+            return profile_branding_settings(self.branding_root, profile_id, settings_snapshot, folder)
+        previous = run.settings_snapshot.get("composition", {})
+        if not any(key in previous for key in _BRANDING_KEYS) and "composition" not in settings_snapshot:
+            return settings_snapshot
+        composition = {
+            key: value for key, value in settings_snapshot.get("composition", {}).items() if key not in _BRANDING_KEYS
+        }
+        composition.update({key: previous[key] for key in _BRANDING_KEYS if key in previous})
+        if composition.get("end_card_file"):
+            composition["tail_seconds"] = max(3.0, float(composition.get("tail_seconds", 1.0)))
+        return {**settings_snapshot, "composition": composition}
 
     def running(self) -> list[dict[str, Any]]:
         with self.sessions() as session:

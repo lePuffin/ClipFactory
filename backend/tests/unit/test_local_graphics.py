@@ -916,3 +916,288 @@ async def test_retry_that_shortens_a_key_date_segment_reuses_the_identical_card(
     await service.select_assets({**state, "attempt": 2})
     assert len(hyperframes.calls) == 1
     assert segment["selection_reason"] == "reused"
+
+
+def _key_date_segment(index: int) -> dict[str, Any]:
+    return {
+        "index": index,
+        "script_segment_index": index,
+        "narration_text": f"Talks resume on Monday in round {index}.",
+        "objective": "Mark the date",
+        "motion": "none",
+        "planned_duration_seconds": 5,
+        "requirement": {
+            "kind": "infographic",
+            "graphics_spec": payload("key_date"),
+            "fallback_graphics_spec": None,
+            "media_type": "video",
+            "category": "graphic",
+            "description": "Monday key date",
+            "subjects": [],
+            "tags": [],
+            "strategy": "generate_allowed",
+            "search_queries": [],
+        },
+    }
+
+
+def _deduplicating_assets() -> tuple[MagicMock, MagicMock]:
+    """Identical deterministic renders import as the same content-addressed Asset."""
+    assets, media = assets_and_media()
+    saved: dict[str, Any] = {}
+
+    def save(asset: Any) -> Any:
+        saved[asset.sha256] = asset
+        return asset
+
+    assets.save.side_effect = save
+    assets.by_hash.side_effect = saved.get
+    return assets, media
+
+
+@pytest.mark.req("CF-REQ-265")
+async def test_duplicate_render_keeps_its_specific_code_instead_of_generic_render_failure(tmp_path: Path) -> None:
+    provider = FakeGraphics("hyperframes")
+    assets, media = _deduplicating_assets()
+    progress = AsyncMock()
+    arguments: dict[str, Any] = {
+        "providers": [provider],
+        "storage": LocalStorageProvider(tmp_path),
+        "assets": assets,
+        "media": media,
+        "now": NOW,
+        "progress": progress,
+        "max_video_bytes": 10000,
+        "min_video_height_px": 720,
+    }
+    first = await generate_video_asset(request("key_date"), **arguments)
+    assert first is not None
+    with pytest.raises(ProviderError) as duplicate:
+        await generate_video_asset(request("key_date"), **arguments, excluded_asset_ids=frozenset({str(first.id)}))
+    assert duplicate.value.code == "generation_duplicate"
+    assert duplicate.value.detail == str(first.id)
+    assert duplicate.value.transient is False
+    payloads = [call.args[1] for call in progress.await_args_list]
+    assert [item.get("error_code") for item in payloads if item.get("generation_phase") == "failed"] == [
+        "generation_duplicate"
+    ]
+    assert payloads[-1]["asset_id"] == str(first.id)
+
+
+@pytest.mark.req("CF-REQ-265")
+@pytest.mark.req("CF-REQ-410")
+async def test_repeated_key_date_card_becomes_a_blocking_replan_issue_not_a_terminal_failure(
+    tmp_path: Path,
+) -> None:
+    hyperframes = FakeGraphics("hyperframes")
+    assets, media = _deduplicating_assets()
+    production, runs, evaluations = MagicMock(), MagicMock(), MagicMock()
+    plan = {"version": 1, "segments": [_key_date_segment(0), _key_date_segment(1)]}
+    production.current_visual_plan.return_value = plan
+    production.package_context.return_value = {"claims": [claim()]}
+    runs.get.return_value = {
+        "attempt": 1,
+        "profile_snapshot": ContentProfile().model_dump(mode="json"),
+        "settings_snapshot": {},
+    }
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=assets,
+        evaluations=evaluations,
+        storage=LocalStorageProvider(tmp_path),
+        media=media,
+        clock=lambda: NOW,
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        video_providers=[],
+        graphics_providers=[hyperframes],
+    )
+
+    await service.select_assets(
+        {"run_id": str(uuid4()), "story_package_id": str(uuid4()), "attempt": 1, "trigger": "run_now"}
+    )
+
+    first_asset = plan["segments"][0]["selected_asset_id"]
+    assert "selected_asset_id" not in plan["segments"][1]
+    assert plan["segments"][1]["selection_reason"] == "duplicate_graphic"
+    production.save_visual_plan.assert_called_once()
+    production.save_artifact.assert_not_called()
+    evaluation = evaluations.save.call_args.args[0]
+    assert evaluation.passed is False
+    assert [issue.code for issue in evaluation.issues] == ["generation_duplicate"]
+    assert evaluation.issues[0].refs == {"segment_index": 1, "duplicate_asset_id": first_asset}
+    assert [(action.type.value, action.target_stage) for action in evaluation.actions] == [
+        ("replan_visuals", Stage.PLAN_VISUALS)
+    ]
+
+
+@pytest.mark.req("CF-REQ-265")
+@pytest.mark.req("CF-REQ-410")
+@pytest.mark.req("CF-REQ-412")
+async def test_duplicate_replan_converts_only_that_visual_and_keeps_other_selections(tmp_path: Path) -> None:
+    production, runs = MagicMock(), MagicMock()
+    shown: dict[str, Any] = _key_date_segment(0) | {"selected_asset_id": "card-asset", "selection_reason": "rendered"}
+    repeated: dict[str, Any] = _key_date_segment(1) | {"selection_reason": "duplicate_graphic"}
+    portrait = _key_date_segment(2)
+    portrait["requirement"] = {
+        "kind": "media",
+        "category": "person",
+        "graphics_spec": None,
+        "person": {"name": "Jane Smith", "fallback": dict(_key_date_segment(2)["requirement"])},
+    }
+    plan = {"version": 3, "segments": [shown, repeated, portrait]}
+    production.current_visual_plan.return_value = plan
+    production.current_script.return_value = {"version": 3, "segments": []}
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=MagicMock(),
+        evaluations=MagicMock(),
+        storage=LocalStorageProvider(tmp_path),
+        media=MagicMock(),
+        clock=lambda: NOW,
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+    )
+    package_id = uuid4()
+    actions = [
+        {
+            "type": "replan_visuals",
+            "target_stage": "plan_visuals",
+            "instructions": "replan",
+            "refs": {"segment_index": index, "duplicate_asset_id": "card-asset"},
+        }
+        for index in (1, 2)
+    ]
+
+    await service.plan_visuals(
+        {
+            "run_id": str(uuid4()),
+            "story_package_id": str(package_id),
+            "attempt": 2,
+            "trigger": "run_now",
+            "reentry_stage": "plan_visuals",
+            "pending_actions": actions,
+            "affected_segments": [1, 2],
+        }
+    )
+
+    production.save_visual_plan.assert_called_once_with(package_id, 3, plan)
+    assert shown["selected_asset_id"] == "card-asset"
+    assert shown["requirement"]["graphics_spec"] == payload("key_date")
+    replanned: dict[str, Any] = repeated["requirement"]
+    assert replanned["kind"] == "media"
+    assert replanned["category"] == "broll"
+    assert replanned["graphics_spec"] is None
+    assert replanned["fallback_graphics_spec"] is None
+    assert replanned["description"] == repeated["narration_text"]
+    assert "selection_reason" not in repeated
+    assert portrait["requirement"]["person"]["name"] == "Jane Smith"
+    assert portrait["requirement"]["person"]["fallback"]["kind"] == "media"
+    assert portrait["requirement"]["person"]["fallback"]["graphics_spec"] is None
+    events = [call.kwargs["payload"] for call in runs.append_event.call_args_list]
+    assert [(item["segment_index"], item["replan_reason"]) for item in events] == [
+        (1, "generation_duplicate"),
+        (2, "generation_duplicate"),
+    ]
+
+
+def _two_card_script() -> dict[str, Any]:
+    card = {
+        "objective": "Mark the day",
+        "media_type": "video",
+        "category": "graphic",
+        "description": "Monday key date",
+        "kind": "infographic",
+        "strategy": "generate_allowed",
+        "graphics_spec": payload("key_date"),
+    }
+    texts = ["Talks open in 2025 with ministers present.", "Talks close in 2025 after two days."]
+    return {
+        "version": 2,
+        "language": "en",
+        "segments": [
+            {"index": i, "text": t, "claim_ids": [str(CLAIM_ID)], "estimated_duration_seconds": 3}
+            for i, t in enumerate(texts)
+        ],
+        "word_count": 15,
+        "estimated_duration_seconds": 6,
+        "social_metadata": {"title": "Title", "description": "Description", "hashtags": ["#a", "#b", "#c"]},
+        "visual_draft": [card, card],
+        "llm_model": "fake",
+    }
+
+
+@pytest.mark.req("CF-REQ-265")
+@pytest.mark.req("CF-REQ-410")
+@pytest.mark.req("CF-REQ-412")
+@pytest.mark.parametrize("duplicate_in_this_retry", [True, False])
+async def test_mixed_replan_rebuild_keeps_duplicate_override_and_unchanged_selections(
+    tmp_path: Path, duplicate_in_this_retry: bool
+) -> None:
+    production, runs = MagicMock(), MagicMock()
+    production.current_script.return_value = _two_card_script()
+    production.package_context.return_value = {"claims": [claim()]}
+    runs.get.return_value = {
+        "attempt": 2,
+        "profile_snapshot": ContentProfile().model_dump(mode="json"),
+        "settings_snapshot": {},
+    }
+    service = ProductionStageService(
+        production=production,
+        runs=runs,
+        assets=MagicMock(),
+        evaluations=MagicMock(),
+        storage=LocalStorageProvider(tmp_path),
+        media=MagicMock(),
+        clock=lambda: NOW,
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+    )
+    package_id = uuid4()
+    state: WorkflowState = {
+        "run_id": str(uuid4()),
+        "story_package_id": str(package_id),
+        "attempt": 1,
+        "trigger": "run_now",
+    }
+    production.current_visual_plan.side_effect = LookupError
+    await service.plan_visuals(state)
+    initial = production.save_visual_plan.call_args.args[2]
+    assert [s["requirement"]["graphics_spec"] for s in initial["segments"]] == [payload("key_date")] * 2
+    initial["segments"][0] |= {"selected_asset_id": "card-asset", "selection_reason": "rendered", "motion": "none"}
+    if not duplicate_in_this_retry:
+        await service._replan_duplicates(UUID(state["run_id"]), initial, {1: "card-asset"})
+        initial["segments"][1] |= {"selected_asset_id": "footage-asset", "selection_reason": "reviewed"}
+    production.current_visual_plan.side_effect = None
+    production.current_visual_plan.return_value = initial
+    actions: list[dict[str, Any]] = [
+        {"type": "replan_visuals", "target_stage": "plan_visuals", "instructions": "pacing", "refs": {}}
+    ]
+    if duplicate_in_this_retry:
+        actions.append(
+            {
+                "type": "replan_visuals",
+                "target_stage": "plan_visuals",
+                "instructions": "duplicate",
+                "refs": {"segment_index": 1, "duplicate_asset_id": "card-asset"},
+            }
+        )
+
+    await service.plan_visuals({**state, "attempt": 2, "reentry_stage": "plan_visuals", "pending_actions": actions})
+
+    saved = production.save_visual_plan.call_args.args[2]
+    first, second = saved["segments"]
+    assert first["selected_asset_id"] == "card-asset"
+    assert first["requirement"]["graphics_spec"] == payload("key_date")
+    assert second["requirement"]["kind"] == "media"
+    assert second["requirement"]["graphics_spec"] is None
+    assert second["duplicate_replan"] == "card-asset"
+    if duplicate_in_this_retry:
+        assert "selected_asset_id" not in second
+    else:
+        assert second["selected_asset_id"] == "footage-asset"

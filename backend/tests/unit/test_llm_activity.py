@@ -1,12 +1,20 @@
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from pydantic import BaseModel
+from sqlalchemy import create_engine
 
+from clipfactory.domain.models import RunTrigger
+from clipfactory.infrastructure.db.base import Base
+from clipfactory.infrastructure.db.models import LLMRequestRow
+from clipfactory.infrastructure.db.repositories import RunRepository
+from clipfactory.infrastructure.db.session import create_session_factory
+from clipfactory.infrastructure.llm_governance import GovernedLLMCalls
 from clipfactory.infrastructure.providers.llm.openai_compatible import OpenAICompatibleLLMProvider
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.ports.errors import ProviderError
@@ -65,6 +73,137 @@ class InnerLLM:
                 raw_text='{"answer":"ok"}',
             ),
         )
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-666")
+@pytest.mark.req("CF-REQ-668")
+@pytest.mark.req("CF-REQ-669")
+@pytest.mark.req("CF-REQ-670")
+@pytest.mark.req("CF-REQ-671")
+@pytest.mark.parametrize(
+    ("failure", "stop", "expected_calls", "expected_code"),
+    [
+        ("sse", "retry", 4, "http_502"),
+        ("timeout", "retry", 4, "timeout"),
+        ("sse", "run", 2, "llm_budget_exhausted"),
+        ("timeout", "daily", 2, "llm_budget_exhausted"),
+        ("sse", "circuit", 3, "llm_unavailable"),
+        ("timeout", "circuit", 3, "llm_unavailable"),
+        ("sse", "cancel", 1, "cancelled"),
+        ("timeout", "cancel", 1, "cancelled"),
+    ],
+)
+async def test_candidate_review_failures_obey_governed_bounds(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, failure: str, stop: str, expected_calls: int, expected_code: str
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'review.db'}")
+    Base.metadata.create_all(engine)
+    sessions = create_session_factory(engine)
+    configured = EnvironmentSettings(
+        **{
+            "DATABASE_URL": str(engine.url),
+            "LLM_API_KEY": "test-key",
+            "LLM_MODEL": "main:free",
+            "LLM_MODEL_EVALUATION": "dots-studio/dots-3-note-preview:free",
+            "LLM_REQUEST_TIMEOUT_SECONDS": 360,
+        }
+    )
+    run = RunRepository(sessions).create(
+        RunTrigger.RUN_NOW,
+        manual_url=None,
+        settings_snapshot={
+            "llm": {
+                "max_requests_per_run": 2 if stop == "run" else 8,
+                "requests_per_day": 2 if stop == "daily" else 50,
+                "min_daily_requests_to_start_run": 2,
+            }
+        },
+    )
+    requests: list[dict[str, Any]] = []
+    deadlines: list[float | None] = []
+    delays: list[float] = []
+    cancelled_requests: list[bool] = []
+    outcomes: list[str | None] = []
+
+    class State:
+        async def seed(self, recent: dict[str, float]) -> None:
+            pass
+
+        async def take(self, *args: Any, **kwargs: Any) -> tuple[int, int]:
+            # Isolate the wrapper: simulate Dragonfly's already-open circuit, not a second retry loop.
+            return (-1, 300) if stop == "circuit" and len(outcomes) >= 3 else (1, 0)
+
+        async def record_result(self, error: str | None, **kwargs: Any) -> None:
+            outcomes.append(error)
+
+    timeout = asyncio.timeout
+
+    def expire_immediately(seconds: float | None) -> asyncio.Timeout:
+        deadlines.append(seconds)
+        return timeout(0)
+
+    if failure == "timeout":
+        monkeypatch.setattr(asyncio, "timeout", expire_immediately)
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if failure == "timeout":
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled_requests.append(True)
+        return httpx.Response(
+            200,
+            text='data: {"error":{"code":502,"message":"JSON error injected into SSE stream"}}\n\n',
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    async def sleep(seconds: float) -> None:
+        delays.append(seconds)
+        if stop == "cancel":
+            raise asyncio.CancelledError
+
+    governance = GovernedLLMCalls(sessions, configured, State(), clock=lambda: datetime(2026, 10, 13, tzinfo=UTC))
+    events = Events()
+    token = CURRENT_STAGE.set((run["run_id"], "select_assets"))
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond), timeout=600) as client:
+            provider = ObservedLLMProvider(
+                OpenAICompatibleLLMProvider(configured, client=client),
+                events,
+                governance=governance,
+                max_call_retries=3,
+                sleep=sleep,
+            )
+            if stop == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await provider.generate_structured(
+                        "review_media_candidates", [LLMMessage("user", "Review")], Answer, model_role="evaluation"
+                    )
+            else:
+                with pytest.raises(ProviderError) as caught:
+                    await provider.generate_structured(
+                        "review_media_candidates", [LLMMessage("user", "Review")], Answer, model_role="evaluation"
+                    )
+                assert caught.value.code == expected_code
+        assert len(requests) == expected_calls
+        assert outcomes == ["timeout" if failure == "timeout" else "http_502"] * expected_calls
+        assert len(delays) == (expected_calls - 1 if stop == "retry" else expected_calls)
+        assert all(0 < delay <= 60 for delay in delays)
+        assert all(request["model"] == configured.llm_model_evaluation for request in requests)
+        assert all(request["response_format"]["type"] == "json_schema" for request in requests)
+        assert all(event.get("payload", {}).get("repair", 0) == 0 for event in events.items)
+        if failure == "timeout":
+            assert deadlines == [360] * expected_calls
+            assert cancelled_requests == [True] * expected_calls
+        with sessions() as session:
+            rows = list(session.query(LLMRequestRow))
+            assert len(rows) == expected_calls
+            assert [row.outcome for row in rows] == outcomes
+    finally:
+        CURRENT_STAGE.reset(token)
+        engine.dispose()
 
 
 @pytest.mark.unit

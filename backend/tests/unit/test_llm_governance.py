@@ -13,7 +13,7 @@ from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.models import LLMRequestRow
 from clipfactory.infrastructure.db.repositories import RunRepository
 from clipfactory.infrastructure.db.session import create_session_factory
-from clipfactory.infrastructure.llm_governance import GovernedLLMCalls
+from clipfactory.infrastructure.llm_governance import DragonflyLLMState, GovernedLLMCalls
 from clipfactory.infrastructure.settings import EnvironmentSettings
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.llm import LLMResult
@@ -56,6 +56,84 @@ class FakeDragonfly:
     async def record_result(self, error: str | None, **kwargs: Any) -> None:
         self.errors.append(error)
         self.feedback.append(kwargs)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-671")
+@pytest.mark.parametrize(
+    ("error", "shared"),
+    [
+        ("timeout", True),
+        ("network_error", True),
+        ("rate_limited", True),
+        ("http_500", False),
+        ("http_502", False),
+        ("http_503", False),
+        ("free_router_upstream_rejection", False),
+    ],
+)
+async def test_circuit_threshold_and_scope_use_existing_dragonfly_policy(error: str, shared: bool) -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.counts: dict[str, int] = {}
+            self.opened: dict[str, tuple[str, int]] = {}
+
+        async def execute_command(self, *args: Any) -> int:
+            return 1
+
+        async def incr(self, key: str) -> int:
+            self.counts[key] = self.counts.get(key, 0) + 1
+            return self.counts[key]
+
+        async def expire(self, key: str, seconds: int) -> None:
+            assert seconds == 300
+
+        async def set(self, key: str, value: str, *, ex: int) -> None:
+            self.opened[key] = (value, ex)
+
+        async def delete(self, *keys: str) -> None:
+            for key in keys:
+                self.counts.pop(key, None)
+
+    cache = Cache()
+    state = DragonflyLLMState("redis://unused:6380/0")
+    state.client = cache  # type: ignore[assignment]
+    scope = "https://openrouter.ai/api/v1"
+    kwargs: dict[str, Any] = {
+        "seconds": 3600,
+        "threshold": 3,
+        "open_seconds": 300,
+        "now": datetime(2026, 10, 13, tzinfo=UTC),
+        "model": "vision:free",
+        "provider_scope": scope,
+        "limit": 20,
+        "max_delay": 60,
+    }
+    model_key = state._model_key("vision:free", scope)
+    failure_key = state.failure_key if shared else model_key + ":failures"
+    circuit_key = state.circuit_key if shared else model_key + ":circuit"
+    for _ in range(2):
+        await state.record_result(error, **kwargs)
+    assert cache.opened == {}
+    assert cache.counts[failure_key] == 2
+
+    await state.record_result("upstream_bad_request", **kwargs)
+    assert cache.counts[failure_key] == 2
+    assert cache.opened == {}
+    await state.record_result(error, **kwargs)
+    assert cache.opened == {circuit_key: ("transient", 300)}
+
+    # Success resets shared and current-model counters, not another model's failures.
+    await state.record_result(None, **{**kwargs, "model": "main:free"})
+    if shared:
+        assert failure_key not in cache.counts
+    else:
+        assert cache.counts[failure_key] == 3
+    await state.record_result(None, **kwargs)
+    assert failure_key not in cache.counts
+
+    await state.record_result("llm_budget_exhausted", **kwargs)
+    assert cache.opened[state.circuit_key] == ("daily", 3600)
 
 
 @pytest.mark.unit

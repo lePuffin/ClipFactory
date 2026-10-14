@@ -46,7 +46,11 @@ class WhisperLocalTranscriptionProvider:
         except RuntimeError as exc:
             if key[1] != "auto" or not any(name in str(exc) for name in ("libcublas.so", "libcudnn.so")):
                 raise
-            logger.warning("Whisper automatic CUDA selection lacks runtime libraries; retrying on CPU/int8")
+            logger.warning(
+                "Whisper automatic CUDA selection lacks runtime libraries; retrying on CPU/int8. "
+                "For a CPU-only speech deployment, set whisper_device=cpu and whisper_compute_type=int8 "
+                "in Settings to avoid automatic CUDA attempts"
+            )
             self._model = self.model_factory(key[0], device="cpu", compute_type="int8")
             self._model_key = key
             return self._transcribe_model(self._model, audio_path, language)

@@ -66,6 +66,11 @@ def build_visual_plan(
             )
             previous = output[-1].requirement.get("person") if output else None
             if person is not None and not (previous and previous.get("name") == person):
+                # Only the anchor carries the Script Segment's graphic, so a portrait's fallback never repeats it.
+                if draft.kind != "media" and position != anchor:
+                    segment = _footage_segment(segment)
+                elif draft.fallback_graphics_spec is not None and position != anchor:
+                    segment = _without_fallback_graphic(segment)
                 segment = _person_segment(segment, person)
             elif draft.kind != "media" and position != anchor:
                 segment = _footage_segment(segment)
@@ -246,23 +251,27 @@ def _spoken_form(text: str) -> str:
     return " ".join(re.findall(r"[^\W_]+", text.casefold()))
 
 
-def _footage_segment(segment: VisualSegment) -> VisualSegment:
-    """A further piece of a graphic Script Segment shows narration-keyed footage instead of repeating the graphic."""
-    requirement = {
-        **segment.requirement,
+def footage_requirement(requirement: dict[str, Any], narration_text: str) -> dict[str, Any]:
+    """Narration-keyed footage that replaces a graphic which would repeat a card (CF-REQ-265)."""
+    return {
+        **requirement,
         "media_type": "video",
         "category": "broll",
-        "description": segment.narration_text,
+        "description": narration_text,
         "generation_prompt": None,
         "subjects": [],
-        "tags": list(narration_keywords(segment.narration_text, limit=4)),
+        "tags": list(narration_keywords(narration_text, limit=4)),
         "strategy": "reuse_first",
         "kind": "media",
         "graphics_spec": None,
         "fallback_graphics_spec": None,
         "search_queries": [],
     }
-    return replace(segment, requirement=requirement)
+
+
+def _footage_segment(segment: VisualSegment) -> VisualSegment:
+    """A further piece of a graphic Script Segment shows narration-keyed footage instead of repeating the graphic."""
+    return replace(segment, requirement=footage_requirement(segment.requirement, segment.narration_text))
 
 
 def _without_fallback_graphic(segment: VisualSegment) -> VisualSegment:

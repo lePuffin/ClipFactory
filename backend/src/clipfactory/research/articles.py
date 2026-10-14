@@ -8,27 +8,32 @@ import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+_SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "header", "footer", "aside"}
+
 
 class _ArticleParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title_parts: list[str] = []
         self.text_parts: list[str] = []
+        self.article_parts: list[str] = []
+        self.main_parts: list[str] = []
         self.canonical_url: str | None = None
         self.author: str | None = None
         self.published_at: str | None = None
         self._in_title = False
         self._skip_depth = 0
         self._article_depth = 0
-        self._has_article = False
+        self._main_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = dict(attrs)
-        if tag in {"script", "style", "noscript", "svg"}:
+        if tag in _SKIP_TAGS:
             self._skip_depth += 1
         if tag == "article":
             self._article_depth += 1
-            self._has_article = True
+        if tag == "main":
+            self._main_depth += 1
         if tag == "title":
             self._in_title = True
         if tag == "link" and str(values.get("rel") or "").casefold() == "canonical":
@@ -41,10 +46,12 @@ class _ArticleParser(HTMLParser):
                 self.published_at = values.get("content")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
+        if tag in _SKIP_TAGS and self._skip_depth:
             self._skip_depth -= 1
         if tag == "article" and self._article_depth:
             self._article_depth -= 1
+        if tag == "main" and self._main_depth:
+            self._main_depth -= 1
         if tag == "title":
             self._in_title = False
 
@@ -54,8 +61,12 @@ class _ArticleParser(HTMLParser):
             return
         if self._in_title:
             self.title_parts.append(value)
-        elif not self._has_article or self._article_depth:
+        else:
             self.text_parts.append(value)
+            if self._article_depth:
+                self.article_parts.append(value)
+            if self._main_depth:
+                self.main_parts.append(value)
 
 
 def normalize_article_text(value: str) -> str:
@@ -68,7 +79,7 @@ def extract_article(html: str, page_url: str) -> dict[str, str | None]:
     parser = _ArticleParser()
     parser.feed(html)
     title = normalize_article_text(" ".join(parser.title_parts))
-    text = normalize_article_text(" ".join(parser.text_parts))
+    text = normalize_article_text(" ".join(parser.article_parts or parser.main_parts or parser.text_parts))
     canonical = parser.canonical_url or page_url
     return {
         "title": title or None,

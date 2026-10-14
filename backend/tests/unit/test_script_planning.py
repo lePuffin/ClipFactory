@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -16,6 +17,7 @@ from clipfactory.planning.script import (
     SocialMetadataDraft,
     VisualDraft,
     WriteScriptResult,
+    claim_restated_sentences,
     generate_script,
     validate_script_gate,
 )
@@ -142,6 +144,7 @@ def _result(claims: list[Claim]) -> WriteScriptResult:
 @pytest.mark.req("CF-REQ-154")
 @pytest.mark.req("CF-REQ-156")
 @pytest.mark.req("CF-REQ-157")
+@pytest.mark.req("CF-REQ-158")
 @pytest.mark.req("CF-REQ-160")
 @pytest.mark.asyncio
 async def test_script_generation_uses_one_grounded_structured_request() -> None:
@@ -162,6 +165,9 @@ async def test_script_generation_uses_one_grounded_structured_request() -> None:
     assert llm.calls[0][0] == "write_script"
     assert "<untrusted-accepted-claims>" in llm.calls[0][1][1].content
     assert "first segment must contain at most" in llm.calls[0][1][0].content
+    assert "complete spoken sentences with initial capitalization" in llm.calls[0][1][0].content
+    assert "sentence-final punctuation" in llm.calls[0][1][0].content
+    assert "Never copy a headline or incomplete evidence clause verbatim" in llm.calls[0][1][0].content
     assert "Target 170 words" in llm.calls[0][1][0].content
     assert "Fixture Publisher" in llm.calls[0][1][-2].content
     assert "Shorten the hook" in llm.calls[0][1][-1].content
@@ -836,6 +842,44 @@ def test_script_gate_counts_lead_in_and_tail_once(words: int, rejected: bool) ->
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-263")
+@pytest.mark.req("CF-REQ-400")
+@pytest.mark.asyncio
+async def test_ungrounded_optional_graphic_names_fallback_field_in_rewrite_instructions() -> None:
+    claims = _claims()
+    draft = _result(claims).model_dump(mode="json")
+    draft["visuals"][1]["fallback_graphics_spec"] = {
+        "template": "statistic",
+        "title": {"text": "Verified claim number", "claim_ids": [str(claims[0].id)]},
+        "item": {
+            "label": {"text": "Verified claim number", "claim_ids": [str(claims[1].id)]},
+            "value": 999,
+        },
+    }
+    rejected = WriteScriptResult.model_validate(draft)
+    llm = FakeLLM(rejected)
+
+    with pytest.raises(ScriptGateError) as caught:
+        await generate_script(
+            llm,
+            story_title="Science update",
+            story_summary="A significant event.",
+            claims=claims,
+            key_fact_claim_ids=[claim.id for claim in claims],
+            profile=ContentProfile(),
+        )
+
+    assert caught.value.codes == ("unsupported_statement",)
+    assert caught.value.draft == rejected
+    assert "Visual 1 fallback_graphics_spec" in caught.value.detail
+    assert "fallback_graphics_spec=null" in caught.value.detail
+    assert "graphics_spec=null" in caught.value.detail
+    assert "kind=media alone" in caught.value.detail
+    assert rejected.visuals[1].fallback_graphics_spec is not None
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-263")
 @pytest.mark.req("CF-REQ-155")
 @pytest.mark.asyncio
 async def test_ungrounded_graphics_label_is_a_bounded_write_script_gate_not_a_run_failure() -> None:
@@ -1372,3 +1416,230 @@ async def test_invalid_graphics_in_writing_response_is_a_rewrite_gate_not_a_run_
     assert caught.value.codes == ("unsupported_statement",)
     assert "visuals.3.graphics_spec" in caught.value.detail
     assert caught.value.draft is None
+
+
+class _NarrationRepairLLM(FakeLLM):
+    def __init__(self, result: WriteScriptResult, corrections: list[dict[str, Any]]) -> None:
+        super().__init__(result)
+        self.corrections = corrections
+
+    async def generate_structured(
+        self,
+        task: str,
+        messages: list[LLMMessage],
+        schema: type[Any],
+        *,
+        model_role: str = "default",
+        images: list[Any] | None = None,
+        temperature: float = 0.2,
+    ) -> LLMResult[Any]:
+        del model_role, images, temperature
+        assert schema is NarrationRepairResult
+        self.calls.append((task, messages))
+        return LLMResult(
+            NarrationRepairResult.model_validate({"corrections": self.corrections}), "fake", "repair-model"
+        )
+
+
+def _fragment_and_short_draft(claims: list[Claim]) -> WriteScriptResult:
+    """Live Run a3c8b36b pattern: a hook copied from an incomplete Claim plus a body one word short."""
+    draft = _result(claims)
+    draft.segments[0].text = "A verified event is unfolding"
+    draft.segments[3].text = draft.segments[3].text.split(". ", 2)[2]
+    draft.segments[3].attribution = "Fixture Publisher"
+    for segment in draft.segments[2:]:
+        segment.claim_ids = [claims[1].id]
+    return draft
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-153")
+@pytest.mark.asyncio
+async def test_writer_receives_every_accepted_claim_with_key_facts_first_and_marked() -> None:
+    claims = _claims()
+    rejected = claims[0].model_copy(update={"id": uuid4(), "status": ClaimStatus.REJECTED, "text": "Rejected rumour."})
+    llm = FakeLLM(_result(claims))
+    await generate_script(
+        llm,
+        story_title="Science",
+        story_summary="Verified findings",
+        claims=[*claims, rejected],
+        key_fact_claim_ids=[claims[2].id],
+        profile=ContentProfile(),
+    )
+    payload = llm.calls[0][1][1].content.split("<untrusted-accepted-claims>\n")[1].split("\n</untrusted")[0]
+    data = json.loads(payload)
+    assert [item["claim_id"] for item in data] == [str(claims[2].id), str(claims[0].id), str(claims[1].id)]
+    assert [item["key_fact"] for item in data] == [True, False, False]
+    assert "Rejected rumour" not in payload
+    assert "never by repeating a fact" in llm.calls[0][1][0].content
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-155")
+@pytest.mark.req("CF-REQ-158")
+@pytest.mark.asyncio
+async def test_length_gate_instruction_states_the_word_budget_and_evidence_still_available() -> None:
+    claims = _claims()
+    draft = _result(claims)
+    draft.segments[3].text = draft.segments[3].text.split(". ", 2)[2]
+    for segment in draft.segments[2:]:
+        segment.claim_ids = [claims[1].id]
+    with pytest.raises(ScriptGateError) as short:
+        await generate_script(
+            FakeLLM(draft),
+            story_title="Science",
+            story_summary="Verified findings",
+            claims=claims,
+            key_fact_claim_ids=[claim.id for claim in claims],
+            profile=ContentProfile(),
+        )
+    assert short.value.codes == ("script_too_short",)
+    assert "narration has 146 words" in short.value.detail
+    assert "at least 147 words (1 more)" in short.value.detail
+    assert "1 accepted Claims are not cited yet" in short.value.detail
+    assert "never a restatement, filler or commentary" in short.value.detail
+
+    draft.segments[3].claim_ids = [claims[2].id]
+    with pytest.raises(ScriptGateError) as cited:
+        await generate_script(
+            FakeLLM(draft),
+            story_title="Science",
+            story_summary="Verified findings",
+            claims=claims,
+            key_fact_claim_ids=[claim.id for claim in claims],
+            profile=ContentProfile(),
+        )
+    assert "Every accepted Claim is already cited" in cited.value.detail
+
+    long_draft = _result(claims)
+    long_draft.segments[2].text += " " + " ".join(f"Station {index} logged data." for index in range(12))
+    with pytest.raises(ScriptGateError) as long:
+        await generate_script(
+            FakeLLM(long_draft),
+            story_title="Science",
+            story_summary="Verified findings",
+            claims=claims,
+            key_fact_claim_ids=[claim.id for claim in claims],
+            profile=ContentProfile(),
+        )
+    assert "script_too_long" in long.value.codes
+    assert "allows at most 221 words" in long.value.detail
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-116")
+@pytest.mark.req("CF-REQ-158")
+@pytest.mark.req("CF-REQ-159")
+@pytest.mark.asyncio
+async def test_narration_repair_recites_accepted_claims_and_keeps_required_attribution() -> None:
+    claims = _claims()
+    claims[2] = claims[2].model_copy(update={"support_level": SupportLevel.SINGLE_SOURCE})
+    publishers = {claims[2].id: ["Fixture Publisher"]}
+    draft = _fragment_and_short_draft(claims)
+    with pytest.raises(ScriptGateError) as initial:
+        await generate_script(
+            FakeLLM(draft),
+            story_title="Science",
+            story_summary="Verified findings",
+            claims=claims,
+            key_fact_claim_ids=[claim.id for claim in claims],
+            profile=ContentProfile(),
+            claim_publishers=publishers,
+        )
+    assert initial.value.codes == ("headline_fragment", "script_too_short")
+    full_body = _result(claims).segments[3].text
+    llm = _NarrationRepairLLM(
+        draft,
+        [
+            {"segment_index": 0, "text": "A verified event is unfolding now."},
+            # The model drops the attribution field (live Run bae1afee) while re-citing the Claims it now states.
+            {"segment_index": 3, "text": full_body, "attribution": "", "claim_ids": [str(claims[2].id)] * 2},
+        ],
+    )
+    script = await generate_script(
+        llm,
+        story_title="Science",
+        story_summary="Verified findings",
+        claims=claims,
+        key_fact_claim_ids=[claim.id for claim in claims],
+        profile=ContentProfile(),
+        claim_publishers=publishers,
+        rejected_draft=initial.value.draft,
+        rejected_codes=initial.value.codes,
+        revision_instructions=[initial.value.detail],
+    )
+    assert len(llm.calls) == 1
+    assert script.segments[0].text == "A verified event is unfolding now."
+    assert script.segments[3].text == full_body
+    assert script.segments[3].claim_ids == (claims[2].id,)
+    assert script.segments[3].attribution == "Fixture Publisher"
+    assert script.segments[1].claim_ids == tuple(draft.segments[1].claim_ids)
+    assert script.visuals == tuple(draft.visuals)
+    assert script.social_metadata == draft.social_metadata
+    system, _, request = llm.calls[0][1]
+    assert "repair_narration.v2" in system.content
+    assert "do not shift text between indexes" in system.content
+    assert "return the shorter grounded narration instead of padding" in system.content
+    assert "Current narration: 145 words; required: 147 to 221 words." in request.content
+    assert '"segment_index": 3, "words": 21' in request.content
+    assert f'Accepted Claim IDs not cited by any segment: ["{claims[2].id}"]' in request.content
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-159")
+@pytest.mark.asyncio
+async def test_narration_repair_citing_an_unaccepted_claim_is_rejected_and_the_draft_retained() -> None:
+    claims = _claims()
+    draft = _fragment_and_short_draft(claims)
+    llm = _NarrationRepairLLM(
+        draft,
+        [{"segment_index": 3, "text": _result(claims).segments[3].text, "claim_ids": [str(uuid4())]}],
+    )
+    with pytest.raises(ScriptGateError) as rejected:
+        await generate_script(
+            llm,
+            story_title="Science",
+            story_summary="Verified findings",
+            claims=claims,
+            key_fact_claim_ids=[claim.id for claim in claims],
+            profile=ContentProfile(),
+            rejected_draft=draft,
+            rejected_codes=["headline_fragment", "script_too_short"],
+            revision_instructions=["Complete the hook and add one accepted fact"],
+        )
+    assert rejected.value.codes == ("headline_fragment", "script_too_short")
+    assert "not an accepted Claim" in rejected.value.detail
+    assert rejected.value.draft is draft
+    assert f'Accepted Claim IDs not cited by any segment: ["{claims[2].id}"]' in llm.calls[0][1][2].content
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-159")
+@pytest.mark.parametrize("text", ["", " ", "\n\t"])
+def test_blank_narration_correction_is_schema_invalid(text: str) -> None:
+    # Live Run a3c8b36b: a repair returned " " for a segment, silently deleting its narration.
+    with pytest.raises(ValidationError):
+        NarrationRepairResult.model_validate({"corrections": [{"segment_index": 1, "text": text}]})
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-158")
+def test_possessive_s_does_not_ground_a_sentence_to_an_unrelated_claim() -> None:
+    # Live Run a3c8b36b: "nation's" contributed a content word "s" that matched "Ukraine's", so a sentence about
+    # injuries was reported as re-telling the railway-infrastructure Claim.
+    evidence = [
+        "There were blackouts in the city of Izyum after a Russian strike destroyed power grids, Ukraine's state "
+        "news agency Ukrinform said, while energy and railway infrastructure in western Ukraine was also targeted.",
+        "Zelensky said 33 people had been injured in the strikes on energy facilities across the country.",
+    ]
+    sentences = [
+        "Ukrenergo introduced electricity rationing.",
+        "There were blackouts in the city of Izyum after a Russian strike destroyed power grids.",
+        "Energy and railway infrastructure in western Ukraine was also targeted overnight, according to Ukrinform.",
+        "Zelensky said 33 people had been injured in the strikes on energy facilities across the country.",
+        "He stated that the injuries resulted from attacks on the nation's energy infrastructure.",
+    ]
+    assert claim_restated_sentences(sentences, evidence) == []
+    restated = "Railway and energy infrastructure in Ukraine's west was targeted overnight."
+    assert claim_restated_sentences([*sentences, restated], evidence) == [(restated, sentences[2])]

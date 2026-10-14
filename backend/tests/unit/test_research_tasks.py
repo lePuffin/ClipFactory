@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from clipfactory.domain.models import ClaimKind, ClaimStatus
+from clipfactory.domain.models import ClaimKind, ClaimStatus, ContentCategory
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.llm import LLMMessage, LLMResult
 from clipfactory.ports.news import ArticleRef
@@ -76,6 +76,7 @@ async def test_rank_stories_makes_one_call_and_validates_merge_partition() -> No
             stories=[
                 RankedStoryDraft(
                     candidate_indexes=[0, 1],
+                    category=ContentCategory.GENERAL,
                     title="Bridge flooding",
                     summary="Floodwater closed a bridge.",
                     profile_relevance=0.9,
@@ -84,6 +85,7 @@ async def test_rank_stories_makes_one_call_and_validates_merge_partition() -> No
                 ),
                 RankedStoryDraft(
                     candidate_indexes=[2],
+                    category=ContentCategory.FINANCE,
                     title="Interest rate decision",
                     summary="The central bank changed its rate.",
                     profile_relevance=0.8,
@@ -116,6 +118,7 @@ def ranked(*groups: list[int]) -> RankStoriesResult:
         stories=[
             RankedStoryDraft(
                 candidate_indexes=group,
+                category=ContentCategory.GENERAL,
                 title=f"Story {index}",
                 summary="Summary.",
                 profile_relevance=0.5,

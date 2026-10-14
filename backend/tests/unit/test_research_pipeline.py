@@ -6,7 +6,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
-from clipfactory.domain.models import ClaimKind, ContentProfile
+from clipfactory.domain.models import ClaimKind, ContentCategory, ContentProfile
 from clipfactory.domain.models import ResearchPolicy as ProfileResearchPolicy
 from clipfactory.infrastructure.http import SafeHTTPClient
 from clipfactory.ports.llm import LLMMessage, LLMResult
@@ -107,6 +107,7 @@ def make_ranked() -> RankStoriesResult:
         stories=[
             RankedStoryDraft(
                 candidate_indexes=[0],
+                category=ContentCategory.SCIENCE,
                 title="A major science discovery",
                 summary="Researchers report an important result.",
                 profile_relevance=0.9,
@@ -154,6 +155,69 @@ async def test_research_pipeline_runs_once_per_llm_task_and_returns_grounded_cla
     assert len(result.claims) == 4
     assert all(claim.evidence[0].verified for claim in result.claims)
     assert len(result.key_fact_claim_ids) == 4
+
+
+@pytest.mark.req("CF-REQ-108")
+@pytest.mark.req("CF-REQ-107")
+@pytest.mark.asyncio
+async def test_sports_run_rejects_politics_before_claim_extraction_using_existing_ranking_call() -> None:
+    from clipfactory.research.pipeline import ResearchFailure
+
+    class PoliticsLLM(ScriptedLLM):
+        async def generate_structured(
+            self, task: str, messages: list[LLMMessage], schema: type[Any], **kwargs: Any
+        ) -> LLMResult[Any]:
+            assert task == "rank_stories"
+            self.tasks.append(task)
+            assert "Profile category: sports" in messages[1].content
+            assert "independently of the profile" in messages[0].content
+            value = RankStoriesResult(
+                stories=[
+                    RankedStoryDraft(
+                        candidate_indexes=[0],
+                        title="Houthis attack Aramco",
+                        summary="Regional political conflict.",
+                        category=ContentCategory.POLITICS,
+                        profile_relevance=1,
+                        newsworthiness=1,
+                        rationale="Major global event",
+                    )
+                ]
+            )
+            return LLMResult(value, "fake", "test-model")
+
+    html = b"<article><title>Houthis attack Aramco</title><p>Regional conflict escalates.</p></article>"
+    fetcher = SafeHTTPClient(
+        resolver=lambda _host, _port: ["93.184.216.34"],
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, content=html)),
+    )
+    llm = PoliticsLLM()
+    policy = ResearchPolicy(
+        max_candidate_articles=10,
+        max_article_age_hours=24,
+        max_article_bytes=100_000,
+        feeds=[("BBC World", "https://news.example/rss")],
+        publisher_quality={},
+        blocked_publishers=[],
+    )
+    events: list[dict[str, object]] = []
+
+    async def progress(message: str, payload: dict[str, object]) -> None:
+        events.append(payload)
+
+    with pytest.raises(ResearchFailure) as error:
+        await research_grounded_story(
+            (FakeNews(),),
+            fetcher,
+            llm,
+            ContentProfile(category=ContentCategory.SPORTS),
+            policy,
+            now=datetime(2026, 9, 30, tzinfo=UTC),
+            progress=progress,
+        )
+    assert error.value.code == "no_suitable_story"
+    assert llm.tasks == ["rank_stories"]
+    assert any(event.get("reason") == "category_mismatch" and event.get("category") == "politics" for event in events)
 
 
 @pytest.mark.unit

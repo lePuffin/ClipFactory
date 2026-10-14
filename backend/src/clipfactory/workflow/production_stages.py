@@ -29,6 +29,7 @@ from clipfactory.assets.selection import (
     refined_media_queries,
 )
 from clipfactory.assets.vision_review import review_media_candidates
+from clipfactory.composition.framing import portrait_framing
 from clipfactory.composition.render import freeze_end_card, render_clip
 from clipfactory.composition.spec import AudioInput, CompositionSpec, OverlayInput, VisualInput
 from clipfactory.domain.graphics import (
@@ -81,6 +82,7 @@ from clipfactory.planning.visuals import (
     build_visual_plan,
     contains_named_person,
     distinct_media_searches,
+    footage_requirement,
     serialize_visual_plan,
     with_date_cards,
 )
@@ -240,7 +242,9 @@ class ProductionStageService:
             evaluation = self._gate_evaluation(
                 run_id, attempt, Stage.WRITE_SCRIPT, list(exc.codes), instructions=exc.detail or None
             )
-            return await self._persist_evaluation(evaluation)
+            result = await self._persist_evaluation(evaluation)
+            result["thin_story_attempts"] = state.get("thin_story_attempts", 0) + int("script_too_short" in exc.codes)
+            return result
         except ProviderError as exc:
             if exc.code in {"unsupported_graphics_template", "unsupported_statement"}:
                 raise StageFailure(exc.code, str(exc)) from exc
@@ -263,6 +267,17 @@ class ProductionStageService:
     async def plan_visuals(self, state: WorkflowState) -> dict[str, Any]:
         package_id = _required_uuid(state, "story_package_id")
         script_value = await asyncio.to_thread(self.production.current_script, package_id)
+        duplicates = _duplicate_replans(state)
+        if duplicates and all(
+            action.get("type") != ActionType.REPLAN_VISUALS.value or action.get("refs", {}).get("duplicate_asset_id")
+            for action in state.get("pending_actions", [])
+        ):
+            previous = await asyncio.to_thread(self.production.current_visual_plan, package_id)
+            if previous.get("version") == script_value["version"]:
+                # Targeted: keep every other Visual and its selection; select_assets reselects only refs.
+                await self._replan_duplicates(UUID(state["run_id"]), previous, duplicates)
+                await asyncio.to_thread(self.production.save_visual_plan, package_id, previous["version"], previous)
+                return {"story_package_version": script_value["version"]}
         script = _script_from_value(script_value)
         detail = await asyncio.to_thread(self.runs.get, UUID(state["run_id"]))
         profile = ContentProfile.model_validate(detail["profile_snapshot"])
@@ -277,8 +292,61 @@ class ProductionStageService:
             script, allow_generated_media=profile.visual_style.allow_generated_media, max_segment_seconds=maximum
         )
         value = {"version": script_value["version"], "segments": serialize_visual_plan(plan)}
+        previous_segments: list[dict[str, Any]] = []
+        try:
+            previous_plan = await asyncio.to_thread(self.production.current_visual_plan, package_id)
+        except LookupError:
+            previous_plan = None
+        if isinstance(previous_plan, dict) and previous_plan.get("version") == script_value["version"]:
+            previous_segments = list(previous_plan.get("segments", []))
+        # Same frozen Script: earlier duplicate overrides stay in force for the same Visual (CF-REQ-265).
+        carried = {
+            index: str(earlier["duplicate_replan"])
+            for index, earlier in enumerate(previous_segments)
+            if earlier.get("duplicate_replan")
+            and index < len(value["segments"])
+            and _same_visual_slot(earlier, value["segments"][index])
+        }
+        await self._replan_duplicates(UUID(state["run_id"]), value, {**carried, **duplicates})
+        for index, earlier in enumerate(previous_segments[: len(value["segments"])]):
+            # CF-REQ-412: an unchanged Visual keeps its selection; select_assets decides what to reselect.
+            if earlier.get("selected_asset_id") and _same_visual(earlier, value["segments"][index]):
+                value["segments"][index] = earlier
         await asyncio.to_thread(self.production.save_visual_plan, package_id, script_value["version"], value)
         return {"story_package_version": script_value["version"]}
+
+    async def _replan_duplicates(self, run_id: UUID, plan: dict[str, Any], duplicates: dict[int, str]) -> None:
+        """Replace each Visual whose render repeated a shown card with narration-keyed footage (CF-REQ-265)."""
+        for segment in plan["segments"]:
+            index = int(segment["index"])
+            if index not in duplicates:
+                continue
+            requirement = dict(segment["requirement"])
+            person = requirement.get("person")
+            if isinstance(person, dict):
+                requirement["person"] = {
+                    **person,
+                    "fallback": footage_requirement(dict(person["fallback"]), str(segment["narration_text"])),
+                }
+            else:
+                requirement = footage_requirement(requirement, str(segment["narration_text"]))
+            segment["requirement"] = requirement
+            segment["duplicate_replan"] = duplicates[index]
+            for key in ("selected_asset_id", "selection_reason", "generated"):
+                segment.pop(key, None)
+            await asyncio.to_thread(
+                self.runs.append_event,
+                run_id,
+                "progress",
+                f"Visual {index}: replanned as narration-keyed footage because its graphic "
+                f"{duplicates[index]} is already shown in this Clip",
+                stage=Stage.PLAN_VISUALS.value,
+                payload={
+                    "segment_index": index,
+                    "replan_reason": "generation_duplicate",
+                    "duplicate_asset_id": duplicates[index],
+                },
+            )
 
     async def _with_undeclared_people(
         self, script: GeneratedScript, package_id: UUID, portrait_minimum: int = 480
@@ -356,6 +424,7 @@ class ProductionStageService:
         review_limit = int(configured.get("candidates_per_review_segment", 10))
         people: dict[str, PersonPortraits | None] = {}
         person_occurrences: dict[str, int] = {}
+        duplicate_issues: list[Issue] = []
         for segment in plan["segments"]:
             if segment.get("selected_asset_id") and (affected and int(segment["index"]) not in affected):
                 used.add(str(segment["selected_asset_id"]))
@@ -389,7 +458,9 @@ class ProductionStageService:
                         ),
                     )
                 except (GraphicsError, ProviderError) as exc:
-                    raise StageFailure(exc.code, str(exc)) from exc
+                    if not _is_duplicate_render(exc):
+                        raise StageFailure(exc.code, str(exc)) from exc
+                    duplicate_issues.append(await _duplicate_graphic_issue(segment, exc, progress))
                 continue
             asset_requirement = AssetRequirement(
                 media_type=requirement["media_type"],
@@ -640,7 +711,10 @@ class ProductionStageService:
                 except ValidationError as exc:
                     raise StageFailure("unsupported_statement", "Invalid declared graphics alternative") from exc
                 except (GraphicsError, ProviderError) as exc:
-                    raise StageFailure(exc.code, str(exc)) from exc
+                    if not _is_duplicate_render(exc):
+                        raise StageFailure(exc.code, str(exc)) from exc
+                    duplicate_issues.append(await _duplicate_graphic_issue(segment, exc, progress))
+                    continue
                 segment.update(alternative)
                 segment["selection_reason"] = "graphics_fallback"
                 segment["generated"] = False
@@ -795,11 +869,11 @@ class ProductionStageService:
             )
             await progress(message, {"segment_index": segment["index"], "selection_reason": "missing_reviewed_media"})
         await asyncio.to_thread(self.production.save_visual_plan, package_id, plan["version"], plan)
-        if missing_issues:
+        if duplicate_issues or missing_issues:
             return await self._persist_evaluation(
                 build_evaluation(
                     EvaluationContext(run_id, None, attempt),
-                    issues=missing_issues,
+                    issues=[*duplicate_issues, *missing_issues],
                     evaluator="deterministic_gate",
                     layer=EvaluationLayer.STAGE_GATE,
                 )
@@ -1317,6 +1391,28 @@ class ProductionStageService:
                 raise StageFailure(
                     "composition_failed", f"Configured end card is unavailable or invalid: {exc}"
                 ) from exc
+        face_boxes = {}
+        for segment, asset in selected:
+            face, framing = await portrait_framing(
+                self.storage.local_path(asset.storage_key),
+                is_person_still=asset.media_type == "image"
+                and (asset.category == "person" or segment.get("selection_reason") == "person_portrait"),
+                retained=segment.get("portrait_framing"),
+                detector=getattr(self.media, "detect_portrait_face", None),
+                source_sha256=asset.sha256,
+            )
+            face_boxes[segment["index"]] = face
+            if framing is not None:
+                segment["portrait_framing"] = framing
+                if face is None:
+                    await self._event(
+                        run_id,
+                        "warning",
+                        f"Visual {segment['index']}: portrait framing unavailable; preserving standard fit",
+                    )
+                elif segment["motion"] not in {"zoom_in", "zoom_out"}:
+                    segment["motion"] = "zoom_in"
+                    segment["motion_reason"] = "Keep the detected portrait face centered during gentle motion"
         spec = CompositionSpec(
             segments=tuple(
                 (
@@ -1332,6 +1428,7 @@ class ProductionStageService:
                         source_offset_seconds=(
                             float(segment.get("source_offset_seconds", 0.0)) if asset.media_type == "video" else 0.0
                         ),
+                        face_box=face_boxes[segment["index"]],
                     )
                     for segment, asset in selected
                 )
@@ -1586,6 +1683,24 @@ class ProductionStageService:
         )
         if retry.failure_code:
             raise StageFailure(retry.failure_code, "Clip evaluation did not produce an approved result")
+        thin_fallback = (
+            state.get("thin_story_attempts", 0) >= 2
+            and any(issue.code == "script_too_short" for issue in evaluation.issues)
+            and all(issue.stage == Stage.WRITE_SCRIPT for issue in evaluation.issues)
+            and state.get("trigger") != "manual_url"
+            and bool(state.get("story_id"))
+        )
+        if thin_fallback:
+            try:
+                await asyncio.to_thread(self.production.current_script, _required_uuid(state, "story_package_id"))
+            except LookupError:
+                if state.get("story_fallbacks_used", 0) >= 2:
+                    raise StageFailure(
+                        "insufficient_claims", "The shared Story fallback allowance is exhausted"
+                    ) from None
+                retry = replace(retry, reentry_stage=Stage.RESEARCH, pending_actions=(), affected_segments=())
+            else:
+                thin_fallback = False
         await asyncio.to_thread(
             self.runs.apply_retry,
             run_id,
@@ -1601,6 +1716,7 @@ class ProductionStageService:
             "pending_actions": list(retry.pending_actions),
             "affected_segments": list(retry.affected_segments),
             "reentry_stage": retry.reentry_stage.value if retry.reentry_stage else None,
+            "rejected_story_id": state.get("story_id") if thin_fallback else None,
         }
 
     async def _run_context(self, state: WorkflowState) -> tuple[UUID, int, dict[str, Any], ContentProfile]:
@@ -1934,6 +2050,58 @@ def production_stage_handlers(service: ProductionStageService) -> dict[Stage, St
             Stage.PLAN_RETRY,
         )
     }
+
+
+def _same_visual_slot(earlier: dict[str, Any], rebuilt: dict[str, Any]) -> bool:
+    return all(earlier.get(key) == rebuilt.get(key) for key in ("index", "script_segment_index", "narration_text"))
+
+
+def _same_visual(earlier: dict[str, Any], rebuilt: dict[str, Any]) -> bool:
+    return _same_visual_slot(earlier, rebuilt) and all(
+        earlier.get(key) == rebuilt.get(key) for key in ("requirement", "planned_duration_seconds")
+    )
+
+
+def _duplicate_replans(state: WorkflowState) -> dict[int, str]:
+    """Visual indices whose rendered graphic repeated a shot, from this plan_visuals re-entry's actions."""
+    if state.get("reentry_stage") != Stage.PLAN_VISUALS.value:
+        return {}
+    return {
+        int(refs["segment_index"]): str(refs["duplicate_asset_id"])
+        for action in state.get("pending_actions", [])
+        if action.get("type") == ActionType.REPLAN_VISUALS.value
+        and isinstance(refs := action.get("refs", {}), dict)
+        and isinstance(refs.get("segment_index"), int)
+        and refs.get("duplicate_asset_id")
+    }
+
+
+def _is_duplicate_render(exc: GraphicsError | ProviderError) -> bool:
+    return isinstance(exc, ProviderError) and exc.code == "generation_duplicate" and bool(exc.detail)
+
+
+async def _duplicate_graphic_issue(
+    segment: dict[str, Any],
+    exc: GraphicsError | ProviderError,
+    progress: Callable[[str, dict[str, object]], Awaitable[None]],
+) -> Issue:
+    """A repeated deterministic card is a targeted replanning issue, never a repeated shot (CF-REQ-265)."""
+    index = int(segment["index"])
+    duplicate = str(exc.detail) if isinstance(exc, ProviderError) else ""
+    segment.pop("selected_asset_id", None)
+    segment["selection_reason"] = "duplicate_graphic"
+    message = (
+        f"Visual {index} rendered graphic {duplicate} that is already shown elsewhere in this Clip; "
+        "replan only that Visual as narration-keyed footage. Keep the narration unchanged."
+    )
+    await progress(message, {"segment_index": index, "selection_reason": "duplicate_graphic", "asset_id": duplicate})
+    return Issue(
+        code="generation_duplicate",
+        severity=IssueSeverity.BLOCKING,
+        stage=Stage.SELECT_ASSETS,
+        message=message,
+        refs={"segment_index": index, "duplicate_asset_id": duplicate},
+    )
 
 
 def _required_uuid(state: WorkflowState, key: str) -> UUID:

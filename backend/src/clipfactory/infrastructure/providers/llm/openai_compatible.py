@@ -121,9 +121,9 @@ class OpenAICompatibleLLMProvider:
                 )
             if response.is_error:
                 raise _provider_error(response, model, self.settings.llm_base_url, api_key.get_secret_value())
-            body = response.json()
-            if isinstance(body, dict) and body.get("error") and not body.get("choices"):
-                # OpenRouter reports some upstream failures inside an HTTP 200 body.
+            body = _response_body(response)
+            if isinstance(body, dict) and body.get("error"):
+                # An injected upstream error invalidates even an accompanying partial answer.
                 raise _provider_error(
                     _in_band_error_response(response, body),
                     model,
@@ -132,6 +132,8 @@ class OpenAICompatibleLLMProvider:
                 )
             choice = body["choices"][0]
             message = choice["message"]
+            if not isinstance(choice, dict) or not isinstance(message, dict):
+                raise TypeError("Invalid completion envelope")
             content = message["content"]
             reasoning = message.get("reasoning") or message.get("reasoning_content")
             reasoning = reasoning if isinstance(reasoning, str) and reasoning.strip() else None
@@ -215,6 +217,8 @@ class OpenAICompatibleLLMProvider:
                     detail=_answer_excerpt(raw_content),
                 ) from exc
             usage = body.get("usage") or {}
+            if not isinstance(usage, dict):
+                raise TypeError("Invalid usage envelope")
             cost = _reported_cost(body, usage)
             return LLMResult(
                 value=value,
@@ -269,6 +273,22 @@ _STATUS_HINTS = {
     429: "rate limited by the provider; retry later or lower the request rate",
 }
 _PROVIDER_DETAIL_LIMIT = 300
+
+
+def _response_body(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        if response.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream":
+            # We request a complete JSON answer, not streaming. Inspect only explicit upstream
+            # error events; never assemble delta content into a candidate judgment.
+            for event in re.split(r"\r?\n\r?\n", response.text):
+                data = "\n".join(line[5:].lstrip(" ") for line in event.splitlines() if line.startswith("data:"))
+                with suppress(ValueError):
+                    body = json.loads(data)
+                    if isinstance(body, dict) and body.get("error"):
+                        return body
+        raise
 
 
 def _in_band_error_response(response: httpx.Response, body: dict[str, Any]) -> httpx.Response:
@@ -339,7 +359,7 @@ def _provider_error(response: httpx.Response, model: str, base_url: str, api_key
 
 def _opaque_upstream_rejection(response: httpx.Response, model: str) -> bool:
     try:
-        body = response.json()
+        body = _response_body(response)
     except ValueError:
         return False
     error = body.get("error") if isinstance(body, dict) else None
@@ -369,7 +389,7 @@ def _opaque_upstream_rejection(response: httpx.Response, model: str) -> bool:
 def _provider_detail(response: httpx.Response, api_key: str) -> str | None:
     """Extract only the structured provider error message; raw bodies are never surfaced."""
     try:
-        body = response.json()
+        body = _response_body(response)
     except ValueError:
         return None
     error = body.get("error") if isinstance(body, dict) else None
