@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16.10-bookworm
+    environment:
+      POSTGRES_DB: ${CLIPFACTORY_POSTGRES_DB:-clipfactory}
+      POSTGRES_USER: ${CLIPFACTORY_POSTGRES_USER:-clipfactory}
+      POSTGRES_PASSWORD: ${CLIPFACTORY_POSTGRES_PASSWORD:-clipfactory-local}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipfactory -d clipfactory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.34.1
+    command: ["--dir", "/data"]
+    ports:
+      - "127.0.0.1:${CLIPFACTORY_DRAGONFLY_PORT:-6380}:6379"
+    volumes:
+      - dragonfly_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  dragonfly_data:

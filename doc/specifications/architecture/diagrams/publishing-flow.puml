@@ -1,0 +1,45 @@
+@startuml publishing-flow
+' Requirements: ../../12-publishing.md, ../../13-analytics.md
+title ClipFactory — Publishing and Metrics
+
+participant "Workflow" as wf
+participant "publishing use case" as pub
+participant "Publisher adapter\n(YouTube / Instagram / TikTok / Facebook)" as adapter
+participant "Scheduler" as sched
+participant "analytics use case" as an
+database "PostgreSQL" as db
+
+wf -> pub : publish(run_id, clip_id)
+pub -> pub : assert Clip.status = approved
+pub -> pub : build PublicationRequest\n(platform-neutral)
+alt mode = disabled
+  pub --> wf : outcome not_published
+else mode = dry_run
+  loop each enabled platform
+    pub -> db : Publication(status = dry_run, request)
+  end
+else mode = live
+  loop each enabled platform (independent)
+    pub -> db : Publication(status = publishing)
+    alt adapter not configured
+      pub -> db : failed (not_configured)
+    else
+      pub -> adapter : publish(request, clip file)
+      adapter -> adapter : adapt limits, hashtags,\ndisclosure flags
+      adapter --> pub : PublicationResult
+      pub -> db : published | failed(error_code)
+      opt published
+        pub -> db : scheduled_task metric_snapshot × offsets
+      end
+    end
+  end
+end
+pub --> wf : published / partially_published / not_published
+
+== later ==
+sched -> an : due metric_snapshot task
+an -> adapter : fetch_metrics(platform_post_id)
+adapter --> an : PlatformMetrics (None = unavailable)
+an -> an : estimated revenue\n(platform estimate | RPM | null)
+an -> db : MetricSnapshot
+@enduml

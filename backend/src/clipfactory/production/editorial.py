@@ -1,0 +1,175 @@
+"""Evidence-bound editorial graphics, separate from spoken-word captions."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Literal
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from PIL import Image, ImageDraw, ImageFont
+
+
+@dataclass(frozen=True, slots=True)
+class EditorialCue:
+    kind: Literal["headline", "person", "place", "source", "quote", "number"]
+    text: str
+    start_seconds: float
+    end_seconds: float
+    claim_ids: tuple[UUID, ...] = ()
+    source_ids: tuple[UUID, ...] = ()
+    asset_id: UUID | None = None
+    secondary: str = ""
+    placement: Literal["top", "context"] = "top"
+
+
+@dataclass(frozen=True, slots=True)
+class EditorialGraphic:
+    png_bytes: bytes
+    sha256: str
+    width: int
+    height: int
+    x: int
+    y: int
+
+
+def render_brand_mark(source: Path, maximum_dimension: int, opacity: float = 1) -> tuple[bytes, int, int]:
+    if maximum_dimension < 1 or not 0 < opacity <= 1:
+        raise ValueError("Brand mark size and opacity are invalid")
+    with Image.open(source) as original:
+        image = original.convert("RGBA")
+        bounds = image.getchannel("A").getbbox()
+        if bounds is None:
+            raise ValueError("Brand mark has no visible pixels")
+        image = image.crop(bounds)
+        image.thumbnail((maximum_dimension, maximum_dimension), Image.Resampling.LANCZOS)
+        image.putalpha(image.getchannel("A").point([round(value * opacity) for value in range(256)]))
+        output = io.BytesIO()
+        image.save(output, format="PNG", optimize=True)
+        return output.getvalue(), image.width, image.height
+
+
+def render_news_date(timestamp: datetime, timezone: str, font_file: Path, width: int) -> tuple[str, EditorialGraphic]:
+    if timestamp.tzinfo is None:
+        raise ValueError("Source publication timestamp must be timezone-aware")
+    local = timestamp.astimezone(ZoneInfo(timezone))
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    text = f"{local.day} {months[local.month - 1]} {local.year}"
+    scale = width / 720
+    font = ImageFont.truetype(str(font_file), max(1, round(22 * scale)))
+    padding = max(1, round(8 * scale))
+    box = font.getbbox(text)
+    image = Image.new("RGBA", (round(font.getlength(text)) + 2 * padding, round(box[3] - box[1]) + 2 * padding))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=padding, fill=(13, 17, 22, 180))
+    draw.text((padding, padding - box[1]), text, font=font, fill=(231, 236, 232, 235))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    content = output.getvalue()
+    return text, EditorialGraphic(
+        content, hashlib.sha256(content).hexdigest(), image.width, image.height, round(44 * scale), round(32 * scale)
+    )
+
+
+def render_ai_disclosure_tag(
+    font_file: Path,
+    width: int,
+    height: int,
+    text: str = "AI Generated",
+) -> tuple[str, EditorialGraphic]:
+    scale = width / 720
+    font = ImageFont.truetype(str(font_file), max(1, round(15 * scale)))
+    padding_x = max(1, round(7 * scale))
+    padding_y = max(1, round(3 * scale))
+    box = font.getbbox(text)
+    text_width = round(font.getlength(text))
+    text_height = round(box[3] - box[1])
+    img_width = text_width + 2 * padding_x
+    img_height = text_height + 2 * padding_y
+    image = Image.new("RGBA", (img_width, img_height))
+    draw = ImageDraw.Draw(image)
+    radius = max(2, round(4 * scale))
+    draw.rounded_rectangle((0, 0, img_width - 1, img_height - 1), radius=radius, fill=(13, 17, 22, 170))
+    draw.text((padding_x, padding_y - box[1]), text, font=font, fill=(225, 230, 235, 210))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    content = output.getvalue()
+    x = round(24 * scale)
+    y = height - img_height - round(36 * scale)
+    return text, EditorialGraphic(content, hashlib.sha256(content).hexdigest(), img_width, img_height, x, y)
+
+
+def render_editorial_graphic(
+    cue: EditorialCue,
+    *,
+    font_file: Path,
+    accepted_claim_ids: frozenset[UUID],
+    known_source_ids: frozenset[UUID],
+    verified_identities: dict[UUID, frozenset[str]] | None = None,
+    width: int = 720,
+    height: int = 1280,
+    min_dwell_seconds: float = 2,
+    reading_words_per_second: float = 3,
+) -> EditorialGraphic:
+    if not cue.text.strip() or cue.start_seconds < 0 or cue.end_seconds <= cue.start_seconds:
+        raise ValueError("editorial cue text and timing are invalid")
+    if not set(cue.claim_ids) <= accepted_claim_ids or not set(cue.source_ids) <= known_source_ids:
+        raise ValueError("editorial cue cites unknown evidence")
+    if cue.kind == "source":
+        if not cue.source_ids:
+            raise ValueError("Source label requires Source evidence")
+    elif not cue.claim_ids:
+        raise ValueError("factual editorial cue requires accepted Claims")
+    if cue.kind == "person":
+        names = (verified_identities or {}).get(cue.asset_id, frozenset()) if cue.asset_id else frozenset()
+        if cue.text.casefold() not in {name.casefold() for name in names}:
+            raise ValueError("person label requires verified identity for the displayed Asset")
+    readable = max(min_dwell_seconds, len((cue.text + " " + cue.secondary).split()) / reading_words_per_second)
+    if cue.end_seconds - cue.start_seconds - 0.4 < readable:
+        raise ValueError("editorial cue has insufficient readable dwell")
+    scale = width / 720
+    panel_width = round(536 * scale)
+    margin = round(44 * scale)
+    padding = round(24 * scale)
+    size = round((46 if cue.kind == "headline" else 32) * scale)
+    font = ImageFont.truetype(str(font_file), size)
+    secondary_font = ImageFont.truetype(str(font_file), round(22 * scale))
+    lines: list[str] = []
+    line = ""
+    display_text = cue.text.upper() if cue.placement == "top" else cue.text
+    for word in display_text.split():
+        candidate = f"{line} {word}".strip()
+        if font.getlength(candidate) > panel_width - 2 * padding:
+            if not line or font.getlength(word) > panel_width - 2 * padding:
+                raise ValueError("editorial label contains a token too wide for safe placement")
+            lines.append(line)
+            line = word
+        else:
+            line = candidate
+    if line:
+        lines.append(line)
+    if len(lines) > 3 or secondary_font.getlength(cue.secondary) > panel_width - 2 * padding:
+        raise ValueError("editorial label cannot fit within safe bounds")
+    line_height = sum(font.getmetrics())
+    panel_height = 2 * padding + len(lines) * line_height + (38 * scale if cue.secondary else 0)
+    panel_height = round(panel_height)
+    position_y = round((112 if cue.placement == "top" else 650) * height / 1280)
+    if position_y + panel_height > round(height * 0.72):
+        raise ValueError("editorial cue would enter the subtitle or platform control region")
+    image = Image.new("RGBA", (panel_width, panel_height), (13, 17, 22, 238))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, round(6 * scale), panel_height), fill=(231, 51, 61, 255))
+    for index, text in enumerate(lines):
+        draw.text((padding, padding + index * line_height), text, font=font, fill="white", anchor="lt")
+    if cue.secondary:
+        draw.text(
+            (padding, panel_height - padding), cue.secondary, font=secondary_font, fill=(197, 211, 219), anchor="lb"
+        )
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    content = output.getvalue()
+    return EditorialGraphic(content, hashlib.sha256(content).hexdigest(), panel_width, panel_height, margin, position_y)

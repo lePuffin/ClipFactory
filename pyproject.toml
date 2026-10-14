@@ -1,0 +1,11 @@
+[project]
+name = "clipfactory-runtime"
+version = "1.0.0"
+requires-python = ">=3.13"
+dependencies = ["clipfactory[graphics-manim,local-gen]"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+clipfactory = { path = "backend", editable = true }

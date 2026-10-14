@@ -1,0 +1,31 @@
+@startuml
+title Versioned news quality and review
+start
+:Retain grounded Story Package;
+:Write narration, beats and visual draft;
+:Normalize shot, overlay and audio plans;
+:Search licensed media and bounded previews;
+:Batched candidate review or valid cached judgments;
+if (Required evidence available?) then (yes)
+  :Select and validate full Assets;
+  :Reuse or generate changed narration/alignment;
+  :Render versioned layered composition;
+  :Validate actual video, layout and mixed audio;
+  :Bounded per-shot semantic review;
+  if (Blocking issue or missing review?) then (yes)
+    :Retain artifacts and pending reasons;
+    :Targeted revision within cost/request limits;
+  else (no)
+    :Owner full playback review;
+    if (Exact output approved?) then (yes)
+      :Publish only enabled eligible variants;
+      :Capture capability-aware engagement metrics;
+    else (no)
+      :Hold or revise without timeout approval;
+    endif
+  endif
+else (no)
+  :Hold pending; never fabricate passing evidence;
+endif
+stop
+@enduml

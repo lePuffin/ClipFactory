@@ -1,0 +1,44 @@
+@startuml research-workflow
+' Requirements: ../../05-research-and-source-grounding.md
+title ClipFactory — Research and Source Grounding
+
+participant "Workflow" as wf
+participant "research use cases" as rs
+participant "NewsSource(s)" as ns
+participant "Safe HTTP client\n+ extractor" as http
+participant "LLMProvider" as llm
+database "PostgreSQL" as db
+
+wf -> rs : research(run_id)
+rs -> ns : latest(query)
+ns --> rs : ArticleRefs
+rs -> rs : filter age / publisher / excluded topics\nrank, take max_candidate_articles
+loop each candidate
+  rs -> http : fetch + extract text
+  http --> rs : article text
+  rs -> rs : canonical URL, quality tier,\nexact + near-duplicate / syndication
+end
+rs -> db : Sources
+wf -> rs : cluster_stories
+rs -> rs : deterministic pre-groups (no LLM)
+rs -> db : pre-grouped Story candidates
+wf -> rs : select_story
+rs -> llm : LLM request 1: rank_stories\n(merge pre-groups + relevance, newsworthiness, flags)
+llm --> rs : merged candidates + ratings
+rs -> rs : weighted score, filters, novelty, tie-break
+rs -> db : selected + rejected with reasons
+wf -> rs : gather_sources
+rs -> rs : match unused refs from pool
+opt NewsSource supports search
+  rs -> ns : search(story query)
+end
+rs -> http : fetch additional (≤ max_additional_sources)
+rs -> rs : independence counting
+rs -> db : evidence Sources
+wf -> rs : extract_claims
+rs -> rs : fit all Sources into llm.max_input_chars
+rs -> llm : LLM request 2: extract_claims (all Sources)
+llm --> rs : claims + excerpts + key-fact ranking
+rs -> rs : verify excerpts verbatim,\nsupport levels, acceptance
+rs -> db : Claims
+@enduml

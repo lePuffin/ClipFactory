@@ -1,0 +1,29 @@
+@startuml system-context
+' System context — see ../system-architecture.md#context
+title ClipFactory — System Context
+
+actor "Owner" as owner
+
+rectangle "ClipFactory" as cf #1f2937
+
+cloud "News feeds / news websites" as news
+cloud "OpenAI-compatible LLM endpoint\n(OpenRouter initially)" as llm
+cloud "Free/licensed media APIs\n(Pexels, Pixabay, Unsplash, Wikimedia)" as media
+cloud "Higgsfield\n(cloud image/video generation)" as gen
+node "ComfyUI / Wan\n(local generation)" as localgen
+cloud "Google Text-to-Speech\n(initial TTS)" as tts
+cloud "YouTube / Instagram / TikTok / Facebook APIs" as platforms
+node "Local Whisper\n(in-process library)" as whisper
+database "Local filesystem\n(media storage)" as fs
+
+owner --> cf : browser UI\n(dashboard, Run Now, Manual URL, settings)
+cf --> news : NewsSource + safe HTTP
+cf --> llm : LLMProvider
+cf --> media : MediaSourceProvider
+cf --> gen : ImageProvider / VideoProvider
+cf --> localgen : ImageProvider / VideoProvider
+cf --> tts : TTSProvider
+cf --> whisper : TranscriptionProvider
+cf --> platforms : Publisher\n(publish, fetch_metrics)
+cf --> fs : StorageProvider
+@enduml

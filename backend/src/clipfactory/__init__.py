@@ -1,0 +1,1 @@
+"""ClipFactory application package."""

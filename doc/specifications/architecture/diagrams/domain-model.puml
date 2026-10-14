@@ -1,0 +1,140 @@
+@startuml domain-model
+' Canonical fields: ../../04-domain-model.md
+title ClipFactory — Domain Model (aggregates and key relations)
+hide empty methods
+
+class ContentProfile {
+  language
+  category
+  topics / excluded_topics
+  geography / markets
+  voice : VoiceSpec
+  duration : DurationPolicy
+  output : OutputSpec
+  visual_style
+  platforms
+  schedule
+  research : ResearchPolicy
+  music : MusicPolicy
+}
+
+class Run {
+  trigger
+  status
+  outcome
+  current_stage
+  attempt
+  revision_retries_used
+  failure_code
+  profile_snapshot
+}
+class RunEvent {
+  sequence
+  type
+  stage
+  payload
+}
+
+class Story {
+  status
+  title
+  selection_score
+}
+class Source {
+  canonical_url
+  publisher
+  origin_publisher
+  quality_tier
+  syndication_of
+}
+class StorySource {
+  role
+  is_independent
+}
+class Claim {
+  text
+  kind
+  support_level
+  status
+}
+class Evidence {
+  excerpt
+  verified
+}
+
+class StoryPackage {
+  version
+  key_fact_claim_ids
+}
+class Script <<value, versioned>>
+class VisualPlan <<value, versioned>>
+class SocialMetadata <<value>>
+
+class Asset {
+  media_type
+  category
+  sha256
+  tags / subjects
+  reusable
+  status
+  usage_count
+}
+class Provenance <<value>> {
+  origin
+  provider
+  license
+  attribution_text
+}
+
+class Clip {
+  status
+  attempt
+  duration / width / height / fps
+  composition_spec_hash
+}
+class AssetUsage
+class Evaluation {
+  layer
+  passed
+  issues[]
+  warnings[]
+  actions[]
+  metrics
+}
+class Publication {
+  platform
+  status
+  mode
+}
+class MetricSnapshot {
+  offset_label
+  views / likes / comments / shares
+  watch_time / retention
+  followers_delta
+  estimated_revenue
+}
+
+ContentProfile "1" <-- "*" Run : snapshot of
+Run "1" *-- "*" RunEvent
+Run "1" --> "*" Story : discovers
+Story "1" *-- "*" StorySource
+StorySource "*" --> "1" Source
+Story "1" *-- "*" Claim
+Claim "1" *-- "1..*" Evidence
+Evidence "*" --> "1" Source
+Run "1" --> "0..1" StoryPackage
+StoryPackage --> "1" Story
+StoryPackage *-- Script
+StoryPackage *-- VisualPlan
+StoryPackage *-- SocialMetadata
+Script ..> Claim : cites
+VisualPlan ..> Asset : selects
+Asset *-- Provenance
+Run "1" --> "*" Clip : one per Attempt
+Clip --> StoryPackage : version
+Clip *-- "*" AssetUsage
+AssetUsage --> Asset
+Clip "1" --> "*" Evaluation
+Clip "1" --> "*" Publication : only if approved
+Publication "1" --> "*" MetricSnapshot
+@enduml
