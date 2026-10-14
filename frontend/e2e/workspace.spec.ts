@@ -49,6 +49,34 @@ async function visual(page: Page, info: TestInfo, name: string) {
 }
 test.beforeEach(async ({ page }) => mocks(page));
 
+test("CF-REQ-610 aligns platform names, dots and Published or Not Configured labels", async ({ page }, info) => {
+  const fixture = { ...clip, publications: [...["facebook", "instagram", "youtube"].map((platform) => ({
+    id: platform, platform, status: "published", mode: "live",
+  })), { id: "tiktok", platform: "tiktok", status: "failed", mode: "live", error_code: "not_configured" }] };
+  await page.route("**/api/clips/clip-1", (route) => route.fulfill({ json: fixture }));
+  await page.goto("/clips/clip-1");
+  const dots = page.locator(".publication-row .published > span");
+  await expect(dots).toHaveCount(3);
+  await expect(dots.first()).toHaveCSS("background-color", "rgb(134, 227, 164)");
+  await expect(page.locator(".not-configured > span")).toHaveCSS("background-color", "rgb(244, 141, 115)");
+  const positions = await page.locator(".publication-row > div:first-child").evaluateAll((rows) => rows.map((row) => {
+    const platform = row.querySelector("strong")!.getBoundingClientRect();
+    const status = row.querySelector(".table-status")!.getBoundingClientRect();
+    const dot = row.querySelector(".table-status > span")!.getBoundingClientRect();
+    return { platformX: platform.x, dotX: dot.x, statusX: status.x,
+      platformY: platform.y + platform.height / 2, dotY: dot.y + dot.height / 2,
+      statusY: status.y + status.height / 2 };
+  }));
+  for (const position of positions) {
+    expect(position.platformX).toBe(positions[0]!.platformX);
+    expect(position.dotX).toBe(positions[0]!.dotX);
+    expect(position.statusX).toBe(positions[0]!.statusX);
+    expect(Math.abs(position.platformY - position.dotY)).toBeLessThan(1);
+    expect(Math.abs(position.statusY - position.dotY)).toBeLessThan(1);
+  }
+  await visual(page, info, "aligned-publications");
+});
+
 test("CF-REQ-457 CF-REQ-610 displays compact unconfigured platforms and whole-second Clip durations", async ({ page }, info) => {
   const fixture = {
     ...clip,
@@ -72,39 +100,20 @@ test("CF-REQ-457 CF-REQ-610 displays compact unconfigured platforms and whole-se
   await visual(page, info, "compact-publications");
 });
 
-test("CF-REQ-600 CF-REQ-601 CF-REQ-602 Overview expands Current Run with compact human personas and removes obsolete sections", async ({ page }, info) => {
+test("CF-REQ-600 CF-REQ-601 Overview retains Current Run without deprecated agent visuals", async ({ page }, info) => {
   await page.goto("/");
-  await expect(page.getByRole("article", { name: "Sage: Working" })).toBeVisible();
-  await expect(page.getByRole("article", { name: "Scout: Success" })).toBeVisible();
-  await expect(page.getByRole("article", { name: "Scribe: Waiting" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Inspect Run" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Agent Roles" })).toHaveCount(0);
+  await expect(page.locator(".persona")).toHaveCount(0);
   await expect(page.getByText("SYSTEM HEALTH")).toHaveCount(0);
   await expect(page.getByText("PUBLISHING GATE")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Recent Runs" })).toHaveCount(0);
-  expect(await page.locator(".persona-body").first().evaluate((node) => getComputedStyle(node).animationName)).toBe("none");
-  const personas = page.locator(".persona");
-  await expect(personas).toHaveCount(8);
-  await expect(page.locator(".persona-grid")).not.toContainText(/eager|focused|committed|happy|sad/i);
-  const boxes = await personas.evaluateAll((nodes) => nodes.map((node) => {
-    const { x, y, width, height } = node.getBoundingClientRect();
-    return { x, y, width, height };
-  }));
-  expect(new Set(boxes.map((box) => box.y)).size).toBe(info.project.name === "desktop" ? 1 : 4);
-  expect(await page.locator(".persona-grid").evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(" ").length)).toBe(info.project.name === "desktop" ? 8 : 2);
-  for (const persona of await personas.all()) {
-    const gap = await persona.evaluate((node) => node.querySelector("small")!.getBoundingClientRect().top - node.querySelector(".persona-role")!.getBoundingClientRect().bottom);
-    expect(gap).toBeLessThanOrEqual(2);
-    expect((await persona.locator("svg").boundingBox())!.height).toBeLessThanOrEqual(82);
-  }
   await visual(page, info, "overview");
-  await page.route("**/api/runs/run-1/events", (route) => route.fulfill({ json: { items: [{ sequence: 3, stage: "extract_claims", type: "stage_failed", message: "Verification failed", payload: {}, attempt: 1, created_at: "2026-10-11T10:00:03Z" }] } }));
-  await page.reload();
-  await expect(page.getByRole("article", { name: "Sage: Failure" })).toBeVisible();
-  await visual(page, info, "persona-failure");
   await page.route("**/api/runs/active", (route) => route.fulfill({ status: 204 }));
   await page.reload();
   await expect(page.getByText("No active Run", { exact: true })).toBeVisible();
-  await expect(page.getByRole("article", { name: /: Waiting$/ })).toHaveCount(8);
-  await visual(page, info, "persona-idle");
+  await expect(page.locator(".persona")).toHaveCount(0);
+  await visual(page, info, "overview-idle");
 });
 
 test("CF-REQ-600 CF-REQ-605 CF-REQ-610 CF-REQ-613 navigates tabs and paginated Clips with per-Clip approval actions, and Assets", async ({ page }, info) => {
@@ -129,6 +138,8 @@ test("CF-REQ-600 CF-REQ-605 CF-REQ-610 CF-REQ-613 navigates tabs and paginated C
   await expect.poll(() => decisions.length).toBe(3);
   expect(decisions[2]).toEqual({ id: "clip-1", method: "DELETE", body: null });
   await expect(page.locator(".table-status.published").first()).toHaveCSS("color", "rgb(134, 227, 164)");
+  await expect(page.locator(".table-status.published").first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.locator(".table-status.published > span").first()).toHaveCSS("background-color", "rgb(134, 227, 164)");
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator(".clip-card")).toHaveCount(1);
   await page.getByRole("tab", { name: "Published", exact: true }).click();
@@ -168,8 +179,15 @@ test("CF-REQ-600 CF-REQ-607 manages named profiles, activation and confirmed del
   await page.getByLabel("Saved profiles").selectOption("weekly");
   await page.getByLabel("Profile name", { exact: true }).fill("Renamed");
   await page.getByLabel("Language", { exact: true }).fill("pt");
+  await expect(page.getByRole("checkbox", { name: "YouTube", exact: true })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "TikTok", exact: true })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "Facebook", exact: true }).check();
+  await page.getByRole("checkbox", { name: "YouTube", exact: true }).uncheck();
+  const saving = page.waitForRequest((request) => request.method() === "PUT" && request.url().endsWith("/api/content-profiles/weekly"));
   await page.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await saving).postDataJSON().profile.platforms).toEqual(["facebook"]);
   await expect(page.getByRole("option", { name: "Renamed", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("checkbox", { name: "Facebook", exact: true })).toBeChecked();
   await page.getByLabel("New profile name", { exact: true }).fill("Special");
   await page.getByRole("button", { name: "Save as new profile", exact: true }).click();
   await expect(page.getByLabel("Profile name", { exact: true })).toHaveValue("Special");

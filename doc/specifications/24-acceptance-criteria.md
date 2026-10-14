@@ -134,6 +134,13 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 
 ### CF-AC-013 — Dashboard and live progress
 
+- Agent/Persona sections are absent in active and idle Overview states.
+  Retry exhaustion at `write_script` retains that stage's progress rather than
+  `plan_retry`'s late-sequence position. Unmeasured starts add no halfway credit;
+  measured shot/frame/step fractions advance granular one-decimal progress.
+  Run outcomes use readable labels; Published text is green on transparent
+  backgrounds. Disabled platforms remain absent from Publication lists.
+
 - Starting Run Now from the UI shows stage-by-stage progress via SSE without reload, survives a reconnect without duplicate/missing events, and the dashboard shows recent Runs, 7-day totals with "Estimated revenue", and the next scheduled Run.
 - Clips support range-streamed preview playback, report unavailable media,
   hide approval controls after publication, and provide a labelled trash
@@ -144,6 +151,9 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 - **Verified by:** E2E-6 (Playwright)
 
 ### CF-AC-014 — Settings and Content Profile
+
+- Platform checkboxes reflect and persist the selected profile's enabled
+  YouTube, Instagram, Facebook and TikTok selections without inferring credentials.
 
 - Named profiles can be created, edited, listed, activated atomically and
   deleted only when inactive; name conflicts and invalid values are rejected

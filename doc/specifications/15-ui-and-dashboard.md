@@ -8,7 +8,7 @@ API contract: [architecture/application-architecture.md](architecture/applicatio
 
 | Route | Page | Purpose |
 | --- | --- | --- |
-| `/` | Overview | Current Run with agent personas, KPIs, budget, next scheduled Run |
+| `/` | Overview | Current Run, KPIs, budget, next scheduled Run |
 | `/runs` | Runs | Run history with status/outcome filters |
 | `/runs/:id` | Run detail | Timeline, Story, Sources, Claims, Script, Evaluations, Clip, failure reason |
 | `/clips` | Clips | All / Published / Failed tabs, 20 Clips per page, preview, publications, latest metrics, approve / reject / delete actions |
@@ -41,23 +41,12 @@ Global header: product name, current Run indicator, **Run Now** button,
   the profile timezone.
 - **Overview layout:** The Overview page does not show System Health,
   Publishing Gate or Recent Runs panels. The Current Run panel spans the full
-  content width and presents each agent role as a **Persona**: a cartoonish
-  human character, its name, and its role beneath it (Scout — research and
-  discovery; Sage — Sources and Claims; Scribe — script and visual plan;
-  Pixel — Asset selection; Echo — narration and captions; Frame —
-  composition; Guard — validation and evaluation; Relay — publishing). Each
-  Persona shows one of four moods derived from its stages in the current Run:
-  **waiting** (eager), **working** (committed), **success** (happy) and
-  **failure** (sad). The mood is expressed only through the character's face
-  and pose; no mood word is shown. Directly beneath the role the Persona shows
-  its state (Waiting, Working, Success or Failure). The eight Personas are
-  compact and laid out as one row of eight on desktop widths, wrapping on
-  narrow screens (owner request, 11 October). Personas are illustrative only;
-  they do not imply autonomous agents at runtime.
+  content width. Owner revision (14 October): agent sections, Personas,
+  character visuals and their mood indicators are removed in active and idle
+  states; Current Run metadata and inspection remain.
 - **Acceptance:**
   - With fixtures, each element renders the expected values (component tests).
-  - A running stage puts its Persona in the working mood, finished stages
-    show success, a failed stage shows failure, and untouched roles wait.
+  - Neither an active nor an idle Overview displays agent/Persona visuals.
 
 ### CF-REQ-602 — Live Run progress
 
@@ -69,7 +58,12 @@ Global header: product name, current Run indicator, **Run Now** button,
   Progress represents position in the canonical stage sequence for the
   trigger, not elapsed time; Retry re-entry can move it backwards. Queued
   Runs start at 0 %, completed Runs show 100 %, and failed Runs retain
-  their stage position with failure styling.
+  their actual production-stage position with failure styling. Retry planning
+  is control flow, not evidence of production completion: it retains the last
+  production stage, including on retry exhaustion. Starting an unmeasured
+  stage gives no invented halfway credit; completion gives full stage credit.
+  Measured visual/step/frame progress interpolates within its stage and the
+  displayed percentage uses one decimal. This is stage progress, not a time estimate.
 - **Behaviour:** On disconnect the client reconnects with `Last-Event-ID` and
   receives missed events; no polling loop is required.
 - **Refresh:** The dashboard's active Run (with live elapsed time and latest event message) and recent Runs refresh automatically; the Run detail page refreshes its record about every second until the Run is `completed` or `failed`.
@@ -201,6 +195,11 @@ Global header: product name, current Run indicator, **Run Now** button,
 
 ### CF-REQ-607 — Content Profile editor
 
+- **Owner revision (14 October):** Platforms use labelled checkboxes for
+  YouTube, Instagram, Facebook and TikTok, reflecting the selected profile's
+  enabled list. Checking/unchecking persists that list through the existing
+  save flow. This does not infer credentials or silently enable a platform.
+
 - **Description:** The profile page shall edit every Content Profile field
   with client-side validation mirroring CF-REQ-551 and server-side validation
   as authority. A selector lists saved Content Profiles; the owner can load
@@ -255,6 +254,13 @@ Global header: product name, current Run indicator, **Run Now** button,
 
 ### CF-REQ-610 — Clips page
 
+- **Owner revision (14 October):** Disabled platforms remain hidden; only
+  actual Publications are displayed. Published labels use green
+  text on a transparent background, with the green circular status dot retained.
+  Publication rows align the platform column, dot and status text consistently.
+  Run outcomes use human-readable words
+  (for example `Partially Published`), not raw snake_case values.
+
 - **API behaviour:** `GET /api/clips` accepts `limit` (default 100, 1–100),
   `offset` (default 0, non-negative) and `filter=all|published|failed` (default
   `all`). It returns `{"items": [...], "total": integer}` with existing item
@@ -284,6 +290,8 @@ Global header: product name, current Run indicator, **Run Now** button,
     and detail pages; stored media duration remains precise.
   - A Publication with `error_code=not_configured` displays only a red
     `Not Configured` status, not `Failed` or an additional detail/metrics line.
+    Publication rows retain a matching red dot and the same platform/dot/status
+    alignment as Published rows.
     This also applies to pending-approval platform badges (CF-REQ-457).
   - Seeking in the preview player issues range requests that the API serves with 206.
   - Published Clips show no Approve or Reject buttons, including when the

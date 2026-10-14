@@ -181,13 +181,13 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-555](14-content-profiles.md) | Profile snapshot per Run | `domain`, `workflow` | Unit, Integration | CF-AC-014 | Not started |
 | [CF-REQ-556](14-content-profiles.md) | Versioned news style and quality policy | `domain`, `planning`, `api` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-600](15-ui-and-dashboard.md) | Visual design | `frontend` | Vitest, Playwright | CF-AC-013 | Not started |
-| [CF-REQ-601](15-ui-and-dashboard.md) | Overview with full-width Current Run and mood-bearing agent Personas | `frontend` | Vitest, Playwright | CF-AC-013 | In progress |
-| [CF-REQ-602](15-ui-and-dashboard.md) | Live Run progress (Execution bar and stage bubble) | `frontend` | Vitest, Playwright | CF-AC-013, CF-AC-017 | In progress |
+| [CF-REQ-601](15-ui-and-dashboard.md) | Overview with full-width Current Run; agent Personas removed per owner revision | `frontend` | Vitest, Playwright | CF-AC-013 | In progress; active/idle absence regression coverage |
+| [CF-REQ-602](15-ui-and-dashboard.md) | Live Run progress (Execution bar and stage bubble) | `frontend` | Vitest, Playwright | CF-AC-013, CF-AC-017 | In progress; retry-control stage exclusion, measured shot/step/frame fractions and one-decimal display verified |
 | [CF-REQ-603](15-ui-and-dashboard.md) | Analytics page | `frontend` | Vitest, Playwright | CF-AC-011 | Not started |
 | [CF-REQ-604](15-ui-and-dashboard.md) | Run detail (elapsed time, Visual counts, LLM models, generation milestones, newest-first events without watchdog noise) | `frontend`, `api` | Vitest, Playwright | CF-AC-017 | In progress |
 | [CF-REQ-605](15-ui-and-dashboard.md) | Asset library with inline media previews, storage locations and 20-per-page pagination | `frontend`, `api` | Vitest, Playwright | CF-AC-005 | In progress |
 | [CF-REQ-606](15-ui-and-dashboard.md) | Initially collapsed Settings groups with retained drafts; no provider readiness or credential-status summaries | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
-| [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with independent Research sources/policies and named-profile management | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
+| [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with independent Research sources/policies, platform checkboxes and named-profile management | `frontend` | Vitest, Playwright | CF-AC-014 | In progress; supported-platform selection/save covered by regression tests |
 | [CF-REQ-608](15-ui-and-dashboard.md) | Run Now with explicit profile selection | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-609](15-ui-and-dashboard.md) | Manual URL input | `frontend` | Vitest, Playwright | CF-AC-015 | Not started |
 | [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (previews with errors, publication-aware approval actions, corner delete icon, All/Published/Failed tabs) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |

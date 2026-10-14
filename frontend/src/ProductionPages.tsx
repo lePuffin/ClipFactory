@@ -707,7 +707,7 @@ function PublicationList({ clip }: { clip: Clip }) {
   if (!clip.publications.length) return <Empty message="No Publications recorded for this Clip." />;
   return <div className="publication-list">{clip.publications.map((publication) => {
     const unconfigured = publication.error_code === "not_configured";
-    return <div className="publication-row" key={publication.id}><div><strong>{platformLabel(publication.platform)}</strong><span className={`table-status ${unconfigured ? "not-configured" : publication.status}`}>{!unconfigured && <span />}{unconfigured ? "Not Configured" : humanize(publication.status)}</span></div>{!unconfigured && <><div className="publication-metrics">{publication.latest_metrics ? <><span>{displayMetric(publication.latest_metrics.views)} views</span><span>{displayMetric(publication.latest_metrics.likes)} likes</span></> : <span>Metrics n/a</span>}</div>{publication.platform_url && <a className="row-open" href={publication.platform_url} target="_blank" rel="noreferrer" aria-label={`Open ${platformLabel(publication.platform)} Publication`}><ExternalLink size={15} /></a>}{publication.error_message && <small>{publication.error_message}</small>}</>}</div>;
+    return <div className="publication-row" key={publication.id}><div><strong>{platformLabel(publication.platform)}</strong><span className={`table-status ${unconfigured ? "not-configured" : publication.status}`}><span aria-hidden="true" />{unconfigured ? "Not Configured" : humanize(publication.status)}</span></div>{!unconfigured && <><div className="publication-metrics">{publication.latest_metrics ? <><span>{displayMetric(publication.latest_metrics.views)} views</span><span>{displayMetric(publication.latest_metrics.likes)} likes</span></> : <span>Metrics n/a</span>}</div>{publication.platform_url && <a className="row-open" href={publication.platform_url} target="_blank" rel="noreferrer" aria-label={`Open ${platformLabel(publication.platform)} Publication`}><ExternalLink size={15} /></a>}{publication.error_message && <small>{publication.error_message}</small>}</>}</div>;
   })}</div>;
 }
 
@@ -781,6 +781,16 @@ function ObjectEditor({ value, onChange, errors, prefix = "", collapsibleGroups 
       return collapsibleGroups ? <Collapsible key={key} title={humanize(key)} level={3} className="settings-group nested-group">{nested}</Collapsible> : <fieldset key={key}><legend>{humanize(key)}</legend>{nested}</fieldset>;
     }
     const id = `field-${path.replaceAll(".", "-")}`;
+    if (path === "platforms") {
+      const selected = Array.isArray(item) ? item : [];
+      return <fieldset key={key} className="platform-options"><legend>Platforms</legend>
+        {(["youtube", "instagram", "facebook", "tiktok"] as const).map((platform) => <label className="checkbox-field" key={platform}>
+          <input type="checkbox" checked={selected.includes(platform)} onChange={(event) => onChange({ ...value, [key]: event.target.checked ? [...selected, platform] : selected.filter((entry) => entry !== platform) })} />
+          {platformLabel(platform)}
+        </label>)}
+        {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}
+      </fieldset>;
+    }
     const options = settingOptions[path];
     if (options) {
       const current = typeof item === "string" ? item : "";

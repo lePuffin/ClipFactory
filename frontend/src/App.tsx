@@ -7,7 +7,6 @@ import { continueRun, patchAsset, startManualURL, startRunNow, stopRun, type Con
 import { useResource } from "./hooks/useResource";
 import { useRunEvents } from "./hooks/useRunEvents";
 import { AnalyticsPage, ApprovalPage, ClipDetailPage, ClipsPage, GoalsPage, ProfilePage, SettingsPage } from "./ProductionPages";
-import { AgentPersonas } from "./AgentPersonas";
 import { Pagination } from "./Pagination";
 import { QualityReviewPage } from "./QualityReview";
 
@@ -343,7 +342,6 @@ function ActiveRun({ run }: { run: RunSummary }) {
       <div className="active-run-id">{run.run_id}</div>
       <div className="run-meta-grid"><Meta label="TRIGGER" value={run.trigger} /><Meta label="STAGE" value={latestStage(events) ?? run.current_stage ?? "Queued"} /><Meta label="STARTED" value={formatDate(run.started_at ?? run.created_at)} /><Meta label="ELAPSED" value={Number.isNaN(started) ? "—" : formatElapsed(now - started)} /></div>
       {latest && <p className="active-run-message" role="status"><strong>{humanize(latest.type)}</strong> {latest.message}</p>}
-      <AgentPersonas run={run} events={events} />
       <NavLink to={`/runs/${run.run_id}`} className="inline-action">Inspect Run <ArrowUpRight size={15} /></NavLink>
     </div>
   );
@@ -453,29 +451,31 @@ const stages = ["research", "ingest_url", "cluster_stories", "select_story", "ga
 function RunProgress({ run, events }: { run: RunDetail; events: RunDetail["events"] }) {
   events = resumedEvents(events);
   const sequence = stages.filter((stage) => run.trigger === "manual_url" ? !["research", "cluster_stories", "select_story"].includes(stage) : stage !== "ingest_url");
-  const latest = events.filter((event) => event.stage).at(-1);
-  const stage = latest?.stage ?? run.current_stage ?? run.failure_stage;
-  const lifecycle = events.filter((event) => event.stage === stage && ["stage_started", "stage_completed", "stage_failed", "stage_skipped"].includes(event.type)).at(-1);
+  const latest = events.filter((event) => event.stage && event.stage !== "plan_retry").at(-1);
+  const recordedStage = run.current_stage ?? run.failure_stage;
+  const stage = latest?.stage ?? (recordedStage === "plan_retry" ? null : recordedStage);
+  const lifecycle = events.filter((event) => event.stage === stage && event.attempt === (latest?.attempt ?? run.attempt) && ["stage_started", "stage_completed", "stage_failed", "stage_skipped"].includes(event.type)).at(-1);
   const terminal = events.filter((event) => event.type === "run_completed" || event.type === "run_failed").at(-1);
   const status = terminal?.type === "run_completed" ? "completed" : terminal?.type === "run_failed" ? "failed" : run.status;
   const state = status === "failed" || lifecycle?.type === "stage_failed" ? "failed" : status === "completed" || lifecycle?.type === "stage_completed" ? "done" : lifecycle?.type === "stage_skipped" ? "skipped" : stage ? "running" : "pending";
   const index = sequence.indexOf(stage ?? "");
-  const generation = events.filter((event) => event.stage === stage && event.attempt === (latest?.attempt ?? run.attempt) && typeof event.payload.generation_phase === "string" && event.payload.generation_phase !== "heartbeat").at(-1)?.payload;
-  let stageFraction = state === "done" || state === "skipped" ? 1 : 0.5;
-  if (stage === "select_assets" && state === "running" && generation) {
+  let stageFraction = lifecycle?.type === "stage_completed" || lifecycle?.type === "stage_skipped" ? 1 : 0;
+  const visualProgress = events.filter((event) => event.stage === stage && event.attempt === (latest?.attempt ?? run.attempt) && typeof event.payload.segment_count === "number" && event.payload.generation_phase !== "heartbeat").at(-1)?.payload;
+  if (stage === "select_assets" && stageFraction < 1 && visualProgress) {
+    const generation = visualProgress;
     const count = generation.segment_count;
     const shot = generation.segment_index;
-    if (typeof count === "number" && count > 0 && typeof shot === "number") {
+    if (typeof count === "number" && Number.isFinite(count) && count > 0 && typeof shot === "number" && Number.isFinite(shot)) {
       const step = generation.step;
       const total = generation.total_steps;
       const rendering = generation.progress_fraction;
-      const measured = typeof rendering === "number" && Number.isFinite(rendering) && rendering >= 0 && rendering <= 1 ? rendering : typeof step === "number" && typeof total === "number" && total > 0 ? Math.min(1, Math.max(0, step / total)) : 0;
-      const fraction = generation.generation_phase === "completed" ? 1 : generation.generation_phase === "validating" ? 0.98 : generation.generation_phase === "encoding" || generation.generation_phase === "saving_frames" ? 0.95 : measured * 0.9;
+      const measured = typeof rendering === "number" && Number.isFinite(rendering) && rendering >= 0 && rendering <= 1 ? rendering : typeof step === "number" && Number.isFinite(step) && typeof total === "number" && Number.isFinite(total) && total > 0 ? Math.min(1, Math.max(0, step / total)) : 0;
+      const fraction = generation.generation_phase === "completed" ? 1 : measured;
       stageFraction = Math.min(0.99, Math.max(0, (shot + fraction) / count));
     }
   }
   const rawPercentage = (index + stageFraction) / sequence.length * 100;
-  const percentage = status === "completed" ? 100 : index < 0 ? 0 : generation && state === "running" ? Math.round(rawPercentage * 10) / 10 : Math.round(rawPercentage);
+  const percentage = status === "completed" ? 100 : index < 0 ? 0 : Math.round(rawPercentage * 10) / 10;
   const label = status === "completed" ? "Completed" : stage ? humanize(stage) : "Queued";
   const attempt = latest?.attempt ?? run.attempt;
   const description = stage && status !== "completed" ? `${label} · ${state} · Attempt ${attempt}` : label;
@@ -497,13 +497,13 @@ function resumedEvents(events: RunDetail["events"]): RunDetail["events"] {
 function latestStage(events: components["schemas"]["RunEventResponse"][]): string | null { return resumedEvents(events).filter((event) => event.stage).at(-1)?.stage ?? null; }
 
 function Meta({ label, value }: { label: string; value: string }) {
-  return <div className="meta-item"><span>{label}</span><strong>{value}</strong></div>;
+  return <div className="meta-item"><span>{label}</span><strong>{label === "OUTCOME" && value !== "—" ? humanize(value) : value}</strong></div>;
 }
 
 function LoadingLine() { return <div className="loading-line"><span />Loading operational data</div>; }
 function InlineError({ message }: { message: string }) { return <div className="inline-error">{message}</div>; }
 function EmptyState({ message = "No Runs recorded yet" }: { message?: string }) { return <div className="empty-state"><FileVideo2 size={21} /><span>{message}</span></div>; }
-function IdleState() { return <><div className="idle-state"><span className="idle-ring"><Activity size={18} /></span><strong>Idle</strong><span>No active Run</span></div><AgentPersonas run={null} events={[]} /></>; }
+function IdleState() { return <div className="idle-state"><span className="idle-ring"><Activity size={18} /></span><strong>Idle</strong><span>No active Run</span></div>; }
 function NotFound() { return <section className="page-wrap"><div className="eyebrow">404 / NOT FOUND</div><h1>Unknown route</h1><NavLink to="/" className="text-link">Return to overview</NavLink></section>; }
 
 function shortId(value: string): string { return value.slice(0, 8).toUpperCase(); }

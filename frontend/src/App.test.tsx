@@ -291,7 +291,7 @@ describe("ClipFactory operational frontend", () => {
     const bar = await screen.findByRole("progressbar", { name: "Run progress" });
     expect(bar.closest("section")).toHaveTextContent("EXECUTION");
     expect(screen.queryByText("LIVE PROGRESS")).not.toBeInTheDocument();
-    expect(bar).toHaveAttribute("aria-valuenow", "38");
+    expect(bar).toHaveAttribute("aria-valuenow", "35.3");
     expect(bar).toHaveAttribute("aria-valuetext", "Write Script · running · Attempt 1");
     const stream = screen.getByRole("list", { name: "Run Events, newest first" });
     expect(within(stream).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
@@ -299,16 +299,16 @@ describe("ClipFactory operational frontend", () => {
     ]);
     await waitFor(() => expect(RunEventSource.current).toBeDefined());
     act(() => RunEventSource.current.emit(runEvent(3, "compose_clip")));
-    expect(bar).toHaveAttribute("aria-valuenow", "74");
+    expect(bar).toHaveAttribute("aria-valuenow", "70.6");
     expect(bar).toHaveAttribute("aria-valuetext", "Compose Clip · running · Attempt 1");
     expect(within(stream).getAllByRole("listitem")[0]).toHaveTextContent("Event 3");
     act(() => RunEventSource.current.emit(runEvent(4, "write_script", "stage_started", 2)));
-    expect(bar).toHaveAttribute("aria-valuenow", "38");
+    expect(bar).toHaveAttribute("aria-valuenow", "35.3");
     expect(bar).toHaveAttribute("aria-valuetext", "Write Script · running · Attempt 2");
     act(() => RunEventSource.current.emit(runEvent(4, "write_script", "stage_started", 2)));
     expect(within(stream).getAllByRole("listitem")).toHaveLength(4);
     act(() => RunEventSource.current.emit(runEvent(5, "write_script", "stage_completed", 2)));
-    expect(bar).toHaveAttribute("aria-valuenow", "41");
+    expect(bar).toHaveAttribute("aria-valuenow", "41.2");
     expect(bar).toHaveAttribute("aria-valuetext", "Write Script · done · Attempt 2");
   });
 
@@ -327,11 +327,41 @@ describe("ClipFactory operational frontend", () => {
     expect(screen.getByText("2 EVENTS")).toBeInTheDocument();
   });
 
+  it("CF-REQ-602 keeps exhausted script retries at the actual production stage", async () => {
+    renderRun({ status: "failed", current_stage: "plan_retry", failure_stage: "plan_retry",
+      failure_code: "evaluation_failed_after_retries", attempt: 11,
+      events: [runEvent(1, "write_script", "stage_started", 11),
+        runEvent(2, "plan_retry", "stage_started", 11),
+        runEvent(3, "plan_retry", "stage_failed", 11),
+        runEvent(4, "plan_retry", "run_failed", 11)] });
+    const bar = await screen.findByRole("progressbar", { name: "Run progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "35.3");
+    expect(bar).toHaveAttribute("aria-valuetext", "Write Script · failed · Attempt 11");
+  });
+
+  it("CF-REQ-602 retains a completed evaluation position through retry planning", async () => {
+    renderRun({ status: "failed", current_stage: "plan_retry",
+      events: [runEvent(1, "evaluate_clip", "stage_completed"), runEvent(2, "plan_retry", "run_failed")] });
+    expect(await screen.findByRole("progressbar", { name: "Run progress" })).toHaveAttribute("aria-valuenow", "88.2");
+  });
+
+  it("CF-REQ-602 uses measured shot progress without requiring generation", async () => {
+    renderRun({ current_stage: "select_assets",
+      events: [{ ...runEvent(1, "select_assets", "progress"), payload: { segment_index: 3, segment_count: 10 } }] });
+    expect(await screen.findByRole("progressbar", { name: "Run progress" })).toHaveAttribute("aria-valuenow", "48.8");
+  });
+
+  it("CF-REQ-604 presents partial publication outcomes as readable words", async () => {
+    renderRun({ status: "completed", outcome: "partially_published" });
+    expect(await screen.findByText("Partially Published")).toBeInTheDocument();
+    expect(screen.queryByText("partially_published")).not.toBeInTheDocument();
+  });
+
   it.each([
     { status: "queued", current_stage: null, expected: "0", text: "Queued" },
     { status: "completed", current_stage: "publish", expected: "100", text: "Completed" },
-    { status: "failed", current_stage: "write_script", expected: "38", text: "Write Script · failed · Attempt 1" },
-    { status: "running", trigger: "manual_url", current_stage: "ingest_url", expected: "3", text: "Ingest Url · running · Attempt 1" },
+    { status: "failed", current_stage: "write_script", expected: "35.3", text: "Write Script · failed · Attempt 1" },
+    { status: "running", trigger: "manual_url", current_stage: "ingest_url", expected: "0", text: "Ingest Url · running · Attempt 1" },
   ])("CF-REQ-602 renders $status progress for $current_stage", async ({ expected, text, ...run }) => {
     renderRun(run);
     const bar = await screen.findByRole("progressbar", { name: "Run progress" });
@@ -366,6 +396,8 @@ describe("ClipFactory operational frontend", () => {
     expect(screen.queryByText("SYSTEM HEALTH")).not.toBeInTheDocument();
     expect(screen.queryByText("PUBLISHING GATE")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Recent Runs" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Agent Roles" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Scout")).not.toBeInTheDocument();
     await screen.findByText("12,500");
     expect(screen.getByText("12,500")).toBeInTheDocument();
     expect(screen.getByText("Estimated revenue")).toBeInTheDocument();

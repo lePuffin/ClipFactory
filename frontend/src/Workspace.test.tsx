@@ -3,13 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import App from "./App";
-import { AgentPersonas } from "./AgentPersonas";
-import type { ContentProfileItem, RunEvent, RunSummary } from "./api/client";
+import type { ContentProfileItem, RunSummary } from "./api/client";
 
 const clip = { id: "clip-1", run_id: "run-1", status: "approved", story_title: "News fixture", created_at: "2026-10-01T10:00:00Z", cost_total: "0.1", social_metadata: {}, publications: [{ id: "pub-1", platform: "youtube", status: "published", mode: "live" }], preview: { duration_seconds: 60, width: 720, height: 1280, fps: 30, media_url: "/media/fixture.mp4" } };
 const profile: ContentProfileItem["profile"] = { name: "News", is_active: true, category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20, max_article_age_hours: 24, max_article_bytes: 5000000, story_novelty_window_hours: 48, near_duplicate_threshold: 0.8, max_additional_sources: 5 } };
 const run: RunSummary = { run_id: "run-1", trigger: "run_now", status: "queued", attempt: 1, revision_retries_used: 0, cost_total: "0", created_at: "2026-10-01T10:00:00Z" };
-function event(sequence: number, stage: string, type: string): RunEvent { return { sequence, stage, type, attempt: 1, level: "info", message: type, payload: {}, created_at: run.created_at }; }
 function response(value: unknown, status = 200) { return new Response(status === 204 ? null : JSON.stringify(value), { status }); }
 function page(path: string) { return render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>); }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -128,7 +126,9 @@ it("CF-REQ-610 uses the green Published status class on approved Clips and detai
   await screen.findByRole("link", { name: "News fixture" });
   expect(screen.getByText("Published", { selector: ".table-status" })).toHaveClass("published");
   await user.click(screen.getByRole("link", { name: "News fixture" }));
-  expect(await screen.findByText("Published")).toHaveClass("table-status", "published");
+  const status = await screen.findByText("Published");
+  expect(status).toHaveClass("table-status", "published");
+  expect(status.querySelector("span")).toBeInTheDocument();
 });
 
 it("CF-REQ-607 selects, renames, saves content, creates, activates and confirms deletion of profiles", async () => {
@@ -156,10 +156,15 @@ it("CF-REQ-607 selects, renames, saves content, creates, activates and confirms 
   await user.selectOptions(screen.getByLabelText("Saved profiles"), "two");
   await user.clear(screen.getByLabelText("Profile name")); await user.type(screen.getByLabelText("Profile name"), "Weekly");
   await user.clear(screen.getByLabelText("Language")); await user.type(screen.getByLabelText("Language"), "pt");
+  expect(screen.getByRole("checkbox", { name: "YouTube" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "TikTok" })).not.toBeChecked();
+  await user.click(screen.getByRole("checkbox", { name: "Facebook" }));
+  await user.click(screen.getByRole("checkbox", { name: "YouTube" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText("Content Profile saved.");
   await waitFor(() => expect(screen.getByLabelText("Profile name")).toHaveValue("Weekly"));
   expect(items[1]?.profile.language).toBe("pt");
+  expect(items[1]?.profile.platforms).toEqual(["facebook"]);
   await user.type(screen.getByLabelText("New profile name"), "Special");
   await user.click(screen.getByRole("button", { name: "Save as new profile" }));
   await waitFor(() => expect(screen.getByLabelText("Profile name")).toHaveValue("Special"));
@@ -191,61 +196,6 @@ it("CF-REQ-607 reports name conflicts without discarding the profile draft", asy
   expect(screen.getByLabelText("New profile name")).toHaveValue("Daily");
 });
 
-it.each([
-  ["waiting", { ...run }, []],
-  ["working", { ...run, status: "running", current_stage: "write_script" }, [event(1, "write_script", "stage_started")]],
-  ["success", { ...run, status: "running", current_stage: "plan_visuals" }, [event(1, "plan_visuals", "stage_completed")]],
-  ["failure", { ...run, status: "failed", failure_stage: "write_script" }, [event(1, "write_script", "stage_failed")]],
-] as const)("CF-REQ-601 CF-REQ-602 Scribe has a distinct %s persona mood", (mood, summary, events) => {
-  render(<AgentPersonas run={summary} events={[...events]} />);
-  const persona = screen.getByRole("article", { name: /^Scribe:/ });
-  expect(persona).toHaveClass(mood);
-  expect(persona.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-  expect(persona).toHaveTextContent("Script & visual plan");
-  const state = { waiting: "Waiting", working: "Working", success: "Success", failure: "Failure" }[mood];
-  expect(persona).toHaveAccessibleName(`Scribe: ${state}`);
-  expect(persona.querySelector("small")).toHaveTextContent(new RegExp(`^${state}$`));
-  expect(persona.querySelector(".persona-role")?.nextElementSibling).toBe(persona.querySelector("small"));
-  expect(persona).not.toHaveTextContent(/eager|focused|committed|happy|sad/i);
-  expect(persona.querySelector("svg")).toHaveAttribute("focusable", "false");
-});
-
-it("CF-REQ-601 CF-REQ-602 updates persona moods on stage events and resets stale failures on continuation", () => {
-  const { rerender } = render(<AgentPersonas run={{ ...run, status: "running", current_stage: "select_assets" }} events={[event(1, "write_script", "stage_completed"), event(2, "select_assets", "stage_started")]} />);
-  expect(screen.getByRole("article", { name: /^Scribe:/ })).toHaveClass("success");
-  expect(screen.getByRole("article", { name: /^Pixel:/ })).toHaveClass("working");
-  rerender(<AgentPersonas run={{ ...run, status: "running", current_stage: "select_assets" }} events={[event(1, "select_assets", "stage_failed"), event(2, "select_assets", "run_resumed"), event(3, "select_assets", "stage_started")]} />);
-  expect(screen.getByRole("article", { name: /^Pixel:/ })).toHaveClass("working");
-  expect(screen.getByRole("article", { name: /^Relay:/ })).toHaveClass("waiting");
-  rerender(<AgentPersonas run={run} events={[event(4, "publish", "run_completed")]} />);
-  expect(screen.getAllByRole("article").every((item) => item.classList.contains("success"))).toBe(true);
-});
-
-it("CF-REQ-601 shows every persona eagerly waiting when no Run is active", () => {
-  render(<AgentPersonas run={null} events={[]} />);
-  const personas = screen.getAllByRole("article");
-  expect(personas).toHaveLength(8);
-  expect(personas.every((item) => item.classList.contains("waiting"))).toBe(true);
-  for (const name of ["Scout", "Sage", "Scribe", "Pixel", "Echo", "Frame", "Guard", "Relay"]) {
-    expect(screen.getByRole("article", { name: `${name}: Waiting` })).toBeInTheDocument();
-  }
-  expect(new Set(personas.map((item) => item.querySelector("svg")?.innerHTML)).size).toBe(8);
-  expect(screen.getByRole("region", { name: "Agent Roles" })).not.toHaveTextContent(/eager|focused|committed|happy|sad/i);
-});
-
-it.each([
-  ["Scout", "research"], ["Scout", "ingest_url"], ["Scout", "cluster_stories"], ["Scout", "select_story"],
-  ["Sage", "gather_sources"], ["Sage", "extract_claims"], ["Sage", "build_story_package"],
-  ["Scribe", "write_script"], ["Scribe", "plan_visuals"], ["Pixel", "select_assets"],
-  ["Echo", "generate_narration"], ["Echo", "transcribe_narration"], ["Echo", "build_captions"],
-  ["Frame", "compose_clip"], ["Guard", "validate_clip"], ["Guard", "evaluate_clip"], ["Guard", "plan_retry"], ["Relay", "publish"],
-])("CF-REQ-601 CF-REQ-602 maps %s to the canonical %s stage", (name, stage) => {
-  const { rerender } = render(<AgentPersonas run={{ ...run, status: "running", current_stage: stage }} events={[event(1, stage, "stage_started")]} />);
-  expect(screen.getByRole("article", { name: new RegExp(`^${name}:`) })).toHaveClass("working");
-  rerender(<AgentPersonas run={{ ...run, status: "running", current_stage: stage }} events={[event(1, stage, "stage_started"), event(2, stage, "stage_skipped")]} />);
-  expect(screen.getByRole("article", { name: new RegExp(`^${name}:`) })).toHaveClass("success");
-});
-
 it("CF-REQ-607 shows an active-profile deletion conflict without removing the saved profile", async () => {
   vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.method === "DELETE" ? response({ error: { code: "active_profile_delete_forbidden", message: "The active profile cannot be deleted." } }, 409) : response({ items: [{ id: "one", name: "Daily", is_active: false, updated_at: run.created_at, profile }] })));
   const user = userEvent.setup(); page("/profile");
@@ -253,31 +203,4 @@ it("CF-REQ-607 shows an active-profile deletion conflict without removing the sa
   await user.click(screen.getByRole("button", { name: "Confirm delete" }));
   await screen.findByText("The active profile cannot be deleted.");
   expect(screen.getByLabelText("Profile name")).toHaveValue("Daily");
-});
-
-it("CF-REQ-601 expresses all four moods through distinct face and pose art without mood labels", () => {
-  const { rerender } = render(<AgentPersonas run={null} events={[]} />);
-  const art = () => screen.getByRole("article", { name: /^Scribe:/ }).querySelector("svg")!.innerHTML;
-  const portraits = [art()];
-  for (const type of ["stage_started", "stage_completed", "stage_failed"]) {
-    rerender(<AgentPersonas run={{ ...run, status: "running", current_stage: "write_script" }} events={[event(1, "write_script", type)]} />);
-    portraits.push(art());
-  }
-  expect(new Set(portraits).size).toBe(4);
-});
-
-it("CF-REQ-601 CF-REQ-602 terminal failure marks the failing role and keeps handed-off and untouched states", () => {
-  render(<AgentPersonas run={{ ...run, status: "running", current_stage: "write_script" }} events={[event(1, "research", "stage_completed"), event(2, "write_script", "stage_started"), event(3, "select_assets", "run_failed")]} />);
-  expect(screen.getByRole("article", { name: "Scout: Success" })).toHaveClass("success");
-  expect(screen.getByRole("article", { name: "Scribe: Success" })).toHaveClass("success");
-  expect(screen.getByRole("article", { name: "Pixel: Failure" })).toHaveClass("failure");
-  expect(screen.getByRole("article", { name: "Relay: Waiting" })).toHaveClass("waiting");
-});
-
-it("CF-REQ-601 CF-REQ-602 shows Success for roles whose Stages handed off when only stage_started events exist", () => {
-  const started = ["research", "select_story", "gather_sources", "write_script", "plan_visuals", "select_assets"].map((stage, index) => event(index + 1, stage, "stage_started"));
-  render(<AgentPersonas run={{ ...run, status: "running", current_stage: "select_assets" }} events={started} />);
-  for (const name of ["Scout", "Sage", "Scribe"]) expect(screen.getByRole("article", { name: `${name}: Success` })).toHaveClass("success");
-  expect(screen.getByRole("article", { name: "Pixel: Working" })).toHaveClass("working");
-  for (const name of ["Echo", "Frame", "Guard", "Relay"]) expect(screen.getByRole("article", { name: `${name}: Waiting` })).toHaveClass("waiting");
 });
