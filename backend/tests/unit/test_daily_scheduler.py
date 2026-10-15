@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import create_engine, select
 
-from clipfactory.domain.models import ContentProfile, ScheduleRule
+from clipfactory.domain.models import ContentProfile, RunTrigger, ScheduleRule
 from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.models import ContentProfileRow, ScheduledTaskRow
 from clipfactory.infrastructure.db.repositories import RunRepository
@@ -50,6 +50,29 @@ def make_scheduler(tasks, runs, clock: FakeClock) -> DailyRunScheduler:
         settings_snapshot=lambda: {"workflow": {"stage_timeout_seconds": 1800}},
         grace_minutes=60,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-651")
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.asyncio
+async def test_due_schedule_queues_behind_running_order_without_skip_or_duplicate(scheduling) -> None:
+    sessions, tasks, runs = scheduling
+    now = datetime(2026, 10, 1, 4, 0, 20, tzinfo=UTC)
+    first = runs.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    runs.claim_next_queued(now)
+    scheduler = make_scheduler(tasks, runs, FakeClock(now))
+    await scheduler.run_once()
+    await scheduler.run_once()
+    scheduled = runs.list(trigger="scheduled")
+    assert len(scheduled) == 1
+    assert scheduled[0]["status"] == "queued"
+    assert runs.claim_next_queued(now) is None
+    with sessions() as session:
+        assert not session.scalars(select(ScheduledTaskRow).where(ScheduledTaskRow.status == "skipped")).all()
+    runs.complete(UUID(first["run_id"]), "not_published", None, now)
+    assert runs.claim_next_queued(now)["run_id"] == scheduled[0]["run_id"]
+    assert runs.get(UUID(scheduled[0]["run_id"]))["settings_snapshot"]["workflow"]["stage_timeout_seconds"] == 1800
 
 
 @pytest.mark.unit

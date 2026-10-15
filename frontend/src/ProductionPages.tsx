@@ -698,6 +698,7 @@ function RetryPublishButton({ clip, onRetried }: { clip: Clip; onRetried: () => 
 
 function ClipPreview({ clip }: { clip: Clip }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (clip.status === "rejected") return <p className="form-message" role="status">Rejected by evaluation. No video is retained; Run and error records remain available.</p>;
   return <div className="clip-preview-container">
     <video key={clip.preview.media_url} className="clip-preview" aria-label={`Preview ${clip.story_title || "Clip"}`} controls preload="metadata" src={clip.preview.media_url} onError={() => setFailedUrl(clip.preview.media_url)} onLoadedMetadata={() => setFailedUrl(null)} />
     {failedUrl === clip.preview.media_url && <p className="form-message" role="alert">Clip video could not be loaded. Check that the media exists in the configured storage directory, then refresh.</p>}

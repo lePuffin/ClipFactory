@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from clipfactory.domain.models import ContentProfile, RunTrigger
 from clipfactory.infrastructure.db.models import (
@@ -31,6 +31,14 @@ from clipfactory.ports.configuration import ProfileNotFound
 from clipfactory.ports.runs import ActiveRunConflict, LLMBudgetExhausted, RunContinuationConflict, RunNotFound
 
 _BRANDING_KEYS = ("branding_directory", "logo_file", "end_card_file")
+
+
+def _lock_run_queue(session: Session) -> None:
+    """Serialize admission/claims even when there are no Run rows to lock."""
+    if session.get_bind().dialect.name == "sqlite":
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        session.execute(select(func.pg_advisory_xact_lock(652)))
 
 
 class RunRepository:
@@ -95,6 +103,7 @@ class RunRepository:
         now = datetime.now(UTC)
         try:
             with self.sessions.begin() as session:
+                _lock_run_queue(session)
                 llm_policy = settings_snapshot.get("llm", {})
                 timezone = ZoneInfo(llm_policy.get("daily_reset_timezone", "UTC"))
                 local_now = now.astimezone(timezone)
@@ -180,10 +189,9 @@ class RunRepository:
                 )
                 session.flush()
                 result = _run_summary(run)
-        except IntegrityError as exc:
-            with self.sessions() as session:
-                active = session.scalar(select(RunRow).where(RunRow.status.in_(("queued", "running"))).limit(1))
-                raise ActiveRunConflict(active.id if active else None) from exc
+        except IntegrityError:
+            # Constraint failures are not admission conflicts: queued Runs may coexist.
+            raise
         return result
 
     def get(self, run_id: UUID) -> dict[str, Any]:
@@ -224,13 +232,14 @@ class RunRepository:
             run = session.scalar(
                 select(RunRow)
                 .where(RunRow.status.in_(("queued", "running")))
-                .order_by(RunRow.created_at.desc())
+                .order_by((RunRow.status == "running").desc(), RunRow.created_at, RunRow.id)
                 .limit(1)
             )
             return _run_summary(run) if run else None
 
     def list(self, *, limit: int = 50, status: str | None = None, trigger: str | None = None) -> list[dict[str, Any]]:
-        statement = select(RunRow).order_by(RunRow.created_at.desc()).limit(max(1, min(limit, 100)))
+        ordering = (RunRow.created_at, RunRow.id) if status == "queued" else (RunRow.created_at.desc(), RunRow.id)
+        statement = select(RunRow).order_by(*ordering).limit(max(1, min(limit, 100)))
         if status:
             statement = statement.where(RunRow.status == status)
         if trigger:
@@ -240,11 +249,14 @@ class RunRepository:
 
     def claim_next_queued(self, now: datetime) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
+            _lock_run_queue(session)
+            if session.scalar(select(RunRow.id).where(RunRow.status == "running").limit(1)) is not None:
+                return None
             run = session.scalar(
                 select(RunRow)
                 .where(RunRow.status == "queued")
-                .order_by(RunRow.created_at)
-                .with_for_update(skip_locked=True)
+                .order_by(RunRow.created_at, RunRow.id)
+                .with_for_update()
                 .limit(1)
             )
             if run is None:
@@ -260,6 +272,7 @@ class RunRepository:
     ) -> dict[str, Any]:
         try:
             with self.sessions.begin() as session:
+                _lock_run_queue(session)
                 run = session.scalar(select(RunRow).where(RunRow.id == run_id).with_for_update())
                 if run is None:
                     raise RunNotFound(str(run_id))

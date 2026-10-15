@@ -353,6 +353,7 @@ class SavedNewsRenderer:
                     segment.get("source_label"),
                     float(segment.get("source_offset_seconds", 0.0)) if asset.media_type == "video" else 0.0,
                     face_box=face,
+                    is_person_still=framing is not None,
                 )
             )
         sounds = []

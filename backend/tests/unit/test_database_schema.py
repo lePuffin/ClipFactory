@@ -35,7 +35,7 @@ def test_schema_creates_all_required_persistence_tables() -> None:
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-652")
-def test_database_enforces_one_active_run_and_unique_event_sequence() -> None:
+def test_database_allows_queue_but_enforces_one_running_run() -> None:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     now = datetime.now(UTC)
@@ -63,6 +63,18 @@ def test_database_enforces_one_active_run_and_unique_event_sequence() -> None:
                 profile_snapshot={},
                 settings_snapshot={},
                 status="queued",
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            RunRow(
+                id=uuid4(),
+                trigger="run_now",
+                profile_id=profile_id,
+                profile_snapshot={},
+                settings_snapshot={},
+                status="running",
                 created_at=now,
             )
         )

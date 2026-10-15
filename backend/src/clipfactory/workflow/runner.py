@@ -88,6 +88,8 @@ class WorkflowRunner:
 
     async def run_next(self) -> bool:
         async with self._control_lock:
+            if self._active:
+                return False
             run = await asyncio.to_thread(self._runs.claim_next_queued, self._clock())
             if run is None:
                 return False

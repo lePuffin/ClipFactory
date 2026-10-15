@@ -65,18 +65,27 @@ Run Events, API and UI.
   - Local timezone resolution retains DST rules, not today's fixed UTC offset.
 - **Related:** ADR-010, OD-008
 
-### CF-REQ-652 — Single active Run
+### CF-REQ-652 — Serial Run queue
 
-- **Description:** At most one Run shall be `queued` or `running` at a time.
-- **Behaviour:** Run Now / Manual URL while a Run is active returns HTTP 409
-  with the active Run ID. A scheduled trigger while a Run is active is skipped
-  with a warning log and a skipped-task record.
+- **Description:** At most one Run shall be `running` at a time. Additional
+  Run orders are durably `queued` (owner revision, 2026-10-15).
+- **Behaviour:** Run Now, Manual URL and scheduled triggers persist their
+  selected profile/settings snapshots and queue behind existing work rather
+  than returning an active-Run conflict or skipping a scheduled order.
+  Dispatch is FIFO by creation time with Run ID as a deterministic tie-breaker.
+  Once the executing Run completes, fails or finishes stopping, the next
+  queued Run starts. Queued work survives application restart.
 - **Acceptance:**
-  - Two concurrent Run Now requests produce one Run and one 409 (enforced by a database constraint or lock, not only in memory).
+  - Two concurrent Run Now requests both create Runs, but at most one executes;
+    admission and claiming are protected by database locking/constraints.
+  - A scheduled order during execution remains queued and starts afterwards.
+  - Stopping a queued Run never starts it; stopping/failing the running Run
+    releases execution to the next queued Run without concurrent execution.
+  - Restart recovery preserves pending work and never dispatches a Run twice.
 
 ### CF-REQ-653 — Run snapshot
 
-- **Description:** At start, a Run shall store an immutable snapshot of the
+- **Description:** At admission (before waiting in the queue), a Run shall store an immutable snapshot of the
   active Content Profile and effective application settings, and use only the
   snapshot for its whole execution, including resumptions.
   Explicit `profile_id` on Run Now or Manual URL selects any saved profile,
@@ -188,6 +197,10 @@ Run Events, API and UI.
 - **Description:** The API shall provide: start Run Now (202 + Run ID), start
   Manual URL Run (202 + Run ID), get active Run, list Runs (paginated,
   filterable by status/outcome/trigger), get Run detail.
+- **Queue surfaces:** `GET /api/runs?status=queued` lists pending orders in
+  FIFO order. `GET /api/runs/active` returns the executing Run when present,
+  otherwise the queue head, or 204 when neither exists. Run detail preserves
+  queued status and admission-time snapshots until dispatch.
 - **Acceptance:**
   - Endpoint contract tests per [HTTP API](architecture/application-architecture.md#http-api).
 - **Related:** CF-REQ-608, CF-REQ-609

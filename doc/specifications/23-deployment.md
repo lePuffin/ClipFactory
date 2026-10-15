@@ -24,8 +24,9 @@ One WSL2 Linux environment running:
 | GPU | NVIDIA RTX PRO 500 Blackwell laptop GPU (≈ 4–6 GB VRAM) via WSL2 CUDA | Suitable for faster-whisper; local Wan video is expected to be slow or fail for memory reasons, so Higgsfield is the practical video generator (OD-005) |
 
 The backend runs as **one process with one Uvicorn worker**, because the
-scheduler and workflow runner are in-process and enforce the single-active-Run
-rule (CF-REQ-652). Running multiple workers or replicas is unsupported in v1.0.
+scheduler and workflow runner are in-process. PostgreSQL durably queues orders
+and protects the single-executing-Run rule (CF-REQ-652, ADR-021). Running
+multiple workers or replicas is unsupported in v1.0.
 
 **Availability caveat:** the daily 05:00 Run only happens if WSL2 and
 `clipfactory run` are running at that time. A missed Run is executed at

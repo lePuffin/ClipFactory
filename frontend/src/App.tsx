@@ -85,6 +85,8 @@ function Dashboard() {
   const profileItems = profiles.status === "success" ? profiles.data.items : [];
   const selectedProfile = profileItems.find((profile) => profile.id === selectedProfileId);
   const [activeRun, reloadActive] = useResource<RunSummary | null>("/api/runs/active", { intervalMs: 2000 });
+  const hasActiveRun = activeRun.status === "success" && activeRun.data !== null
+    && ["queued", "running"].includes(activeRun.data.status);
   const [summary, reloadSummary] = useResource<DashboardSummary>("/api/dashboard/summary");
   const [budget, reloadBudget] = useResource<BudgetSummary>("/api/budget");
   const [manualUrl, setManualUrl] = useState("");
@@ -139,12 +141,12 @@ function Dashboard() {
           </select>
           {profiles.status === "error" ? <span role="alert">{profiles.message}</span> : profiles.status === "loading" ? <small>Loading profiles…</small> : !profileItems.length ? <small>No saved profiles. Create one in Profile.</small> : null}
         </div>
-        <button className="command-button" disabled={starting !== null || !selectedProfile || Boolean(activeRun.status === "success" && activeRun.data)} onClick={() => void createRun("run")}>
-          <Play size={15} fill="currentColor" />{starting === "run" ? "Starting" : "Run Now"}
+        <button className="command-button" disabled={starting !== null || !selectedProfile} onClick={() => void createRun("run")}>
+          <Play size={15} fill="currentColor" />{starting === "run" ? "Starting" : hasActiveRun ? "Add to queue" : "Run Now"}
         </button>
         <form className="manual-url-form" onSubmit={(event) => { event.preventDefault(); void createRun("url"); }}>
           <label htmlFor="manual-url">Manual Source URL</label>
-          <div><input id="manual-url" type="url" required maxLength={2048} value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} placeholder="https://publisher.example/story" /><button className="icon-button" type="submit" disabled={starting !== null || !selectedProfile || Boolean(activeRun.status === "success" && activeRun.data)} title="Start Manual URL Run" aria-label="Start Manual URL Run"><Send size={15} /></button></div>
+          <div><input id="manual-url" type="url" required maxLength={2048} value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} placeholder="https://publisher.example/story" /><button className="icon-button" type="submit" disabled={starting !== null || !selectedProfile} title="Start Manual URL Run" aria-label="Start Manual URL Run"><Send size={15} /></button></div>
         </form>
         {startMessage && <div className={`start-message ${startMessage.kind}`} role="status">{startMessage.text}</div>}
       </section>

@@ -27,6 +27,7 @@ class VisualInput:
     source_label: Literal["ARCHIVE", "ILLUSTRATIVE", "FILE"] | None = None
     source_offset_seconds: float = 0.0
     face_box: FaceBox | None = None
+    is_person_still: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +83,7 @@ class CompositionSpec:
     sound_effects: tuple[AudioInput, ...] = ()
     end_card_path: Path | None = None
     end_card_sha256: str | None = None
-    portrait_framing_version: str = "face-safe-v2"
+    portrait_framing_version: str = "face-safe-v3"
 
     @property
     def duration_seconds(self) -> float:

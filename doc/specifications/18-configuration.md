@@ -460,7 +460,7 @@ actual cost. Values are Provisional (OD-020) and editable in Settings.
 | Key | Default | Used by |
 | --- | --- | --- |
 | `work_dir_retention_days` | `7` | CF-REQ-214 |
-| `rejected_clip_retention_days` | `14` | CF-REQ-214 |
+| `rejected_clip_retention_days` | `14` | Legacy, superseded by immediate automatic-rejection cleanup (CF-REQ-214); no longer delays deletion |
 
 ## Content Profile defaults
 

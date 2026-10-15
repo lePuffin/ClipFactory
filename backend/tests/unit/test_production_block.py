@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -14,6 +15,8 @@ from clipfactory.domain.models import (
     AssetOrigin,
     AssetStatus,
     ContentProfile,
+    Issue,
+    IssueSeverity,
     MusicInfo,
     MusicPolicy,
     Platform,
@@ -25,7 +28,8 @@ from clipfactory.evaluation.semantic import (
     evaluate_semantics,
     representative_frames,
 )
-from clipfactory.evaluation.validation import EvaluationContext
+from clipfactory.evaluation.validation import EvaluationContext, build_evaluation
+from clipfactory.infrastructure.storage import LocalStorageProvider
 from clipfactory.planning.script import (
     GeneratedScript,
     ScriptSegment,
@@ -553,3 +557,87 @@ async def test_approved_production_retires_external_inputs_before_publication() 
     )
     service.assets.update.assert_called_once_with(external.id, status=AssetStatus.RETIRED)
     service.storage.delete.assert_awaited_once_with(external.storage_key)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["validate_clip", "evaluate_clip"])
+@pytest.mark.parametrize("passed", [False, True])
+async def test_evaluation_rejection_discards_only_candidate_video_after_persisting_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, passed: bool
+) -> None:
+    service, _ = _evaluation_service(ModeratingLLM(), {})
+    storage = LocalStorageProvider(tmp_path)
+    service.storage = storage
+    run_id, clip_id = uuid4(), uuid4()
+    clip = service.production.clip.return_value
+    clip["duration_seconds"] = 70.0
+    keys = [clip["storage_key"], "clips/other.mp4", "assets/generated.mp4", "work/input.jpg"]
+    for key in keys:
+        await storage.put_bytes(key, b"retained")
+    evaluation = build_evaluation(
+        EvaluationContext(run_id, clip_id, 1),
+        issues=[]
+        if passed
+        else [
+            Issue(
+                code="narration_mismatch",
+                severity=IssueSeverity.BLOCKING,
+                stage=Stage(stage),
+                message="Fixture evaluation rejection",
+            )
+        ],
+    )
+    monkeypatch.setattr("clipfactory.workflow.production_stages.validate_media", AsyncMock(return_value=evaluation))
+    monkeypatch.setattr("clipfactory.workflow.production_stages.evaluate_semantics", AsyncMock(return_value=evaluation))
+    monkeypatch.setattr("clipfactory.workflow.production_stages.build_evaluation", lambda *args, **kwargs: evaluation)
+    service.assets.external_for_run.return_value = []
+
+    def persist(value: Any) -> None:
+        assert value == evaluation
+        assert storage.local_path(clip["storage_key"]).is_file()
+
+    service.evaluations.save.side_effect = persist
+    result = await getattr(service, stage)(
+        {"run_id": str(run_id), "clip_id": str(clip_id), "story_package_id": str(uuid4()), "attempt": 1}
+    )
+    assert result["last_evaluation_ids"] == [str(evaluation.id)]
+    assert await storage.exists(clip["storage_key"]) == passed
+    for key in keys[1:]:
+        assert await storage.exists(key)
+    service.production.set_clip_status.assert_called_once()
+    assert service.production.set_clip_status.call_args.args[1].value == (
+        "approved" if passed and stage == "evaluate_clip" else "rendered" if passed else "rejected"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-214")
+@pytest.mark.asyncio
+async def test_rejected_clip_deletion_failure_is_visible_and_keeps_evaluation(
+    monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    service, runs = _evaluation_service(ModeratingLLM(), {})
+    run_id, clip_id = uuid4(), uuid4()
+    evaluation = build_evaluation(
+        EvaluationContext(run_id, clip_id, 1),
+        issues=[
+            Issue(code="narration_mismatch", severity=IssueSeverity.BLOCKING, stage=Stage.EVALUATE_CLIP, message="bad")
+        ],
+    )
+    monkeypatch.setattr("clipfactory.workflow.production_stages.evaluate_semantics", AsyncMock(return_value=evaluation))
+    service.storage.delete = AsyncMock(side_effect=OSError("fixture disk failure"))
+    result = await service.evaluate_clip(
+        {
+            "run_id": str(run_id),
+            "trigger": "run_now",
+            "clip_id": str(clip_id),
+            "story_package_id": str(uuid4()),
+            "attempt": 1,
+        }
+    )
+    service.evaluations.save.assert_called_once_with(evaluation)
+    assert result["last_evaluation_ids"] == [str(evaluation.id)]
+    assert any(call.args[1] == "clip_cleanup_failed" for call in runs.append_event.call_args_list)
+    assert "fixture disk failure" in caplog.text

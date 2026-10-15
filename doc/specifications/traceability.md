@@ -75,7 +75,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-211](07-asset-management.md) | Store generated media for future reuse | `assets` | Unit, Integration | CF-AC-005 | In progress |
 | [CF-REQ-212](07-asset-management.md) | Usage tracking | `assets` | Unit, Integration | CF-AC-005 | Not started |
 | [CF-REQ-213](07-asset-management.md) | Asset status management | `assets` | Unit, Integration | CF-AC-005 | Not started |
-| [CF-REQ-214](07-asset-management.md) | Run-scoped external inputs and working-file retention | `assets.retention`, `workflow.runner`, `workflow.production_stages`, `infrastructure.storage` | Unit, Integration | CF-AC-006 | In progress |
+| [CF-REQ-214](07-asset-management.md) | Run-scoped external inputs and immediate automatic-rejection video cleanup; retained Run/error records | `assets.retention`, `workflow.runner`, `workflow.production_stages`, `infrastructure.storage`, `frontend` | Unit, Integration, Vitest | CF-AC-006 | In progress |
 | [CF-REQ-215](07-asset-management.md) | Real people and generated media [Derived] | `assets`, `planning`, `evaluation` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-216](07-asset-management.md) | Manual asset import | `assets` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-217](07-asset-management.md) | ComfyUI workflow generation | `infrastructure.providers.generation` | Unit (mocked HTTP), Contract | CF-AC-006 | Not started |
@@ -87,8 +87,8 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-252](08-visual-production.md) | Deterministic motion | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-253](08-visual-production.md) | Motion defaults | `planning` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-254](08-visual-production.md) | Transitions | `composition` | Unit | CF-AC-005 | Not started |
-| [CF-REQ-255](08-visual-production.md) | Frame fitting | `composition`, `infrastructure`, `workflow` | Unit, Integration, Manual | CF-AC-005 | Implemented; face-safe cover refinement (2026-10-14), tagged render regressions and isolated Putellas/Yamal/Hayes comparisons verified; unchanged banner, bounded face size and source/version-bound framing; unavailable/ambiguous detection keeps standard fitting with warning |
-| [CF-REQ-256](08-visual-production.md) | Timing reconciliation | `production` | Unit | CF-AC-005 | Implemented (`test_audio_captions.py`, `test_footage_continuation.py`, `test_production_block.py`) |
+| [CF-REQ-255](08-visual-production.md) | Frame fitting | `composition`, `infrastructure`, `workflow` | Unit, Integration, Manual | CF-AC-005 | Implemented; face-safe cover refinement and isolated Putellas/Yamal/Hayes comparisons verified; unchanged banner, bounded face size and source/version-bound framing; unavailable detection now fits the complete still below the banner with warning, verified by real FFmpeg regressions (2026-10-15) |
+| [CF-REQ-256](08-visual-production.md) | Retry-safe timing reconciliation and cumulative footage offsets | `production` | Unit, Integration | CF-AC-005 | Implemented (`test_audio_captions.py`, `test_footage_continuation.py`, `test_production_block.py`); repeated reconciliation preserves split weights and offsets (2026-10-15) |
 | [CF-REQ-257](08-visual-production.md) | Plan gate | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-258](08-visual-production.md) | Beat-aware Shot Intent | `planning`, `production` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-259](08-visual-production.md) | Grounded Editorial Overlays | `planning`, `composition` | Unit, Integration | CF-AC-027 | In progress; deterministic uppercase top-header rendering (owner revision 2026-10-14) covered by case-equivalent PNG regressions; secondary/context casing preserved |
@@ -197,7 +197,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-614](15-ui-and-dashboard.md) | Storyboard and version-bound quality review UI | `frontend`, `api` | Vitest, Playwright, Integration | CF-AC-030–031 | In progress |
 | [CF-REQ-650](16-scheduling-and-runs.md) | Run triggers | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-651](16-scheduling-and-runs.md) | Independent local daily schedule rules | `workflow.scheduler`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | Implemented |
-| [CF-REQ-652](16-scheduling-and-runs.md) | Single active Run | `workflow`, `infrastructure.db` | Unit, Integration, E2E | CF-AC-016 | Not started |
+| [CF-REQ-652](16-scheduling-and-runs.md) | Durable FIFO queue with one executing Run | `workflow`, `infrastructure.db`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | Implemented; unit/API, SQLite concurrency/migration, Vitest and desktop/mobile mocked-API E2E pass; PostgreSQL migration and concurrent FIFO claims verified in an isolated schema (2026-10-15), live application migration deferred to owner restart |
 | [CF-REQ-653](16-scheduling-and-runs.md) | Run snapshot | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-654](16-scheduling-and-runs.md) | Stage execution | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-655](16-scheduling-and-runs.md) | Run failure | `workflow` | Unit, Integration, E2E | CF-AC-009, CF-AC-033 | Not started |

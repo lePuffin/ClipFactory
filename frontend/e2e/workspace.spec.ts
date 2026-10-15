@@ -49,6 +49,50 @@ async function visual(page: Page, info: TestInfo, name: string) {
 }
 test.beforeEach(async ({ page }) => mocks(page));
 
+test("CF-REQ-652 queues Run Now and Manual URL while the current Run keeps executing", async ({ page }, info) => {
+  const orders: { path: string; body: unknown }[] = [];
+  await page.route(/\/api\/runs(?:\/manual-url)?$/, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    orders.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    return route.fulfill({ status: 202, json: { run_id: "12345678-1234-1234-1234-123456789abc", status: "queued" } });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: "Inspect Run" })).toBeVisible();
+  await page.getByLabel("Content Profile", { exact: true }).selectOption("weekly");
+  await expect(page.getByRole("button", { name: "Add to queue", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Add to queue", exact: true }).click();
+  await expect(page.getByText("Run 12345678 queued", { exact: true })).toBeVisible();
+  await page.getByLabel("Manual Source URL").fill("https://news.example/article");
+  await page.getByRole("button", { name: "Start Manual URL Run" }).click();
+  await expect.poll(() => orders.length).toBe(2);
+  expect(orders).toEqual([
+    { path: "/api/runs", body: { profile_id: "weekly" } },
+    { path: "/api/runs/manual-url", body: { url: "https://news.example/article", profile_id: "weekly" } },
+  ]);
+  await expect(page.getByRole("link", { name: "Inspect Run" })).toHaveAttribute("href", "/runs/run-1");
+  await page.route("**/api/runs/active", (route) => route.fulfill({ status: 204 }));
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Run Now", exact: true })).toBeVisible();
+  await visual(page, info, "queued-orders");
+});
+
+test("CF-REQ-214 shows rejected candidate history without loading its discarded video", async ({ page }, info) => {
+  await page.route("**/api/clips/clip-1", (route) => route.fulfill({
+    json: { ...clip, status: "rejected", publications: [] },
+  }));
+  let mediaRequests = 0;
+  await page.route("**/media/fixture.mp4", (route) => {
+    mediaRequests += 1;
+    return route.abort();
+  });
+  await page.goto("/clips/clip-1");
+  await expect(page.getByText("Rejected by evaluation. No video is retained; Run and error records remain available.")).toBeVisible();
+  await expect(page.locator("video")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open source Run" })).toHaveAttribute("href", "/runs/run-1");
+  expect(mediaRequests).toBe(0);
+  await visual(page, info, "discarded-rejected-video");
+});
+
 test("CF-REQ-610 aligns platform names, dots and Published or Not Configured labels", async ({ page }, info) => {
   const fixture = { ...clip, publications: [...["facebook", "instagram", "youtube"].map((platform) => ({
     id: platform, platform, status: "published", mode: "live",

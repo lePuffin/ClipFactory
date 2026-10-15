@@ -493,7 +493,8 @@ describe("ClipFactory operational frontend", () => {
     expect(screen.getAllByText("retired")).toHaveLength(2);
   });
 
-  it("CF-REQ-608 CF-REQ-609 starts Run Now and Manual URL Runs", async () => {
+  it("CF-REQ-652 CF-REQ-608 CF-REQ-609 queues Run Now and Manual URL while another Run executes", async () => {
+    vi.stubGlobal("EventSource", class { close() {} addEventListener() {} removeEventListener() {} });
     const posts: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal(
       "fetch",
@@ -507,7 +508,11 @@ describe("ClipFactory operational frontend", () => {
           posts.push({ url, body: init.body?.toString() });
           return new Response(JSON.stringify({ run_id: "12345678-1234-1234-1234-123456789abc" }), { status: 202 });
         }
-        if (url.endsWith("/api/runs/active")) return new Response(null, { status: 204 });
+        if (url.endsWith("/api/runs/active")) return new Response(JSON.stringify({
+          run_id: "aaaaaaaa-1234-1234-1234-123456789abc", status: "running",
+          trigger: "run_now", current_stage: "research", attempt: 1, revision_retries_used: 0,
+          cost_total: "0.00", created_at: "2026-10-15T08:00:00Z",
+        }), { status: 200 });
         if (url.endsWith("/api/health")) return new Response(JSON.stringify({ status: "healthy", version: "1.0.0", checks: {} }), { status: 200 });
         if (url.endsWith("/api/dashboard/summary")) return new Response(JSON.stringify({ period: "7d", clips_approved: 0, publications: 0, views: 0, estimated_revenue: "0.00" }), { status: 200 });
         if (url.endsWith("/api/budget")) return new Response(JSON.stringify({ currency: "EUR", month_to_date_spend: "0.00", monthly_limit: "30.00", monthly_remaining: "30.00", per_clip_limit: "1.00" }), { status: 200 });
@@ -517,9 +522,11 @@ describe("ClipFactory operational frontend", () => {
     const user = userEvent.setup();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    expect(await screen.findByRole("button", { name: "Run Now" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Add to queue" })).toBeDisabled();
     await user.selectOptions(await screen.findByLabelText("Content Profile"), "football");
-    await user.click(screen.getByRole("button", { name: "Run Now" }));
+    expect(screen.getByRole("button", { name: "Add to queue" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start Manual URL Run" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Add to queue" }));
     expect(await screen.findByText("Run 12345678 queued")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Content Profile"), "world");
     await user.type(screen.getByLabelText("Manual Source URL"), "https://news.example/article");

@@ -234,12 +234,16 @@ Global header: product name, current Run indicator, **Run Now** button,
   API clients omitting the ID retain the most recently updated active profile
   default. A missing selected profile returns 404 `profile_not_found`, never
   silently creating or selecting a default.
-- **Description:** A Run Now button shall start a Run immediately. It is
-  disabled while a Run is active; if the server reports a conflict, the UI
-  shows the active Run link.
+- **Description:** A Run Now button shall submit a Run immediately. While
+  another Run executes, Run Now and Manual URL remain available and persist
+  queued orders under CF-REQ-652. Disable admission only while that submission
+  is pending or no valid profile is selected; display submission errors.
+  The button reads `Add to queue` while an existing Run is queued/running,
+  and `Run Now` when idle. While its request is pending it remains disabled.
 - **Acceptance:**
   - Clicking Run Now while idle navigates to the new Run's detail page.
-  - The API returns 409 when a Run is active (see CF-REQ-652).
+  - While a Run executes, both admission actions accept another order (202)
+    and show the new Run ID as queued (see CF-REQ-652).
   - Choosing a different saved profile changes the Run snapshot without
     changing any saved profile's activation status or schedule.
 
@@ -299,6 +303,10 @@ Global header: product name, current Run indicator, **Run Now** button,
   - Pending approval Clips retain Approve and Reject; every card has an
     icon-only Delete button with an accessible label and confirmation.
   - Unavailable preview media shows an explicit error rather than a blank player.
+  - Automatically rejected candidates retain diagnostic history and source
+    Run links, but display a no-retained-video explanation instead of requesting
+    their deleted media (CF-REQ-214). Declining publication of an approved Clip
+    does not invoke this evaluation-rejection cleanup.
 
 ### CF-REQ-611 — Safe rendering of external text
 

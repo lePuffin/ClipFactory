@@ -7,6 +7,14 @@ any) and keep it behind the stated configuration or provider boundary.
 
 ## Open decisions
 
+Owner-approved serial Run queue (2026-10-15): CF-REQ-652 replaces rejecting
+Run Now/Manual URL and skipping scheduled orders during execution with durable
+FIFO admission. Snapshots are captured when the order is accepted; only one
+Run executes. PostgreSQL locking and a running-only unique index protect
+claiming, with no new queue service. Stop and restart preserve pending work.
+Explicit failed-Run continuation retains CF-REQ-657's existing checkpoint,
+current-settings and active-work conflict safeguards. See ADR-021.
+
 Owner-directed reliability revision (2026-10-14): continue autonomously until
 three fresh Football Runs succeed. Repeated `script_too_short` before a Script
 passes may reveal a Story that passed the early evidence-size proxy but cannot
@@ -51,6 +59,13 @@ timezone with DST, superseding OD-008's fixed Europe/Lisbon scheduling choice.
 An explicitly empty rules list is unscheduled. A configured account prefix
 is an isolation boundary: no fallback to global publishing credentials.
 Legacy profiles without a prefix continue using their global accounts.
+
+Owner rejection retention correction (2026-10-15): automatically rejected
+Clip videos are deleted immediately after recording their technical or
+semantic Evaluation. Run, Clip metadata and error/Retry records remain.
+This supersedes the delayed rejected-file retention setting, not approved
+Clip retention or owner-declined publication. Generated library Assets and
+inputs needed by active retries remain unchanged.
 
 Resolved owner retention conflict (2026-10-11): “external assets from the free
 Pixabay and Pexels etc shouldn't be saved, only generated media should be saved.”

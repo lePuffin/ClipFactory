@@ -18,7 +18,7 @@ state still carries IDs only. See CF-REQ-263–265 and [ADR-019](../decisions/AD
 
 | Component | Responsibility |
 | --- | --- |
-| `RunService` | Creates Runs (enforcing single active Run with a DB lock/partial unique index), snapshots profile/settings, starts the runner |
+| `RunService` | Durably queues Runs with admission-time profile/settings snapshots; DB transaction lock serializes admission/claims and a running-only partial unique index protects execution (CF-REQ-652, ADR-021) |
 | `WorkflowRunner` | Owns the compiled LangGraph graph; runs one Run as an asyncio task; applies stage timeout; converts exceptions to Run failure; resumes interrupted Runs at startup |
 | Graph nodes | One node per `Stage`; each calls exactly one use case and returns a state update |
 | `select_assets` graphics dispatch | Selects the trusted local renderer by typed VisualPlan kind; it does not add a workflow stage or an LLM call |
@@ -116,7 +116,12 @@ plan_retry ──(exhausted or abort)──► END (run_failed)
 
 ## Concurrency and blocking work
 
-- One Run at a time, as one asyncio task.
+- One executing Run at a time, as one asyncio task. Additional orders remain
+  durably queued in PostgreSQL, ordered by `created_at`, then Run ID.
+  Claiming checks for an existing running Run under a transaction advisory lock;
+  the running-only unique index is a final database invariant.
+  The worker awaits execution and cleanup before claiming the next order.
+  Startup recovers the interrupted running Run before draining pending orders.
 - FFmpeg and FFprobe: `asyncio.create_subprocess_exec` via the media runner.
 - Whisper transcription, text extraction and image measurement: `asyncio.to_thread`.
 - Stage timeout: `asyncio.timeout(workflow.stage_timeout_seconds)` around each

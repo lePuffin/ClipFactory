@@ -266,8 +266,12 @@ they do not enter media-provider fallback.
 ### CF-REQ-214 — Retention of working files
 
 - **Description:** Per-Run working files shall be deleted
-  `retention.work_dir_retention_days` after the Run finishes, and rejected
-  Clip files `retention.rejected_clip_retention_days` after rejection.
+  `retention.work_dir_retention_days` after the Run finishes. Owner correction
+  (2026-10-15): automatically rejected Clip candidates are not retained as
+  video files; delete their composed file after persisting the rejection and
+  Evaluation. Retain Run, Clip metadata, Evaluations and Retry history for
+  diagnosis. This supersedes delayed rejected-file retention; it does not
+  delete approved Clips when publication alone is declined by the owner.
   Generated/rendered library Assets, owner-imported files and approved Clips
   are never deleted automatically. External provider files (including stock
   media and Wikimedia/Wikidata portraits) are removed when their owning Run
@@ -287,6 +291,10 @@ they do not enter media-provider fallback.
   The original composed Clip remains playable and publishable.
 - **Acceptance:**
   - A cleanup task with a fake clock removes an 8-day-old work directory and leaves reusable Assets intact.
+  - Technical and semantic evaluation rejection delete only that candidate's
+    composed file, retaining diagnostic records and all inputs needed by Retry.
+    Deletion failures are logged and emitted as Run warnings, never reported
+    as successful cleanup. Rejected previews explain that no video is retained.
   - Run completion, production approval and failure remove only that Run’s
     new external files and retire their rows; generated media and legacy stock
     files remain intact. Cleanup is idempotent.

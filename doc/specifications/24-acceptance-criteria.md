@@ -67,7 +67,10 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
   shots remain still and face height is at most 32% of the output height.
   Normal and saved rendering use source-hash-bound retained
   framing; replaced Assets cannot inherit stale bounds. Ambiguous or missing
-  detection preserves standard fitting and emits a warning.
+  detection fits the complete sharp portrait below the unchanged banner
+  without motion and emits a warning.
+  Reconciliation of an already-split plan during Retry preserves weights
+  and cumulative footage offsets rather than replaying the source.
 - **Requirements:** CF-REQ-204–206, CF-REQ-211–213, CF-REQ-250–257
 - **Verified by:** unit + real FFmpeg portrait integration + E2E-8
 
@@ -190,7 +193,12 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 - Continue Run and Stop dispatch on a single click, without confirmation
   panels; pending actions are disabled and rejected requests show errors.
 
-- With a fake clock, a Run starts at 05:00 in backend host local time exactly once; multiple rules per active profile remain independent; editing/disabling/deleting a rule affects only that rule and deleting the last leaves no schedule; DST gaps/overlaps run once; a missed schedule within grace runs at startup; concurrent triggers produce one Run and a 409; a process kill after `write_script` resumes at `plan_visuals`; stage timeouts fail the Run with `stage_timeout`.
+- With a fake clock, a Run starts at 05:00 in backend host local time exactly once; multiple rules per active profile remain independent; editing/disabling/deleting a rule affects only that rule and deleting the last leaves no schedule; DST gaps/overlaps run once; a missed schedule within grace runs at startup; concurrent triggers durably queue separate Runs with admission-time snapshots, and only one executes; a process kill after `write_script` resumes at `plan_visuals`; stage timeouts fail the Run with `stage_timeout`.
+- Pending Run Now, Manual URL and scheduled orders execute FIFO by creation
+  time and Run ID after the running Run completes, fails or finishes stopping.
+  Stopped queued orders never execute. Restart retains pending orders without
+  duplicate dispatch. `/api/runs?status=queued` exposes FIFO pending work;
+  `/api/runs/active` prefers the executing Run, otherwise the queue head.
 - **Requirements:** CF-REQ-650–660
 - **Verified by:** integration + E2E-5
 
@@ -421,3 +429,9 @@ inputs survive same-Run targeted retries, then are removed and retired at
 production end. Generated files and attribution/source history remain. The
 library excludes removed external inputs; saved re-render reports unavailable
 source inputs while the composed Clip still supports publishing/Retry publish.
+
+Owner rejection correction (2026-10-15), CF-AC-006: technical or semantic
+evaluation rejection immediately removes that candidate's composed video
+after persisting its Evaluation. Run/error records and Retry inputs remain;
+approved Clips and owner-declined Publications are not deleted by this rule.
+Deletion errors appear in logs and Run warnings.

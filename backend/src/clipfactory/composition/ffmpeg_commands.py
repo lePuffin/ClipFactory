@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import ceil
 from pathlib import Path
 
 from clipfactory.composition.spec import CompositionSpec, VisualInput
@@ -203,6 +204,21 @@ def _visual_filter(index: int, segment: VisualInput, spec: CompositionSpec) -> s
     )
     if segment.face_box is not None and segment.media_type == "image":
         fit_filter = _portrait_filter(index, segment, spec, scale)
+    elif segment.is_person_still and segment.media_type == "image":
+        safe_top = _portrait_safe_top(index, spec)
+        safe_bottom = round(spec.height * 0.8)
+        available_height = safe_bottom - safe_top
+        if available_height <= 0:
+            raise ValueError("top overlays leave no face-safe portrait area")
+        factor = min(spec.width / segment.width, available_height / segment.height)
+        width = max(2, int(segment.width * factor / 2) * 2)
+        height = max(2, int(segment.height * factor / 2) * 2)
+        fit_filter = (
+            f"split[bg{index}][fg{index}];[bg{index}]{scale},"
+            f"boxblur=24:2,eq=brightness=-0.20[blur{index}];"
+            f"[fg{index}]scale={width}:{height}[fit{index}];"
+            f"[blur{index}][fit{index}]overlay=x={(spec.width - width) // 2}:y={safe_top}"
+        )
     elif segment.width / segment.height >= 1.0:
         fit_filter = "".join(
             [
@@ -234,7 +250,9 @@ def _visual_filter(index: int, segment: VisualInput, spec: CompositionSpec) -> s
     else:
         fit_filter = scale
     duration = _render_duration(spec, index)
-    motion = _motion_filter("none" if segment.face_box is not None else segment.motion, spec, duration)
+    motion = _motion_filter(
+        "none" if segment.face_box is not None or segment.is_person_still else segment.motion, spec, duration
+    )
     hold = "tpad=stop_mode=clone:stop_duration=1," if segment.media_type == "video" else ""
     label = (
         "".join(
@@ -271,10 +289,7 @@ def _visual_filter(index: int, segment: VisualInput, spec: CompositionSpec) -> s
     )
 
 
-def _portrait_filter(index: int, segment: VisualInput, spec: CompositionSpec, background: str) -> str:
-    face = segment.face_box
-    if face is None:
-        raise ValueError("portrait fitting requires face bounds")
+def _portrait_safe_top(index: int, spec: CompositionSpec) -> int:
     start = sum(item.duration_seconds for item in spec.segments[:index])
     end = start + _render_duration(spec, index)
     banner_bottom = max(
@@ -285,7 +300,14 @@ def _portrait_filter(index: int, segment: VisualInput, spec: CompositionSpec, ba
         ),
         default=spec.height * 0.25,
     )
-    safe_top = max(spec.height * 0.28, banner_bottom + spec.height * 0.03)
+    return 2 * (ceil(max(spec.height * 0.28, banner_bottom + spec.height * 0.03) / 2) + 1)
+
+
+def _portrait_filter(index: int, segment: VisualInput, spec: CompositionSpec, background: str) -> str:
+    face = segment.face_box
+    if face is None:
+        raise ValueError("portrait fitting requires face bounds")
+    safe_top = _portrait_safe_top(index, spec)
     if safe_top >= spec.height * 0.8:
         raise ValueError("top overlays leave no face-safe portrait area")
     cover = max(spec.width / segment.width, spec.height / segment.height)

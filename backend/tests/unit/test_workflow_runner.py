@@ -65,6 +65,123 @@ def repository(tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["completed", "failed", "stopped"])
+async def test_worker_drains_fifo_after_terminal_or_stop_without_duplicate_dispatch(repository, ending) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    drained = asyncio.Event()
+    calls: list[str] = []
+
+    class Graph(FakeGraph):
+        async def ainvoke(self, input, config=None, **kwargs):
+            calls.append(config["configurable"]["thread_id"])
+            if len(calls) == 1:
+                entered.set()
+                await release.wait()
+                if ending == "failed":
+                    raise StageFailure("no_candidates", "No candidate")
+            return {"outcome": "not_published"}
+
+    ids = [
+        UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"]) for _ in range(3)
+    ]
+
+    async def cleanup(run_id):
+        if run_id == ids[2]:
+            drained.set()
+
+    runner = WorkflowRunner(
+        repository, Graph(), clock=lambda: NOW, default_stage_timeout_seconds=1, cleanup_run=cleanup
+    )
+    lifecycle = RunLifecycleService(runner, scheduler_enabled=False, poll_interval_seconds=0.001)
+    await runner.stop_run(ids[1])
+    await lifecycle.start()
+    try:
+        async with asyncio.timeout(5):
+            await entered.wait()
+            await lifecycle.start()  # Repeated startup must not spawn another worker.
+            assert await runner.run_next() is False
+            assert repository.get(ids[2])["status"] == "queued"
+            if ending == "stopped":
+                await runner.stop_run(ids[0])
+            else:
+                release.set()
+            await drained.wait()
+            assert repository.get(ids[2])["status"] == "completed"
+        assert calls == [str(ids[0]), str(ids[2])]
+        assert repository.get(ids[1])["failure_code"] == "owner_stopped"
+        first = repository.get(ids[0])
+        assert first["status"] == ("completed" if ending == "completed" else "failed")
+        if ending == "stopped":
+            assert first["failure_code"] == "owner_stopped"
+        assert lifecycle.worker_alive
+    finally:
+        await lifecycle.stop()
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-657")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [True, False])
+async def test_restart_recovers_running_before_dispatching_durable_queue(repository, resume) -> None:
+    first = repository.create(
+        RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={"workflow": {"resume_interrupted_runs": resume}}
+    )
+    repository.claim_next_queued(NOW)
+    second = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={"frozen": True})
+    graph = FakeGraph()
+    prepared = []
+    restarted = WorkflowRunner(
+        RunRepository(repository.sessions),
+        graph,
+        clock=lambda: NOW,
+        default_stage_timeout_seconds=1,
+        prepare_run=prepared.append,
+    )
+    await restarted.recover_interrupted()
+    assert repository.get(UUID(first["run_id"]))["status"] == ("completed" if resume else "failed")
+    assert repository.get(UUID(second["run_id"]))["status"] == "queued"
+    assert await restarted.run_next() is True
+    assert await restarted.run_next() is False
+    assert graph.inputs == ([None] if resume else []) + [
+        {"run_id": second["run_id"], "trigger": "run_now", "attempt": 1}
+    ]
+    assert prepared[-1] == {"frozen": True}
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.asyncio
+async def test_next_run_waits_until_execution_cleanup_finishes(repository) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def cleanup(_):
+        entered.set()
+        await release.wait()
+
+    for _ in range(2):
+        repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    runner = WorkflowRunner(
+        repository, FakeGraph(), clock=lambda: NOW, default_stage_timeout_seconds=1, cleanup_run=cleanup
+    )
+    task = asyncio.create_task(runner.run_next())
+    try:
+        async with asyncio.timeout(5):
+            await entered.wait()
+            assert await runner.run_next() is False
+            assert len(repository.list(status="queued")) == 1
+    finally:
+        release.set()
+        await task
+    assert await runner.run_next() is True
+
+
+@pytest.mark.unit
 @pytest.mark.req("CF-REQ-411")
 def test_retry_counters_and_event_are_persisted_once(repository) -> None:
     created = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})

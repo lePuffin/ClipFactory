@@ -441,6 +441,19 @@ describe("ClipFactory production pages", () => {
     expect(screen.queryByText(`${duration} sec`)).not.toBeInTheDocument();
   });
 
+  it("CF-REQ-214 CF-REQ-610 retains rejected Run links without requesting a deleted video", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/budget" ? { currency: "EUR" } : { items: [{
+        id: "clip-rejected", run_id: "run-rejected", status: "rejected", story_title: "Rejected candidate",
+        created_at: "2026-10-15", cost_total: "0", publications: [],
+        preview: { media_url: "/api/clips/clip-rejected/media", duration_seconds: 60, width: 720, height: 1280, fps: 30 },
+      }], total: 1 }), { status: 200 })));
+    const { container } = render(<MemoryRouter initialEntries={["/clips"]}><App /></MemoryRouter>);
+    expect(await screen.findByText("Rejected by evaluation. No video is retained; Run and error records remain available.")).toBeInTheDocument();
+    expect(container.querySelector("video")).toBeNull();
+    expect(screen.getByRole("link", { name: "Rejected candidate" })).toHaveAttribute("href", "/clips/clip-rejected");
+  });
+
   it("CF-REQ-610 reports unavailable Clip media and clears the error when metadata loads", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input) === "/api/budget" ? { currency: "EUR" } : { items: [{

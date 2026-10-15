@@ -1,13 +1,14 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 
 from clipfactory.domain.models import RunTrigger
 from clipfactory.infrastructure.db.base import Base
-from clipfactory.infrastructure.db.models import LLMRequestRow
-from clipfactory.infrastructure.db.repositories import ActiveRunConflict, RunRepository
+from clipfactory.infrastructure.db.models import ContentProfileRow, LLMRequestRow, RunRow
+from clipfactory.infrastructure.db.repositories import RunRepository
 from clipfactory.infrastructure.db.session import create_session_factory
 from clipfactory.ports.runs import LLMBudgetExhausted
 
@@ -48,10 +49,60 @@ def test_run_detail_exposes_the_manual_url_for_url_ingestion(repository) -> None
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-652")
-def test_run_repository_rejects_a_second_active_run(repository) -> None:
-    repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
-    with pytest.raises(ActiveRunConflict):
-        repository.create(RunTrigger.MANUAL_URL, manual_url="https://news.example/story", settings_snapshot={})
+def test_run_repository_queues_manual_order_behind_executing_run(repository) -> None:
+    first = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    now = datetime.now(UTC)
+    repository.claim_next_queued(now)
+    second = repository.create(
+        RunTrigger.MANUAL_URL, manual_url="https://news.example/story", settings_snapshot={"saved": True}
+    )
+    assert second["status"] == "queued"
+    assert repository.active()["run_id"] == first["run_id"]
+    assert repository.claim_next_queued(now) is None
+    repository.complete(UUID(first["run_id"]), "not_published", None, now)
+    claimed = repository.claim_next_queued(now)
+    assert claimed["run_id"] == second["run_id"]
+    assert claimed["settings_snapshot"] == {"saved": True}
+    assert repository.get(UUID(second["run_id"]))["manual_url"] == "https://news.example/story"
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-653")
+def test_concurrent_admission_and_claims_are_serialized_and_fifo(repository) -> None:
+    def create(_):
+        return repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={"frozen": True})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        created = list(pool.map(create, range(2)))
+    assert len({run["run_id"] for run in created}) == 2
+    now = datetime.now(UTC)
+    # Force a creation-time tie to exercise the documented UUID ordering.
+    with repository.sessions.begin() as session:
+        for run in session.scalars(select(RunRow)):
+            run.created_at = now
+        for profile in session.scalars(select(ContentProfileRow)):
+            profile.value = {**profile.value, "name": "Changed after admission"}
+    expected = sorted(run["run_id"] for run in created)
+    assert [run["run_id"] for run in repository.list(status="queued")] == expected
+
+    def claim(_):
+        return repository.claim_next_queued(now)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claimed = list(pool.map(claim, range(2)))
+    assert sum(run is not None for run in claimed) == 1
+    first = next(run for run in claimed if run is not None)
+    assert first["run_id"] == expected[0]
+    assert first["settings_snapshot"] == {"frozen": True}
+    assert repository.get(UUID(first["run_id"]))["profile_snapshot"]["name"] != "Changed after admission"
+    repository.fail(UUID(expected[0]), "research", "internal_error", "Failure", now)
+    # A new repository instance sees and claims durable pending work.
+    restarted = RunRepository(repository.sessions)
+    next_run = restarted.claim_next_queued(now)
+    assert next_run is not None
+    assert next_run["run_id"] == expected[1]
+    assert restarted.claim_next_queued(now) is None
 
 
 @pytest.mark.unit
