@@ -13,7 +13,10 @@ Run executes. The previous queued-or-running constraint forbids that behavior.
 Persist each accepted order as a queued Run with its selected profile,
 Manual URL and effective settings snapshots. Use the existing PostgreSQL
 database and in-process worker, not a second durable store or queue service.
-Dispatch in ascending creation-time order, with Run ID breaking ties.
+Dispatch in ascending admission-time order, with Run ID breaking ties.
+For new Runs admission is creation time. For failed-Run continuations it is
+the latest persisted `run_resumed` event time, preserving original creation
+timestamps without adding another durable queue or schema field.
 
 Serialize admission and claiming with a PostgreSQL transaction advisory lock.
 Before claiming, check that no Run is running; retain a partial unique index
@@ -23,8 +26,11 @@ write transaction in place of the advisory lock.
 The single worker awaits the owned Run task, including stop/terminal cleanup,
 before dispatching again. Startup handles the interrupted running Run before
 claiming pending orders. Queued cancellation removes only that order from
-execution. Explicit failed-Run continuation retains CF-REQ-657's safeguards;
-it is not a fresh trigger and does not bypass its active-work conflict.
+execution. Owner extension (2026-10-15): explicit failed-Run continuation joins
+the queue behind previously admitted work instead of rejecting active work.
+It retains CF-REQ-657's checkpoint, retry-reset, snapshot and publication
+safeguards. The failed-to-queued transition uses the same admission lock;
+duplicate continuation cannot reset queue position or retries again.
 
 The existing Run APIs expose pending orders via the queued status filter
 in FIFO order. The active endpoint returns the executing Run when present,

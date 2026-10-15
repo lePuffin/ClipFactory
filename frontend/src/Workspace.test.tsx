@@ -196,6 +196,35 @@ it("CF-REQ-607 reports name conflicts without discarding the profile draft", asy
   expect(screen.getByLabelText("New profile name")).toHaveValue("Daily");
 });
 
+it("CF-REQ-607 CF-REQ-208 saves generation-provider checkboxes without losing fallback order or empty lists", async () => {
+  let saved: ContentProfileItem = {
+    id: "one", name: "Daily", is_active: true, updated_at: run.created_at,
+    profile: { ...profile, generation: { image_providers: ["higgsfield", "comfyui"], video_providers: ["wan_local", "legacy_provider"] } },
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "PUT") {
+      saved = { ...saved, ...JSON.parse(String(init.body)) as Partial<ContentProfileItem> };
+      return response(saved);
+    }
+    return response(String(input) === "/api/content-profile" ? saved.profile : { items: [saved] });
+  }));
+  const user = userEvent.setup(); page("/profile");
+  const images = within(await screen.findByRole("group", { name: "Image Providers" }));
+  const videos = within(screen.getByRole("group", { name: "Video Providers" }));
+  expect(images.getAllByRole("checkbox")).toHaveLength(2);
+  expect(images.getByRole("checkbox", { name: "Higgsfield" })).toBeChecked();
+  expect(images.queryByRole("checkbox", { name: "Wan Local" })).not.toBeInTheDocument();
+  expect(videos.getByRole("checkbox", { name: "Wan Local" })).toBeChecked();
+  expect(videos.getByRole("checkbox", { name: "legacy_provider (unrecognized)" })).toBeChecked();
+  await user.click(videos.getByRole("checkbox", { name: "ComfyUI" }));
+  await user.click(videos.getByRole("checkbox", { name: "legacy_provider (unrecognized)" }));
+  await user.click(images.getByRole("checkbox", { name: "Higgsfield" }));
+  await user.click(images.getByRole("checkbox", { name: "ComfyUI" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Content Profile saved.");
+  expect(saved.profile.generation).toEqual({ image_providers: [], video_providers: ["wan_local", "comfyui"] });
+});
+
 it("CF-REQ-607 shows an active-profile deletion conflict without removing the saved profile", async () => {
   vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.method === "DELETE" ? response({ error: { code: "active_profile_delete_forbidden", message: "The active profile cannot be deleted." } }, 409) : response({ items: [{ id: "one", name: "Daily", is_active: false, updated_at: run.created_at, profile }] })));
   const user = userEvent.setup(); page("/profile");

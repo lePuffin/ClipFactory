@@ -176,6 +176,11 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 ### CF-AC-015 — Manual URL
 
 - Submitting a valid fixture URL runs `ingest_url` then the normal pipeline to an approved Clip; private/loopback/non-HTTP URLs are rejected with 422; excluded-topic warnings do not block.
+- The shared Run Now/Add to queue button uses the selected profile for both
+  automatic and Manual URL Runs. Blank URL selects automatic research; a
+  valid URL selects Manual URL ingestion, including submission with Enter.
+  Invalid URLs are blocked before submission; failures retain input for
+  correction and successful admission clears it. No separate URL button exists.
 - **Requirements:** CF-REQ-609, CF-REQ-700–703
 - **Verified by:** E2E-4
 
@@ -183,8 +188,10 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
 
 - After correcting an operational error, Continue Run resumes the failed
   checkpoint with current settings without repeating completed stages.
-  Active-run conflicts, missing checkpoints and publication
-  failures are rejected explicitly; failure history and costs are retained.
+  Missing checkpoints and publication failures are rejected explicitly;
+  failure history and costs are retained. If another Run is running or
+  queued, continuation joins the queue behind existing orders, without
+  interrupting work or repeating admission of the same Run.
   Explicit continuation resets used revision retries to zero, including an
   exhausted Run at `plan_retry`, while preserving historical Attempt numbers,
   previous retry counts in events, costs and durable generation usage.
@@ -194,8 +201,10 @@ PostgreSQL, Dragonfly and FFmpeg real, publishing mode `dry_run`.
   panels; pending actions are disabled and rejected requests show errors.
 
 - With a fake clock, a Run starts at 05:00 in backend host local time exactly once; multiple rules per active profile remain independent; editing/disabling/deleting a rule affects only that rule and deleting the last leaves no schedule; DST gaps/overlaps run once; a missed schedule within grace runs at startup; concurrent triggers durably queue separate Runs with admission-time snapshots, and only one executes; a process kill after `write_script` resumes at `plan_visuals`; stage timeouts fail the Run with `stage_timeout`.
-- Pending Run Now, Manual URL and scheduled orders execute FIFO by creation
-  time and Run ID after the running Run completes, fails or finishes stopping.
+- Pending Run Now, Manual URL, scheduled orders and failed-Run continuations
+  execute FIFO by admission time and Run ID after the running Run completes,
+  fails or finishes stopping. Continuation uses its latest `run_resumed`
+  event time, preserving the Run's original creation time.
   Stopped queued orders never execute. Restart retains pending orders without
   duplicate dispatch. `/api/runs?status=queued` exposes FIFO pending work;
   `/api/runs/active` prefers the executing Run, otherwise the queue head.

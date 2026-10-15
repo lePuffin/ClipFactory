@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -260,6 +260,36 @@ def test_continue_api_passes_current_settings_and_returns_same_run_id() -> None:
     assert response.json()["run_id"] == str(rid)
     assert captured[0][0] == rid
     assert "environment" in captured[0][1]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-657")
+def test_continue_api_queues_behind_running_and_pending_runs(run_client) -> None:
+    _, repository = run_client
+    rid = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
+    now = datetime.now(UTC)
+    repository.claim_next_queued(now)
+    repository.fail(rid, "select_assets", "stage_timeout", "Failure", now)
+    active = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    repository.claim_next_queued(now)
+    pending = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    now = datetime.fromisoformat(pending["created_at"]) + timedelta(seconds=1)
+
+    async def resume(run_id, snapshot):
+        return repository.continue_failed(run_id, settings_snapshot=snapshot, expected_stage="select_assets", now=now)
+
+    client = TestClient(create_app(_settings(), continue_run=resume, run_reader=repository))
+    response = client.post(f"/api/runs/{rid}/continue")
+    assert response.status_code == 202
+    assert response.json() == {"run_id": str(rid)}
+    assert client.get(f"/api/runs/{rid}").json()["status"] == "queued"
+    assert client.get("/api/runs/active").json()["run_id"] == active["run_id"]
+    assert [run["run_id"] for run in client.get("/api/runs?status=queued").json()["items"]] == [
+        pending["run_id"],
+        str(rid),
+    ]
+    assert client.post(f"/api/runs/{rid}/continue").status_code == 409
 
 
 @pytest.mark.unit

@@ -12,8 +12,10 @@ Run Now/Manual URL and skipping scheduled orders during execution with durable
 FIFO admission. Snapshots are captured when the order is accepted; only one
 Run executes. PostgreSQL locking and a running-only unique index protect
 claiming, with no new queue service. Stop and restart preserve pending work.
-Explicit failed-Run continuation retains CF-REQ-657's existing checkpoint,
-current-settings and active-work conflict safeguards. See ADR-021.
+Owner extension (2026-10-15): explicit failed-Run continuation joins the same
+queue at continuation time, retaining CF-REQ-657's checkpoint, current-settings,
+retry-reset and publication safeguards, but no active-work admission conflict.
+See ADR-021.
 
 Owner-directed reliability revision (2026-10-14): continue autonomously until
 three fresh Football Runs succeed. Repeated `script_too_short` before a Script

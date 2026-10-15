@@ -72,7 +72,9 @@ Run Events, API and UI.
 - **Behaviour:** Run Now, Manual URL and scheduled triggers persist their
   selected profile/settings snapshots and queue behind existing work rather
   than returning an active-Run conflict or skipping a scheduled order.
-  Dispatch is FIFO by creation time with Run ID as a deterministic tie-breaker.
+  Failed-Run continuations also join the queue, retaining their Run ID.
+  Dispatch is FIFO by admission time (creation for new Runs, latest
+  `run_resumed` event for continuations), with Run ID as a deterministic tie-breaker.
   Once the executing Run completes, fails or finishes stopping, the next
   queued Run starts. Queued work survives application restart.
 - **Acceptance:**
@@ -82,6 +84,8 @@ Run Events, API and UI.
   - Stopping a queued Run never starts it; stopping/failing the running Run
     releases execution to the next queued Run without concurrent execution.
   - Restart recovery preserves pending work and never dispatches a Run twice.
+  - Continuing a failed Run while another runs or waits appends it behind
+    previously accepted orders without interrupting execution.
 
 ### CF-REQ-653 — Run snapshot
 
@@ -166,7 +170,11 @@ Run Events, API and UI.
   resumption does not reset retries. Costs and durable generation allowances
   are never reset. Failures at publication are rejected; outcomes must be checked
   separately to avoid duplicate uploads. Missing checkpoints return a clear
-  conflict rather than restarting research. Concurrent Runs remain forbidden.
+  conflict rather than restarting research. Owner revision (2026-10-15):
+  continuation is accepted while other Runs are running or queued and joins
+  the FIFO queue at continuation time. Only execution is exclusive; repeated
+  continuation of an already queued/running Run is rejected without resetting
+  its position or retries again. Original creation time is preserved.
   The UI exposes single-click Continue Run on failed records without a
   confirmation panel, explains current-settings use in its button title,
   disables pending actions and displays rejection errors. Stop likewise

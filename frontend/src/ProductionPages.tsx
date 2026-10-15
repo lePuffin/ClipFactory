@@ -676,7 +676,24 @@ function ClipCard({ clip, currency, onModified }: { clip: Clip; currency: string
 }
 
 function ClipDetail({ clip, currency, onChanged }: { clip: Clip; currency: string | null; onChanged: () => void }) {
-  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{Math.round(clip.preview.duration_seconds)} sec · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onChanged} /></section></div>;
+  return <div className="clip-detail"><section className="section-block clip-detail-preview"><ClipPreview clip={clip} /><div className="clip-facts"><span>{formatCost(clip.cost_total, currency)}</span><span>{Math.round(clip.preview.duration_seconds)} sec · {clip.preview.width}×{clip.preview.height} · {clip.preview.fps} fps</span><NavLink className="text-link" to={`/runs/${clip.run_id}`}>Open source Run <ArrowUpRight size={14} /></NavLink></div></section><div className="clip-detail-copy"><section className="section-block publication-panel"><div className="section-head"><div><div className="eyebrow">DISTRIBUTION</div><h2>Publications</h2></div><RetryPublishButton clip={clip} onRetried={onChanged} /></div><PublicationList clip={clip} /><ClipActions clip={clip} onModified={onChanged} /></section><ClipCaption clip={clip} /></div></div>;
+}
+
+function ClipCaption({ clip }: { clip: Clip }) {
+  const metadata = record(clip.social_metadata);
+  const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+  const hashtags = strings(metadata.hashtags).map((tag) => `#${tag.replace(/^#+/, "")}`).join(" ");
+  const credits = strings(metadata.asset_attributions);
+  const caption = [
+    text(metadata.description), hashtags,
+    metadata.contains_synthetic_media === true || metadata.synthetic_voice === true ? "Contains synthetic media and/or voice." : "",
+    credits.length ? `Credits: ${credits.join("; ")}` : "",
+  ].filter(Boolean).join("\n\n");
+  return <section className="section-block clip-caption" aria-labelledby="clip-caption-title">
+    <div className="section-head"><div><div className="eyebrow">POST TEXT</div><h2 id="clip-caption-title">Caption</h2></div></div>
+    {caption ? <p className="clip-caption-text">{caption}</p> : <Empty message="No caption recorded for this Clip." />}
+    <p className="form-message">Saved Clip caption. Platform formatting and discovery hashtags added at publication may differ.</p>
+  </section>;
 }
 
 function RetryPublishButton({ clip, onRetried }: { clip: Clip; onRetried: () => void }) {
@@ -774,6 +791,16 @@ const listFields: Record<string, EditorValue> = {
   "research.blocked_publishers": [],
 };
 
+const generationProviderOptions: Record<string, { value: string; label: string }[]> = {
+  "generation.image_providers": [
+    { value: "comfyui", label: "ComfyUI" }, { value: "higgsfield", label: "Higgsfield" },
+  ],
+  "generation.video_providers": [
+    { value: "comfyui", label: "ComfyUI" }, { value: "wan_local", label: "Wan Local" },
+    { value: "higgsfield", label: "Higgsfield" },
+  ],
+};
+
 function ObjectEditor({ value, onChange, errors, prefix = "", collapsibleGroups = false }: { value: EditorObject; onChange: (value: EditorObject) => void; errors: Record<string, string>; prefix?: string; collapsibleGroups?: boolean }) {
   return <div className="object-editor">{Object.entries(value).map(([key, item]) => {
     const path = prefix ? `${prefix}.${key}` : key;
@@ -783,6 +810,23 @@ function ObjectEditor({ value, onChange, errors, prefix = "", collapsibleGroups 
       return collapsibleGroups ? <Collapsible key={key} title={humanize(key)} level={3} className="settings-group nested-group">{nested}</Collapsible> : <fieldset key={key}><legend>{humanize(key)}</legend>{nested}</fieldset>;
     }
     const id = `field-${path.replaceAll(".", "-")}`;
+    const providers = generationProviderOptions[path];
+    if (providers) {
+      const selected = Array.isArray(item) ? item.filter((entry): entry is string => typeof entry === "string") : [];
+      const options = [...providers, ...selected.filter((entry) => !providers.some((option) => option.value === entry))
+        .map((entry) => ({ value: entry, label: `${entry} (unrecognized)` }))];
+      return <fieldset key={key} className="platform-options" aria-describedby={`${id}-help`}>
+        <legend>{humanize(key)}</legend>
+        {options.map((provider) => <label className="checkbox-field" key={provider.value}>
+          <input type="checkbox" checked={selected.includes(provider.value)} onChange={(event) => onChange({
+            ...value, [key]: event.target.checked ? [...selected, provider.value] : selected.filter((entry) => entry !== provider.value),
+          })} />
+          {provider.label}
+        </label>)}
+        <small id={`${id}-help`}>Fallback order: {selected.join(" → ") || "None selected"}. Newly selected providers are tried last. Providers not enabled in the environment are skipped.</small>
+        {errors[path] && <span className="field-error" role="alert">{errors[path]}</span>}
+      </fieldset>;
+    }
     if (path === "platforms") {
       const selected = Array.isArray(item) ? item : [];
       return <fieldset key={key} className="platform-options"><legend>Platforms</legend>

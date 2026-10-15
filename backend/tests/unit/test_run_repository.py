@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -10,7 +10,7 @@ from clipfactory.infrastructure.db.base import Base
 from clipfactory.infrastructure.db.models import ContentProfileRow, LLMRequestRow, RunRow
 from clipfactory.infrastructure.db.repositories import RunRepository
 from clipfactory.infrastructure.db.session import create_session_factory
-from clipfactory.ports.runs import LLMBudgetExhausted
+from clipfactory.ports.runs import LLMBudgetExhausted, RunContinuationConflict
 
 
 @pytest.fixture
@@ -103,6 +103,42 @@ def test_concurrent_admission_and_claims_are_serialized_and_fifo(repository) -> 
     assert next_run is not None
     assert next_run["run_id"] == expected[1]
     assert restarted.claim_next_queued(now) is None
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-657")
+def test_concurrent_continuation_is_admitted_once_and_latest_admission_controls_fifo(repository) -> None:
+    rid = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
+    now = datetime.now(UTC)
+    repository.claim_next_queued(now)
+    repository.fail(rid, "select_assets", "stage_timeout", "Failure", now)
+    pending = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    now = datetime.fromisoformat(pending["created_at"]) + timedelta(seconds=1)
+
+    def resume(_):
+        try:
+            return repository.continue_failed(rid, settings_snapshot={}, expected_stage="select_assets", now=now)
+        except RunContinuationConflict:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(resume, range(2)))
+    assert sum(result is not None for result in results) == 1
+    assert len([event for event in repository.get(rid)["events"] if event["type"] == "run_resumed"]) == 1
+    assert repository.active()["run_id"] == pending["run_id"]
+    assert repository.claim_next_queued(now)["run_id"] == pending["run_id"]
+    repository.complete(UUID(pending["run_id"]), "not_published", None, now)
+    assert repository.claim_next_queued(now)["run_id"] == str(rid)
+    repository.fail(rid, "select_assets", "stage_timeout", "Failure again", now)
+    next_pending = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    # Keep a pending order between the first and second continuation times.
+    with repository.sessions.begin() as session:
+        session.get(RunRow, UUID(next_pending["run_id"])).created_at = now + timedelta(seconds=1)
+    now += timedelta(seconds=2)
+    repository.continue_failed(rid, settings_snapshot={}, expected_stage="select_assets", now=now)
+    assert [run["run_id"] for run in repository.list(status="queued")] == [next_pending["run_id"], str(rid)]
+    assert len([event for event in repository.get(rid)["events"] if event["type"] == "run_resumed"]) == 2
 
 
 @pytest.mark.unit
