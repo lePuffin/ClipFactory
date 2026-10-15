@@ -383,6 +383,7 @@ def _aggregate(rows: list[MetricSnapshotRow], platform: str | None) -> dict[str,
     selected = [row for row in rows if platform is None or row.platform == platform]
     return {
         "platform": platform or "overall",
+        "latest_captured_at": max((row.captured_at for row in selected), default=None),
         **{
             name: sum((getattr(row, name) or 0) for row in selected)
             for name in ("views", "likes", "comments", "shares", "watch_time_seconds")

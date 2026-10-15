@@ -65,6 +65,9 @@ Scheduling: [16-scheduling-and-runs.md](16-scheduling-and-runs.md).
   and overall totals for a period (7 d, 30 d, all), per-Clip latest metrics,
   and per-Publication snapshot time series.
 - **Behaviour:** Aggregates use the latest snapshot per Publication.
+  Each platform and overall aggregate includes `latest_captured_at`, the
+  newest actual snapshot capture time contributing to that aggregate, or
+  `null` when no snapshots contribute. This is not the API request time.
 - **Acceptance:**
   - Two snapshots for one Publication (1 h: 100 views, 24 h: 900 views) contribute 900 views to totals.
 - **Related:** CF-REQ-603

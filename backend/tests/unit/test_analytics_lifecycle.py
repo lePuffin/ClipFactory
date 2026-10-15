@@ -7,8 +7,27 @@ import pytest
 
 from clipfactory.analytics.service import MetricCollector
 from clipfactory.domain.models import Platform
+from clipfactory.infrastructure.db.models import MetricSnapshotRow
+from clipfactory.infrastructure.db.publishing_repository import _aggregate
 from clipfactory.ports.publishing import PlatformMetrics
 from clipfactory.workflow.lifecycle_scheduler import LifecycleScheduler
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-505")
+def test_summary_capture_time_uses_newest_contributing_snapshot_per_platform() -> None:
+    earlier = datetime(2026, 10, 14, 12, tzinfo=UTC)
+    later = datetime(2026, 10, 15, 18, tzinfo=UTC)
+    rows = [
+        MetricSnapshotRow(platform="youtube", captured_at=later),
+        MetricSnapshotRow(platform="youtube", captured_at=earlier),
+        MetricSnapshotRow(platform="instagram", captured_at=earlier),
+    ]
+
+    assert _aggregate(rows, "youtube")["latest_captured_at"] == later
+    assert _aggregate(rows, "instagram")["latest_captured_at"] == earlier
+    assert _aggregate(rows, None)["latest_captured_at"] == later
+    assert _aggregate([], None)["latest_captured_at"] is None
 
 
 class MetricStore:

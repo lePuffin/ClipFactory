@@ -76,6 +76,12 @@ one **Run Now** button, a Content Profile selector and optional Manual Source UR
 
 ### CF-REQ-603 — Analytics page
 
+- **Owner revision (16 October):** Each analytics summary card displays
+  "Latest snapshot captured" with its aggregate's `latest_captured_at` in
+  local time, including the timezone. Missing capture times show `n/a`.
+  The label describes the newest contributing snapshot, not a simultaneous
+  refresh of every Publication or the time the page was loaded.
+
 - **Description:** The analytics page shall show per-platform and total
   views, likes, comments, shares, watch time, retention and estimated revenue
   for 7 d / 30 d / all, and a time series per Publication. Estimated revenue
@@ -276,6 +282,10 @@ one **Run Now** button, a Content Profile selector and optional Manual Source UR
 - **Related:** CF-REQ-700
 
 ### CF-REQ-610 — Clips page
+
+- **Owner revision (15 October):** Each Publication's latest comment count
+  appears beside views and likes on Clip cards and Clip details. Missing
+  comment counts display `n/a`; a reported zero displays `0`.
 
 - **Owner revision (14 October):** Disabled platforms remain hidden; only
   actual Publications are displayed. Published labels use green

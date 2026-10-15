@@ -75,20 +75,29 @@ describe("ClipFactory production pages", () => {
     expect(screen.queryByText("uv run clipfactory branding branding/global-news-english")).not.toBeInTheDocument();
   });
 
-  it("CF-REQ-502 CF-REQ-503 CF-REQ-504 CF-REQ-505 CF-REQ-603 renders analytics without inventing missing metrics", async () => {
+  it.each(["2026-10-15T18:35:00Z", null])("CF-REQ-502 CF-REQ-503 CF-REQ-504 CF-REQ-505 CF-REQ-603 renders analytics with actual capture time %s", async (capturedAt) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       period: "7d",
       items: [{
         platform: "youtube", views: 1200, likes: 42, comments: null, shares: null,
         watch_time_seconds: 3400, average_retention_ratio: null, estimated_revenue: "1.25",
         revenue_currency: "USD", revenue_by_basis: { rpm_estimate: "1.25" },
+        latest_captured_at: capturedAt,
       }],
     }), { status: 200 })));
 
     render(<MemoryRouter initialEntries={["/analytics"]}><App /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeInTheDocument();
-    expect(screen.getAllByText("n/a")).toHaveLength(3);
+    expect(screen.getAllByText("n/a")).toHaveLength(capturedAt ? 3 : 4);
+    expect(screen.getByText("Latest snapshot captured")).toBeInTheDocument();
+    if (capturedAt) {
+      const timestamp = screen.getByText(new Intl.DateTimeFormat("en-GB", {
+        year: "numeric", month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+      }).format(new Date(capturedAt)));
+      expect(timestamp).toHaveAttribute("datetime", capturedAt);
+    }
     expect(screen.getByText("Estimated revenue")).toBeInTheDocument();
     expect(screen.getByText("USD 1.25")).toBeInTheDocument();
     expect(screen.getByText(/Rpm Estimate: 1.25/)).toBeInTheDocument();
@@ -502,7 +511,11 @@ describe("ClipFactory production pages", () => {
     expect(screen.queryByRole("button", { name: "Approve Missing media" })).not.toBeInTheDocument();
   });
 
-  it("CF-REQ-610 CF-REQ-612 lists Clips with previews, cost, Publications, links, and metrics", async () => {
+  it.each([
+    { comments: 1234, expected: "1,234 comments" },
+    { comments: 0, expected: "0 comments" },
+    { comments: null, expected: "n/a comments" },
+  ])("CF-REQ-610 CF-REQ-612 lists Clips with previews, cost, Publications, links, and metrics ($expected)", async ({ comments, expected }) => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input) === "/api/budget" ? {
       currency: "EUR", month_to_date_spend: "12.40", monthly_limit: "30.00", monthly_remaining: "17.60", per_clip_limit: "1.00",
     } : { items: [{
@@ -510,7 +523,7 @@ describe("ClipFactory production pages", () => {
       status: "approved", story_title: "Ocean heat record", created_at: "2026-09-30T12:00:00Z",
       cost_total: "0.83", preview: { media_url: "/api/clips/11111111-1111-1111-1111-111111111111/media", mime_type: "video/mp4", duration_seconds: 72, width: 720, height: 1280, fps: 30, size_bytes: 4096 },
       publications: [
-        { id: "pub-youtube", platform: "youtube", status: "published", mode: "live", platform_url: "https://youtube.example/watch/1", latest_metrics: { offset_label: "24h", scheduled_for: "2026-10-01T12:00:00Z", captured_at: "2026-10-01T12:01:00Z", platform: "youtube", views: 3200, likes: 88 } },
+        { id: "pub-youtube", platform: "youtube", status: "published", mode: "live", platform_url: "https://youtube.example/watch/1", latest_metrics: { offset_label: "24h", scheduled_for: "2026-10-01T12:00:00Z", captured_at: "2026-10-01T12:01:00Z", platform: "youtube", views: 3200, likes: 88, comments } },
         { id: "pub-instagram", platform: "instagram", status: "failed", mode: "live", error_code: "upload_failed", error_message: "Provider rejected upload", latest_metrics: null },
       ],
     }] }), { status: 200 })));
@@ -521,6 +534,8 @@ describe("ClipFactory production pages", () => {
     expect(screen.getByText("EUR 0.83")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open YouTube Publication" })).toHaveAttribute("href", "https://youtube.example/watch/1");
     expect(screen.getByText("3,200 views")).toBeInTheDocument();
+    expect(screen.getByText("88 likes")).toBeInTheDocument();
+    expect(screen.getByText(expected)).toBeInTheDocument();
     expect(screen.getByText("Metrics n/a")).toBeInTheDocument();
     expect(screen.getByText("TikTok · deferred")).toBeInTheDocument();
   });
@@ -533,7 +548,7 @@ describe("ClipFactory production pages", () => {
         id: "11111111-1111-1111-1111-111111111111", run_id: "22222222-2222-2222-2222-222222222222",
         status: "approved", story_title: "Ocean heat record", created_at: "2026-09-30T12:00:00Z", cost_total: "0.83",
         preview: { media_url: "/api/clips/11111111-1111-1111-1111-111111111111/media", mime_type: "video/mp4", duration_seconds: 72, width: 720, height: 1280, fps: 30, size_bytes: 4096 },
-        publications: [],
+        publications: [{ id: "pub-youtube", platform: "youtube", status: "published", mode: "live", latest_metrics: { views: 3200, likes: 88, comments: 7 } }],
       }), { status: 200 });
     }));
     render(<MemoryRouter initialEntries={["/clips/11111111-1111-1111-1111-111111111111"]}><App /></MemoryRouter>);
@@ -541,6 +556,7 @@ describe("ClipFactory production pages", () => {
     expect(await screen.findByRole("heading", { name: "Ocean heat record" })).toBeInTheDocument();
     expect(screen.getByText("72 sec · 720×1280 · 30 fps")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open source Run" })).toHaveAttribute("href", "/runs/22222222-2222-2222-2222-222222222222");
+    expect(screen.getByText("7 comments")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry publish" })).not.toBeInTheDocument();
   });
 
