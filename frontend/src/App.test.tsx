@@ -110,14 +110,16 @@ describe("ClipFactory operational frontend", () => {
   });
 
   it("CF-REQ-604 updates elapsed time locally and freezes on a terminal SSE event", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-07T10:00:10Z"));
-    renderRun({ started_at: "2026-10-07T10:00:00Z" });
-    await screen.findByText("10s");
-    act(() => vi.advanceTimersByTime(2000));
+    await act(async () => { renderRun({ started_at: "2026-10-07T10:00:00Z" }); });
+    expect(screen.getByText("10s")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByText("11s")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(screen.getByText("12s")).toBeInTheDocument();
     act(() => RunEventSource.current.emit({ ...runEvent(1, "publish", "run_completed"), created_at: "2026-10-07T10:00:12Z" }));
-    act(() => vi.advanceTimersByTime(5000));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(screen.getByText("12s")).toBeInTheDocument();
   });
 
