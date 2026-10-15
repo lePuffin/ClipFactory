@@ -2,6 +2,10 @@
 
 - **Status:** Proposed
 
+The queued-or-running admission constraint below is superseded by
+[ADR-021](ADR-021-durable-serial-run-queue.md): durable queued orders coexist
+with one running Run.
+
 ## Context
 
 ClipFactory must persist domain data, Run state and events, settings,

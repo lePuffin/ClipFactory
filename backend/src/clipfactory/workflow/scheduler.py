@@ -9,7 +9,6 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from clipfactory.domain.models import RunTrigger
-from clipfactory.ports.runs import ActiveRunConflict
 
 
 class DailyTasks(Protocol):
@@ -53,27 +52,22 @@ class DailyRunScheduler:
         await asyncio.to_thread(self._tasks.reconcile, now, self._grace_minutes)
         task = await asyncio.to_thread(self._tasks.claim_due, now)
         if task is not None:
-            skipped_reason = None
             profile_id = (
                 UUID(str(task["payload"]["profile_id"]))
                 if task.get("payload") and "profile_id" in task["payload"]
                 else None
             )
-            try:
-                await asyncio.to_thread(
-                    self._runs.create,
-                    RunTrigger.SCHEDULED,
-                    manual_url=None,
-                    settings_snapshot=self._settings_snapshot(),
-                    profile_id=profile_id,
-                )
-            except ActiveRunConflict as exc:
-                active = str(exc.active_run_id) if exc.active_run_id else "unknown"
-                skipped_reason = f"Skipped because Run {active} is already active"
+            await asyncio.to_thread(
+                self._runs.create,
+                RunTrigger.SCHEDULED,
+                manual_url=None,
+                settings_snapshot=self._settings_snapshot(),
+                profile_id=profile_id,
+            )
             await asyncio.to_thread(
                 self._tasks.finish,
                 UUID(task["task_id"]),
                 now,
-                skipped_reason=skipped_reason,
+                skipped_reason=None,
             )
         self.last_tick_at = now

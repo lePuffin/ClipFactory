@@ -26,7 +26,11 @@ async def portrait_framing(
         face = FaceBox(**retained["face_box"]) if retained.get("face_box") else None
         if face is None:
             logger.warning("portrait_framing_unavailable: retained fallback for %s", path.name)
-        return face, {**retained, "version": "face-safe-v2"}
+        return face, {
+            **retained,
+            "version": "face-safe-v3",
+            "fallback": None if face else "banner_safe_fit",
+        }
     try:
         face = await detector(path) if detector else None
     except (OSError, RuntimeError, ValueError):
@@ -35,10 +39,10 @@ async def portrait_framing(
     if face is None:
         logger.warning("portrait_framing_unavailable: no confident dominant face for %s", path.name)
     return face, {
-        "version": "face-safe-v2",
+        "version": "face-safe-v3",
         "source_sha256": source_sha256,
         "detector_version": "local-frontal-face-v1",
         "status": "detected" if face else "unavailable",
         "face_box": asdict(face) if face else None,
-        "fallback": None if face else "standard_fit",
+        "fallback": None if face else "banner_safe_fit",
     }

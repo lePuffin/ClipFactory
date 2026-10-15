@@ -641,9 +641,8 @@ def _description(request: PublicationRequest) -> str:
     disclosure = (
         "Contains synthetic media and/or voice." if request.contains_synthetic_media or request.synthetic_voice else ""
     )
-    sources = "Sources: " + "; ".join(request.source_attributions) if request.source_attributions else ""
     credits = "Credits: " + "; ".join(request.asset_attributions) if request.asset_attributions else ""
-    return "\n\n".join(value for value in (request.description, hashtags, disclosure, sources, credits) if value)
+    return "\n\n".join(value for value in (request.description, hashtags, disclosure, credits) if value)
 
 
 def _integer(value: Any) -> int | None:

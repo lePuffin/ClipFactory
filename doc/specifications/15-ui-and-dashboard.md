@@ -18,8 +18,8 @@ API contract: [architecture/application-architecture.md](architecture/applicatio
 | `/profile` | Content Profile | Select, save as new, edit, activate or delete saved profiles |
 | `/settings` | Settings | Daily Run schedule, application settings, provider status, publishing mode, approval gate, budget limits and price table |
 
-Global header: product name, current Run indicator, **Run Now** button,
-**Manual URL** action.
+Global header: product name and current Run indicator. Start a Run provides
+one **Run Now** button, a Content Profile selector and optional Manual Source URL.
 
 ## Requirements
 
@@ -200,6 +200,13 @@ Global header: product name, current Run indicator, **Run Now** button,
   enabled list. Checking/unchecking persists that list through the existing
   save flow. This does not infer credentials or silently enable a platform.
 
+- **Owner revision (15 October):** Generation providers use separate labelled
+  checkbox groups: Image providers (ComfyUI, Higgsfield) and Video providers
+  (ComfyUI, Wan Local, Higgsfield). These are supported integrations, not
+  credential-readiness indicators. Preserve saved preference order; selecting
+  another provider appends it and deselecting removes it. Empty lists remain
+  empty, and existing unrecognized entries remain visible and removable.
+
 - **Description:** The profile page shall edit every Content Profile field
   with client-side validation mirroring CF-REQ-551 and server-side validation
   as authority. A selector lists saved Content Profiles; the owner can load
@@ -234,22 +241,38 @@ Global header: product name, current Run indicator, **Run Now** button,
   API clients omitting the ID retain the most recently updated active profile
   default. A missing selected profile returns 404 `profile_not_found`, never
   silently creating or selecting a default.
-- **Description:** A Run Now button shall start a Run immediately. It is
-  disabled while a Run is active; if the server reports a conflict, the UI
-  shows the active Run link.
+- **Description:** A Run Now button shall submit a Run immediately. While
+  another Run executes, Run Now and Manual URL remain available and persist
+  queued orders under CF-REQ-652. Disable admission only while that submission
+  is pending or no valid profile is selected; display submission errors.
+  The button reads `Add to queue` while an existing Run is queued/running,
+  and `Run Now` when idle. While its request is pending it remains disabled.
+  Owner revision (2026-10-15): this is the only submission button. A nonempty
+  trimmed Manual Source URL selects `manual_url`; an empty URL selects
+  `run_now`. Both send the explicitly selected Content Profile ID.
 - **Acceptance:**
   - Clicking Run Now while idle navigates to the new Run's detail page.
-  - The API returns 409 when a Run is active (see CF-REQ-652).
+  - While a Run executes, the shared button accepts either order (202)
+    and show the new Run ID as queued (see CF-REQ-652).
   - Choosing a different saved profile changes the Run snapshot without
     changing any saved profile's activation status or schedule.
 
 ### CF-REQ-609 — Manual URL input
 
-- **Description:** A Manual URL dialog shall accept one `http`/`https` URL,
-  validate it client-side, and start a `manual_url` Run; server-side errors
-  (invalid URL, blocked address, Run active) are displayed.
+- **Description:** An optional Manual Source URL field alongside the Content
+  Profile selector shall accept one `http`/`https` URL. The shared Run Now
+  (or Add to queue) button, including Enter submission, validates nonempty
+  input client-side and starts a `manual_url` Run with the selected profile.
+  There is no separate Manual URL button. Invalid input never falls back to
+  automatic research. Server-side errors (invalid URL, blocked address,
+  missing profile or budget rejection) are displayed and retain the URL
+  for correction; successful Manual URL admission clears the input.
 - **Acceptance:**
   - `ftp://example.com` is rejected before submission.
+  - Blank input starts `run_now`; valid URL input starts `manual_url` using
+    the selected profile, including inactive profiles, without activating it.
+  - Pending submission disables the shared button and its inputs, preventing
+    duplicate dispatch. Failed submissions retain the selected profile and URL.
 - **Related:** CF-REQ-700
 
 ### CF-REQ-610 — Clips page
@@ -286,6 +309,13 @@ Global header: product name, current Run indicator, **Run Now** button,
 - **Acceptance:**
   - Switching tab resets to page 1 and requests the matching filter;
     pagination controls reflect `total`.
+  - Clip details show a read-only Caption section below Publications with
+    the saved description, hashtags, synthetic-media/voice disclosure and
+    licence-required media credits. Evidence Sources are not appended.
+    Preserve line breaks and wrap long text; render external content as text.
+    Missing caption content has an explicit empty state. Explain that this
+    is saved Clip metadata, not a live platform readback; platform formatting
+    and publication-time discovery hashtags may differ.
   - Clip duration is displayed rounded to the nearest whole second on cards
     and detail pages; stored media duration remains precise.
   - A Publication with `error_code=not_configured` displays only a red
@@ -299,6 +329,10 @@ Global header: product name, current Run indicator, **Run Now** button,
   - Pending approval Clips retain Approve and Reject; every card has an
     icon-only Delete button with an accessible label and confirmation.
   - Unavailable preview media shows an explicit error rather than a blank player.
+  - Automatically rejected candidates retain diagnostic history and source
+    Run links, but display a no-retained-video explanation instead of requesting
+    their deleted media (CF-REQ-214). Declining publication of an approved Clip
+    does not invoke this evaluation-rejection cleanup.
 
 ### CF-REQ-611 — Safe rendering of external text
 

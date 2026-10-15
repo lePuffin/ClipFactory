@@ -98,6 +98,7 @@ from clipfactory.production.audio_captions import (
     generate_narration,
     transcribe_narration,
 )
+from clipfactory.production.captions import CaptionLayoutError
 from clipfactory.production.editorial import (
     EditorialCue,
     render_ai_disclosure_tag,
@@ -1249,14 +1250,17 @@ class ProductionStageService:
         alignment = AlignmentResult(
             tuple(AlignedWord(**word) for word in transcription["words"]), float(transcription["wer"])
         )
-        caption_key, track = await build_captions(
-            run_id=run_id,
-            attempt=attempt,
-            alignment=alignment,
-            storage=self.storage,
-            font_file=font_file,
-            lead_in_seconds=float(detail["settings_snapshot"].get("composition", {}).get("lead_in_seconds", 0.3)),
-        )
+        try:
+            caption_key, track = await build_captions(
+                run_id=run_id,
+                attempt=attempt,
+                alignment=alignment,
+                storage=self.storage,
+                font_file=font_file,
+                lead_in_seconds=float(detail["settings_snapshot"].get("composition", {}).get("lead_in_seconds", 0.3)),
+            )
+        except CaptionLayoutError as exc:
+            raise StageFailure("caption_out_of_bounds", str(exc)) from exc
         artifact = {"caption_key": caption_key, "cues": [asdict(cue) for cue in track.cues]}
         await asyncio.to_thread(self.production.save_artifact, run_id, attempt, Stage.BUILD_CAPTIONS.value, artifact)
         return {}
@@ -1408,11 +1412,13 @@ class ProductionStageService:
                     await self._event(
                         run_id,
                         "warning",
-                        f"Visual {segment['index']}: portrait framing unavailable; preserving standard fit",
+                        f"Visual {segment['index']}: face detection unavailable; "
+                        "fitting the complete portrait below the banner",
                     )
-                elif segment["motion"] not in {"zoom_in", "zoom_out"}:
-                    segment["motion"] = "zoom_in"
-                    segment["motion_reason"] = "Keep the detected portrait face centered during gentle motion"
+                segment["motion"] = "none"
+                segment["motion_reason"] = "Keep the portrait safely below the information banner"
+            else:
+                segment.pop("portrait_framing", None)
         spec = CompositionSpec(
             segments=tuple(
                 (
@@ -1429,6 +1435,7 @@ class ProductionStageService:
                             float(segment.get("source_offset_seconds", 0.0)) if asset.media_type == "video" else 0.0
                         ),
                         face_box=face_boxes[segment["index"]],
+                        is_person_still=segment.get("portrait_framing") is not None,
                     )
                     for segment, asset in selected
                 )
@@ -1569,7 +1576,10 @@ class ProductionStageService:
         await asyncio.to_thread(
             self.production.set_clip_status, clip_id, ClipStatus.RENDERED if evaluation.passed else ClipStatus.REJECTED
         )
-        return await self._persist_evaluation(evaluation)
+        result = await self._persist_evaluation(evaluation)
+        if not evaluation.passed:
+            await self._discard_rejected_clip(run_id, clip)
+        return result
 
     async def evaluate_clip(self, state: WorkflowState) -> dict[str, Any]:
         run_id, attempt, detail, _ = await self._run_context(state)
@@ -1657,7 +1667,20 @@ class ProductionStageService:
         result = await self._persist_evaluation(evaluation)
         if evaluation.passed:
             await self.cleanup_run(run_id)
+        else:
+            await self._discard_rejected_clip(run_id, clip)
         return result
+
+    async def _discard_rejected_clip(self, run_id: UUID, clip: dict[str, Any]) -> None:
+        try:
+            await self.storage.delete(clip["storage_key"])
+        except OSError:
+            logger.exception("Rejected Clip video cleanup failed for Run %s", run_id)
+            await self._event(
+                run_id,
+                "clip_cleanup_failed",
+                "Rejected Clip records were retained but video deletion failed; check server logs",
+            )
 
     async def cleanup_run(self, run_id: UUID) -> None:
         try:

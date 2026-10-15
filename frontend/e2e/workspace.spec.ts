@@ -1,7 +1,7 @@
 import { test, expect, type Page, type TestInfo } from "@playwright/test";
 import type { ContentProfileItem } from "../src/api/client";
 
-const profile = { name: "News", category: "general", language: "en", platforms: ["youtube"], duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20 } };
+const profile = { name: "News", category: "general", language: "en", platforms: ["youtube"], generation: { image_providers: ["comfyui", "higgsfield"], video_providers: ["comfyui", "wan_local", "higgsfield"] }, duration: { min_seconds: 60, target_seconds: 70, max_seconds: 90 }, output: { width: 720, height: 1280, fps: 30 }, schedule: { enabled: true, local_time: "05:00", timezone: "UTC" }, research: { min_sources: 2, preferred_independent_sources: 3, max_candidate_articles: 20 } };
 const clip = { id: "clip-1", run_id: "run-1", status: "approved", story_title: "Solar breakthrough", cost_total: "0.1", created_at: "2026-10-11T10:00:00Z", social_metadata: { description: "A grounded briefing on new solar research.", hashtags: ["Science"], source_attributions: ["Original source attribution"] }, publications: [{ id: "pub-1", platform: "youtube", status: "published", mode: "live" }], preview: { duration_seconds: 60, width: 720, height: 1280, fps: 30, media_url: "/media/fixture.mp4" } };
 /** Clip approve/reject/delete requests captured by the mocked API for the current test. */
 let clipDecisions: { id: string; method: string; body: unknown }[] = [];
@@ -48,6 +48,98 @@ async function visual(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true });
 }
 test.beforeEach(async ({ page }) => mocks(page));
+
+test("CF-REQ-610 shows the saved caption below Publications on Clip details", async ({ page }, info) => {
+  await page.route("**/api/clips/clip-1", (route) => route.fulfill({ json: clip }));
+  await page.goto("/clips/clip-1");
+  const caption = page.getByRole("region", { name: "Caption", exact: true });
+  await expect(caption).toContainText("A grounded briefing on new solar research.");
+  await expect(caption).toContainText("#Science");
+  await expect(caption).not.toContainText("Original source attribution");
+  const publications = await page.getByRole("heading", { name: "Publications", exact: true }).boundingBox();
+  const captionHeading = await caption.getByRole("heading", { name: "Caption", exact: true }).boundingBox();
+  expect(publications).not.toBeNull();
+  expect(captionHeading).not.toBeNull();
+  expect(captionHeading!.y).toBeGreaterThan(publications!.y);
+  await visual(page, info, "clip-caption");
+});
+
+test("CF-REQ-607 saves generation-provider checkboxes for the selected profile", async ({ page }, info) => {
+  await page.goto("/profile");
+  const images = page.getByRole("group", { name: "Image Providers", exact: true });
+  const videos = page.getByRole("group", { name: "Video Providers", exact: true });
+  await expect(images.getByRole("checkbox")).toHaveCount(2);
+  await expect(videos.getByRole("checkbox")).toHaveCount(3);
+  await images.getByRole("checkbox", { name: "ComfyUI" }).uncheck();
+  await videos.getByRole("checkbox", { name: "Wan Local" }).uncheck();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Content Profile saved.", { exact: true })).toBeVisible();
+  await expect(images.getByRole("checkbox", { name: "ComfyUI" })).not.toBeChecked();
+  await expect(images.getByRole("checkbox", { name: "Higgsfield" })).toBeChecked();
+  await expect(videos.getByRole("checkbox", { name: "Wan Local" })).not.toBeChecked();
+  await page.getByLabel("Saved profiles").selectOption("weekly");
+  await expect(images.getByRole("checkbox", { name: "ComfyUI" })).toBeChecked();
+  await expect(videos.getByRole("checkbox", { name: "Wan Local" })).toBeChecked();
+  await page.getByLabel("Saved profiles").selectOption("daily");
+  await expect(images.getByRole("checkbox", { name: "ComfyUI" })).not.toBeChecked();
+  await visual(page, info, "generation-providers");
+});
+
+test("CF-REQ-652 CF-REQ-608 CF-REQ-609 queues automatic and Manual URL orders with the shared button", async ({ page }, info) => {
+  const orders: { path: string; body: unknown }[] = [];
+  await page.route(/\/api\/runs(?:\/manual-url)?$/, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    orders.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    return route.fulfill({ status: 202, json: { run_id: "12345678-1234-1234-1234-123456789abc", status: "queued" } });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: "Inspect Run" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start Manual URL Run" })).toHaveCount(0);
+  await page.getByLabel("Content Profile", { exact: true }).selectOption("weekly");
+  await expect(page.getByRole("button", { name: "Add to queue", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Add to queue", exact: true }).click();
+  await expect(page.getByText("Run 12345678 queued", { exact: true })).toBeVisible();
+  await page.getByLabel("Manual Source URL").fill("https://news.example/article");
+  await page.getByRole("button", { name: "Add to queue", exact: true }).click();
+  await expect.poll(() => orders.length).toBe(2);
+  expect(orders).toEqual([
+    { path: "/api/runs", body: { profile_id: "weekly" } },
+    { path: "/api/runs/manual-url", body: { url: "https://news.example/article", profile_id: "weekly" } },
+  ]);
+  await expect(page.getByLabel("Manual Source URL")).toHaveValue("");
+  await expect(page.getByRole("link", { name: "Inspect Run" })).toHaveAttribute("href", "/runs/run-1");
+  await page.route("**/api/runs/active", (route) => route.fulfill({ status: 204 }));
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Run Now", exact: true })).toBeVisible();
+  await page.getByLabel("Content Profile", { exact: true }).selectOption("daily");
+  await page.getByLabel("Manual Source URL").fill("ftp://news.example/article");
+  await page.getByRole("button", { name: "Run Now", exact: true }).click();
+  await expect(page.locator("#manual-url:invalid")).toBeVisible();
+  expect(orders).toHaveLength(2);
+  await page.getByLabel("Manual Source URL").fill("https://news.example/another");
+  await page.getByLabel("Manual Source URL").press("Enter");
+  await expect.poll(() => orders.length).toBe(3);
+  expect(orders[2]).toEqual({ path: "/api/runs/manual-url", body: { url: "https://news.example/another", profile_id: "daily" } });
+  await expect(page.getByLabel("Manual Source URL")).toHaveValue("");
+  await visual(page, info, "queued-orders");
+});
+
+test("CF-REQ-214 shows rejected candidate history without loading its discarded video", async ({ page }, info) => {
+  await page.route("**/api/clips/clip-1", (route) => route.fulfill({
+    json: { ...clip, status: "rejected", publications: [] },
+  }));
+  let mediaRequests = 0;
+  await page.route("**/media/fixture.mp4", (route) => {
+    mediaRequests += 1;
+    return route.abort();
+  });
+  await page.goto("/clips/clip-1");
+  await expect(page.getByText("Rejected by evaluation. No video is retained; Run and error records remain available.")).toBeVisible();
+  await expect(page.locator("video")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open source Run" })).toHaveAttribute("href", "/runs/run-1");
+  expect(mediaRequests).toBe(0);
+  await visual(page, info, "discarded-rejected-video");
+});
 
 test("CF-REQ-610 aligns platform names, dots and Published or Not Configured labels", async ({ page }, info) => {
   const fixture = { ...clip, publications: [...["facebook", "instagram", "youtube"].map((platform) => ({

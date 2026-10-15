@@ -5,7 +5,7 @@ import pytest
 
 from clipfactory.ports.transcription import RecognizedWord, Transcript
 from clipfactory.production.alignment import AlignedWord, align_transcript
-from clipfactory.production.captions import build_caption_track, render_ass
+from clipfactory.production.captions import CaptionLayoutError, build_caption_track, render_ass
 
 
 @pytest.mark.unit
@@ -91,3 +91,48 @@ def test_caption_wrapping_reserves_box_padding_inside_safe_margins() -> None:
     assert track.cues[0].lines == ("a" * 31, "b" * 30)
     assert track.cues[0].x >= 43
     assert track.cues[0].x + track.cues[0].width <= 677
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-312")
+@pytest.mark.req("CF-REQ-313")
+@pytest.mark.parametrize("token", ["timesofindia.indiatimes.com.", "a" * 40])
+def test_long_caption_token_wraps_without_losing_text_or_timing(token) -> None:
+    class Font:
+        def __init__(self, size):
+            self.size = size
+
+        def getlength(self, text):
+            return len(text) * self.size * 0.55
+
+        def getmetrics(self):
+            return self.size, 12
+
+    word = AlignedWord(token, 1.25, 2.5, 0)
+    track = build_caption_track((word,), font_file=Path("fake.ttf"), font_loader=lambda _, size: Font(size))
+    cue = track.cues[0]
+    assert "".join(cue.lines) == token
+    assert len(cue.lines) == 2
+    assert cue.start_seconds == 1.25
+    assert cue.end_seconds == 2.5
+    assert cue.x >= 43
+    assert cue.x + cue.width <= 677
+    assert cue.font_size_px >= round(56 * 0.8)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-313")
+def test_impossibly_long_caption_still_fails_without_out_of_bounds_output() -> None:
+    class Font:
+        def getlength(self, text):
+            return len(text) * 30
+
+        def getmetrics(self):
+            return 56, 12
+
+    with pytest.raises(CaptionLayoutError):
+        build_caption_track(
+            (AlignedWord("a" * 100, 0, 1, 0),),
+            font_file=Path("fake.ttf"),
+            font_loader=lambda _, size: Font(),
+        )

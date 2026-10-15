@@ -21,6 +21,38 @@ describe("ClipFactory production pages", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([true, false])("CF-REQ-610 CF-REQ-161 shows saved caption below Publications (metadata present: %s)", async (present) => {
+    const clip = {
+      id: "caption-clip", run_id: "run-1", status: "approved", story_title: "Caption fixture",
+      created_at: "2026-10-15", cost_total: "0", publications: [],
+      preview: { duration_seconds: 60, width: 720, height: 1280, fps: 30, media_url: "/fixture.mp4" },
+      social_metadata: present ? {
+        description: "First paragraph.\nSecond paragraph. <script>alert(1)</script>",
+        hashtags: ["News", "#World"], synthetic_voice: true,
+        asset_attributions: ["Jane / CC BY 4.0 https://example.test/photo"],
+        source_attributions: ["Source that should not appear"],
+      } : null,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/clips/caption-clip" ? clip : { currency: "EUR" }
+    ))));
+    render(<MemoryRouter initialEntries={["/clips/caption-clip"]}><App /></MemoryRouter>);
+    const heading = await screen.findByRole("heading", { name: "Caption" });
+    const section = heading.closest("section");
+    expect(section).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Publications" }).compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    if (present) {
+      expect(section).toHaveTextContent("First paragraph. Second paragraph. <script>alert(1)</script>");
+      expect(section).toHaveTextContent("#News #World");
+      expect(section).toHaveTextContent("Contains synthetic media and/or voice.");
+      expect(section).toHaveTextContent("Credits: Jane / CC BY 4.0 https://example.test/photo");
+      expect(section?.querySelector("script")).toBeNull();
+      expect(screen.queryByText("Source that should not appear")).not.toBeInTheDocument();
+    } else {
+      expect(section).toHaveTextContent("No caption recorded for this Clip.");
+    }
+  });
+
   it("CF-REQ-360 CF-REQ-607 shows the selected profile's stable branding folder and command", async () => {
     const world = { id: "world-id", name: "World", is_active: true, updated_at: "2026-10-13", profile: { name: "World", language: "en", branding_folder: "global-news-english" } };
     const profiles = [
@@ -439,6 +471,19 @@ describe("ClipFactory production pages", () => {
     render(<MemoryRouter initialEntries={[route]}><App /></MemoryRouter>);
     expect(await screen.findByText(route === "/clips" ? expected : `${expected} · 720×1280 · 30 fps`)).toBeInTheDocument();
     expect(screen.queryByText(`${duration} sec`)).not.toBeInTheDocument();
+  });
+
+  it("CF-REQ-214 CF-REQ-610 retains rejected Run links without requesting a deleted video", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/budget" ? { currency: "EUR" } : { items: [{
+        id: "clip-rejected", run_id: "run-rejected", status: "rejected", story_title: "Rejected candidate",
+        created_at: "2026-10-15", cost_total: "0", publications: [],
+        preview: { media_url: "/api/clips/clip-rejected/media", duration_seconds: 60, width: 720, height: 1280, fps: 30 },
+      }], total: 1 }), { status: 200 })));
+    const { container } = render(<MemoryRouter initialEntries={["/clips"]}><App /></MemoryRouter>);
+    expect(await screen.findByText("Rejected by evaluation. No video is retained; Run and error records remain available.")).toBeInTheDocument();
+    expect(container.querySelector("video")).toBeNull();
+    expect(screen.getByRole("link", { name: "Rejected candidate" })).toHaveAttribute("href", "/clips/clip-rejected");
   });
 
   it("CF-REQ-610 reports unavailable Clip media and clears the error when metadata loads", async () => {

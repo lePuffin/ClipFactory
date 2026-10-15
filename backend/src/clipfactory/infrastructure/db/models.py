@@ -84,8 +84,8 @@ class RunRow(Base):
             "uq_run_one_active",
             text("(1)"),
             unique=True,
-            postgresql_where=text("status IN ('queued', 'running')"),
-            sqlite_where=text("status IN ('queued', 'running')"),
+            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status = 'running'"),
         ),
         Index("ix_run_created_at", "created_at"),
     )

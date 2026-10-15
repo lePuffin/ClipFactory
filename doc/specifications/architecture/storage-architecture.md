@@ -10,7 +10,7 @@ Single database. Tables (outline; columns follow [04-domain-model.md](../04-doma
 | --- | --- |
 | `content_profile` | Partial unique index on `is_active` where true |
 | `app_settings` | `section` primary key, `value` JSONB, `updated_at` |
-| `run` | Partial unique index enforcing one `queued`/`running` Run (CF-REQ-652) |
+| `run` | Durable FIFO queue; transaction advisory lock for admission/claim, partial unique index permitting only one `running` Run (CF-REQ-652, ADR-021) |
 | `run_event` | Unique (`run_id`, `sequence`); index on `run_id` |
 | `source` | Unique `canonical_url`; index on `text_hash` |
 | `story`, `story_source` | |

@@ -1,4 +1,4 @@
-import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, Clock3, FileVideo2, Images, Play, RefreshCw, Send, Settings2, SlidersHorizontal, Target } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, Clock3, FileVideo2, Images, Play, RefreshCw, Settings2, SlidersHorizontal, Target } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
 
@@ -85,10 +85,12 @@ function Dashboard() {
   const profileItems = profiles.status === "success" ? profiles.data.items : [];
   const selectedProfile = profileItems.find((profile) => profile.id === selectedProfileId);
   const [activeRun, reloadActive] = useResource<RunSummary | null>("/api/runs/active", { intervalMs: 2000 });
+  const hasActiveRun = activeRun.status === "success" && activeRun.data !== null
+    && ["queued", "running"].includes(activeRun.data.status);
   const [summary, reloadSummary] = useResource<DashboardSummary>("/api/dashboard/summary");
   const [budget, reloadBudget] = useResource<BudgetSummary>("/api/budget");
   const [manualUrl, setManualUrl] = useState("");
-  const [starting, setStarting] = useState<"run" | "url" | null>(null);
+  const [starting, setStarting] = useState(false);
   const [startMessage, setStartMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const refresh = () => {
     reloadActive();
@@ -97,22 +99,24 @@ function Dashboard() {
     reloadProfiles();
   };
 
-  async function createRun(kind: "run" | "url") {
+  async function createRun() {
+    if (starting) return;
     if (!selectedProfile) {
       setStartMessage({ kind: "error", text: "Choose a Content Profile before starting a Run." });
       return;
     }
-    setStarting(kind);
+    const url = manualUrl.trim();
+    setStarting(true);
     setStartMessage(null);
     try {
-      const created = kind === "run" ? await startRunNow(selectedProfile.id) : await startManualURL({ url: manualUrl, profile_id: selectedProfile.id });
+      const created = url ? await startManualURL({ url, profile_id: selectedProfile.id }) : await startRunNow(selectedProfile.id);
       setStartMessage({ kind: "success", text: `Run ${shortId(created.run_id)} queued` });
-      if (kind === "url") setManualUrl("");
+      if (url) setManualUrl("");
       reloadActive();
-      } catch (error: unknown) {
+    } catch (error: unknown) {
       setStartMessage({ kind: "error", text: error instanceof Error ? error.message : "Run could not be started" });
     } finally {
-      setStarting(null);
+      setStarting(false);
     }
   }
 
@@ -129,25 +133,26 @@ function Dashboard() {
         </button>
       </div>
 
-      <section className="execution-bar" aria-labelledby="execution-title">
+      <form className="execution-bar" aria-labelledby="execution-title" onSubmit={(event) => { event.preventDefault(); void createRun(); }}>
         <div><div className="eyebrow">EXECUTION</div><h2 id="execution-title">Start a Run</h2></div>
         <div className="field run-profile-selector">
           <label htmlFor="run-profile">Content Profile</label>
-          <select id="run-profile" value={selectedProfile?.id ?? ""} disabled={starting !== null || profiles.status !== "success"} onChange={(event) => setSelectedProfileId(event.target.value)}>
+          <select id="run-profile" value={selectedProfile?.id ?? ""} disabled={starting || profiles.status !== "success"} onChange={(event) => setSelectedProfileId(event.target.value)}>
             <option value="">Choose a profile</option>
             {profileItems.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}{profile.is_active ? "" : " (inactive)"}</option>)}
           </select>
           {profiles.status === "error" ? <span role="alert">{profiles.message}</span> : profiles.status === "loading" ? <small>Loading profiles…</small> : !profileItems.length ? <small>No saved profiles. Create one in Profile.</small> : null}
         </div>
-        <button className="command-button" disabled={starting !== null || !selectedProfile || Boolean(activeRun.status === "success" && activeRun.data)} onClick={() => void createRun("run")}>
-          <Play size={15} fill="currentColor" />{starting === "run" ? "Starting" : "Run Now"}
-        </button>
-        <form className="manual-url-form" onSubmit={(event) => { event.preventDefault(); void createRun("url"); }}>
+        <div className="manual-url-field">
           <label htmlFor="manual-url">Manual Source URL</label>
-          <div><input id="manual-url" type="url" required maxLength={2048} value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} placeholder="https://publisher.example/story" /><button className="icon-button" type="submit" disabled={starting !== null || !selectedProfile || Boolean(activeRun.status === "success" && activeRun.data)} title="Start Manual URL Run" aria-label="Start Manual URL Run"><Send size={15} /></button></div>
-        </form>
+          <input id="manual-url" type="url" pattern="https?://.+" title="Enter an http:// or https:// URL, or leave empty for automatic research." maxLength={2048} disabled={starting} value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} placeholder="Optional — leave empty for automatic research" aria-describedby="manual-url-help" />
+        </div>
+        <button className="command-button" type="submit" disabled={starting || !selectedProfile}>
+          <Play size={15} fill="currentColor" />{starting ? "Starting" : hasActiveRun ? "Add to queue" : "Run Now"}
+        </button>
+        <small id="manual-url-help" className="run-input-help">Uses the selected profile. Add a URL for a Manual URL Run, or leave empty for automatic research.</small>
         {startMessage && <div className={`start-message ${startMessage.kind}`} role="status">{startMessage.text}</div>}
-      </section>
+      </form>
 
       <div className="overview-grid">
         <section className="section-block run-focus">

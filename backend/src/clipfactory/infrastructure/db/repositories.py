@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from clipfactory.domain.models import ContentProfile, RunTrigger
 from clipfactory.infrastructure.db.models import (
@@ -28,9 +29,29 @@ from clipfactory.infrastructure.media.profile_branding import (
 )
 from clipfactory.infrastructure.research_defaults import new_profile_research
 from clipfactory.ports.configuration import ProfileNotFound
-from clipfactory.ports.runs import ActiveRunConflict, LLMBudgetExhausted, RunContinuationConflict, RunNotFound
+from clipfactory.ports.runs import LLMBudgetExhausted, RunContinuationConflict, RunNotFound
 
 _BRANDING_KEYS = ("branding_directory", "logo_file", "end_card_file")
+
+
+def _lock_run_queue(session: Session) -> None:
+    """Serialize admission/claims even when there are no Run rows to lock."""
+    if session.get_bind().dialect.name == "sqlite":
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        session.execute(select(func.pg_advisory_xact_lock(652)))
+
+
+def _queue_admission_time() -> ColumnElement[datetime]:
+    latest_continuation = (
+        select(RunEventRow.created_at)
+        .where(RunEventRow.run_id == RunRow.id, RunEventRow.type == "run_resumed")
+        .order_by(RunEventRow.sequence.desc())
+        .limit(1)
+        .correlate(RunRow)
+        .scalar_subquery()
+    )
+    return func.coalesce(latest_continuation, RunRow.created_at)
 
 
 class RunRepository:
@@ -95,6 +116,7 @@ class RunRepository:
         now = datetime.now(UTC)
         try:
             with self.sessions.begin() as session:
+                _lock_run_queue(session)
                 llm_policy = settings_snapshot.get("llm", {})
                 timezone = ZoneInfo(llm_policy.get("daily_reset_timezone", "UTC"))
                 local_now = now.astimezone(timezone)
@@ -180,10 +202,9 @@ class RunRepository:
                 )
                 session.flush()
                 result = _run_summary(run)
-        except IntegrityError as exc:
-            with self.sessions() as session:
-                active = session.scalar(select(RunRow).where(RunRow.status.in_(("queued", "running"))).limit(1))
-                raise ActiveRunConflict(active.id if active else None) from exc
+        except IntegrityError:
+            # Constraint failures are not admission conflicts: queued Runs may coexist.
+            raise
         return result
 
     def get(self, run_id: UUID) -> dict[str, Any]:
@@ -224,13 +245,14 @@ class RunRepository:
             run = session.scalar(
                 select(RunRow)
                 .where(RunRow.status.in_(("queued", "running")))
-                .order_by(RunRow.created_at.desc())
+                .order_by((RunRow.status == "running").desc(), _queue_admission_time(), RunRow.id)
                 .limit(1)
             )
             return _run_summary(run) if run else None
 
     def list(self, *, limit: int = 50, status: str | None = None, trigger: str | None = None) -> list[dict[str, Any]]:
-        statement = select(RunRow).order_by(RunRow.created_at.desc()).limit(max(1, min(limit, 100)))
+        ordering = (_queue_admission_time(), RunRow.id) if status == "queued" else (RunRow.created_at.desc(), RunRow.id)
+        statement = select(RunRow).order_by(*ordering).limit(max(1, min(limit, 100)))
         if status:
             statement = statement.where(RunRow.status == status)
         if trigger:
@@ -240,11 +262,14 @@ class RunRepository:
 
     def claim_next_queued(self, now: datetime) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
+            _lock_run_queue(session)
+            if session.scalar(select(RunRow.id).where(RunRow.status == "running").limit(1)) is not None:
+                return None
             run = session.scalar(
                 select(RunRow)
                 .where(RunRow.status == "queued")
-                .order_by(RunRow.created_at)
-                .with_for_update(skip_locked=True)
+                .order_by(_queue_admission_time(), RunRow.id)
+                .with_for_update()
                 .limit(1)
             )
             if run is None:
@@ -258,48 +283,42 @@ class RunRepository:
     def continue_failed(
         self, run_id: UUID, *, settings_snapshot: dict[str, Any], expected_stage: str, now: datetime
     ) -> dict[str, Any]:
-        try:
-            with self.sessions.begin() as session:
-                run = session.scalar(select(RunRow).where(RunRow.id == run_id).with_for_update())
-                if run is None:
-                    raise RunNotFound(str(run_id))
-                if run.status != "failed" or run.failure_stage != expected_stage:
-                    raise RunContinuationConflict("Run is no longer failed at the saved checkpoint stage")
-                if expected_stage == "publish":
-                    raise RunContinuationConflict("Publication failures cannot be continued")
-                active = session.scalar(select(RunRow).where(RunRow.status.in_(("queued", "running"))).limit(1))
-                if active is not None:
-                    raise ActiveRunConflict(active.id)
-                settings_snapshot = self._continuation_settings(run, settings_snapshot)
-                _append_event(
-                    session,
-                    run,
-                    "run_resumed",
-                    "Failed Run queued to continue with current application settings and its own profile branding",
-                    now,
-                    stage=expected_stage,
-                    payload={
-                        "failure_code": run.failure_code,
-                        "failure_message": run.failure_message,
-                        "previous_settings_snapshot": run.settings_snapshot,
-                        "settings_snapshot": settings_snapshot,
-                        "resume_stage": expected_stage,
-                        "previous_revision_retries_used": run.revision_retries_used,
-                        "revision_retries_used": 0,
-                    },
-                )
-                run.settings_snapshot = settings_snapshot
-                run.revision_retries_used = 0
-                run.status = "queued"
-                run.current_stage = expected_stage
-                run.finished_at = None
-                run.failure_stage = run.failure_code = run.failure_message = None
-                run.outcome = None
-                session.flush()
-                return _run_summary(run)
-        except IntegrityError as exc:
-            active = self.active()
-            raise ActiveRunConflict(UUID(active["run_id"]) if active else None) from exc
+        with self.sessions.begin() as session:
+            _lock_run_queue(session)
+            run = session.scalar(select(RunRow).where(RunRow.id == run_id).with_for_update())
+            if run is None:
+                raise RunNotFound(str(run_id))
+            if run.status != "failed" or run.failure_stage != expected_stage:
+                raise RunContinuationConflict("Run is no longer failed at the saved checkpoint stage")
+            if expected_stage == "publish":
+                raise RunContinuationConflict("Publication failures cannot be continued")
+            settings_snapshot = self._continuation_settings(run, settings_snapshot)
+            _append_event(
+                session,
+                run,
+                "run_resumed",
+                "Failed Run queued to continue with current application settings and its own profile branding",
+                now,
+                stage=expected_stage,
+                payload={
+                    "failure_code": run.failure_code,
+                    "failure_message": run.failure_message,
+                    "previous_settings_snapshot": run.settings_snapshot,
+                    "settings_snapshot": settings_snapshot,
+                    "resume_stage": expected_stage,
+                    "previous_revision_retries_used": run.revision_retries_used,
+                    "revision_retries_used": 0,
+                },
+            )
+            run.settings_snapshot = settings_snapshot
+            run.revision_retries_used = 0
+            run.status = "queued"
+            run.current_stage = expected_stage
+            run.finished_at = None
+            run.failure_stage = run.failure_code = run.failure_message = None
+            run.outcome = None
+            session.flush()
+            return _run_summary(run)
 
     def _continuation_settings(self, run: RunRow, settings_snapshot: dict[str, Any]) -> dict[str, Any]:
         """Keep the Run's own research and Content Profile branding."""

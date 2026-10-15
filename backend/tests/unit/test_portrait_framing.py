@@ -116,7 +116,7 @@ async def test_retained_framing_reuses_evidence_and_nonperson_does_not_detect() 
     assert face == FaceBox(0.3, 0.1, 0.2, 0.2)
     assert retained is not None
     assert retained["status"] == "detected"
-    assert retained["version"] == "face-safe-v2"
+    assert retained["version"] == "face-safe-v3"
     again = await portrait_framing(Path("person.jpg"), is_person_still=True, retained=retained, detector=detector)
     assert again == (face, retained)
     assert (await portrait_framing(Path("landscape.jpg"), is_person_still=False, retained=None, detector=detector)) == (
@@ -145,16 +145,33 @@ async def test_replaced_source_does_not_reuse_face_evidence() -> None:
 
 @pytest.mark.req("CF-REQ-255")
 @pytest.mark.parametrize("error", [None, OSError("bad image"), RuntimeError("missing cascade")])
-async def test_unavailable_face_keeps_standard_fit_and_logs(error: Exception | None, caplog: Any) -> None:
+async def test_unavailable_face_uses_banner_safe_fit_and_logs(error: Exception | None, caplog: Any) -> None:
     detector = AsyncMock(return_value=None, side_effect=error)
     face, evidence = await portrait_framing(
         Path("portrait.jpg"), is_person_still=True, retained=None, detector=detector
     )
     assert face is None
     assert evidence is not None
-    assert evidence["fallback"] == "standard_fit"
+    assert evidence["fallback"] == "banner_safe_fit"
     assert evidence["status"] == "unavailable"
     assert "portrait_framing_unavailable" in caplog.text
+
+
+@pytest.mark.req("CF-REQ-255")
+async def test_retained_unavailable_face_adopts_safe_fallback_without_inventing_bounds() -> None:
+    detector = AsyncMock()
+    face, evidence = await portrait_framing(
+        Path("araujo.jpg"),
+        is_person_still=True,
+        retained={"source_sha256": "same", "face_box": None, "fallback": "standard_fit", "version": "face-safe-v2"},
+        detector=detector,
+        source_sha256="same",
+    )
+    assert face is None
+    assert evidence is not None
+    assert evidence["fallback"] == "banner_safe_fit"
+    assert evidence["version"] == "face-safe-v3"
+    detector.assert_not_awaited()
 
 
 @pytest.mark.req("CF-REQ-255")

@@ -329,7 +329,7 @@ async def test_publication_keeps_generated_hashtags_first_within_eight() -> None
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-161")
-def test_caption_appends_hashtags_disclosure_and_attributions() -> None:
+def test_caption_omits_evidence_sources_but_keeps_hashtags_disclosure_and_required_credits() -> None:
     request = PublicationRequest(
         clip_id=uuid4(),
         title="Title",
@@ -343,8 +343,27 @@ def test_caption_appends_hashtags_disclosure_and_attributions() -> None:
 
     assert _description(request) == (
         "Two facts. Follow for more.\n\n#Ebola #News\n\nContains synthetic media and/or voice.\n\n"
-        "Sources: Reuters: https://example.test/a\n\nCredits: Photo by Jane, CC BY 4.0"
+        "Credits: Photo by Jane, CC BY 4.0"
     )
+    assert request.source_attributions == ("Reuters: https://example.test/a",)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-161")
+def test_caption_without_required_media_credits_has_no_source_or_credit_blocks() -> None:
+    request = PublicationRequest(
+        clip_id=uuid4(),
+        title="Title",
+        description="A verified Story. Follow for more.",
+        hashtags=("News",),
+        source_attributions=("The Guardian: https://example.test/story",),
+        asset_attributions=(),
+        contains_synthetic_media=False,
+        synthetic_voice=False,
+    )
+
+    assert _description(request) == "A verified Story. Follow for more.\n\n#News"
+    assert request.source_attributions == ("The Guardian: https://example.test/story",)
 
 
 def _request() -> PublicationRequest:

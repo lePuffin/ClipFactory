@@ -18,7 +18,7 @@ Manual URL ──► ingest_url ──► gather_sources ──► extract_claim
 - **Inputs:** `url` string.
 - **Behaviour:** Validate before creating the Run: scheme `http`/`https`,
   length ≤ 2 048, host present, no credentials in URL, host resolving only to
-  public addresses (CF-NFR-103). Single-active-Run rule applies (CF-REQ-652).
+  public addresses (CF-NFR-103). Durable serial Run admission applies (CF-REQ-652).
 - **Failure:** Invalid URL ⇒ 422 with reason; nothing is created.
 - **Acceptance:**
   - `http://127.0.0.1/admin`, `http://10.0.0.5/`, `file:///etc/passwd` and `https://user:pw@example.com/` are rejected with 422.

@@ -11,7 +11,71 @@ from PIL import Image
 from clipfactory.composition.ffmpeg_commands import build_ffmpeg_command
 from clipfactory.composition.spec import CompositionSpec, OverlayInput, VisualInput
 from clipfactory.infrastructure.media.runner import MediaRunner
+from clipfactory.production.alignment import AlignedWord
 from clipfactory.production.editorial import render_brand_mark, render_news_date
+from clipfactory.production.timing import reconcile_visual_timing
+
+
+@pytest.mark.integration
+@pytest.mark.rendering
+@pytest.mark.req("CF-REQ-256")
+async def test_retry_split_footage_plays_later_source_frames_instead_of_repeating(tmp_path: Path) -> None:
+    runner = MediaRunner(timeout_seconds=120)
+    source, audio = tmp_path / "stock.mp4", tmp_path / "narration.wav"
+    await runner.ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=360x640:r=30:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=360x640:r=30:d=2",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            str(source),
+        ]
+    )
+    await runner.ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=4", str(audio)])
+    captions = tmp_path / "captions.ass"
+    captions.write_text("[Script Info]\nScriptType: v4.00+\n[Events]\n", encoding="utf-8")
+    plan = [{"index": 0, "script_segment_index": 0, "planned_duration_seconds": 4.0, "selected_asset_id": "penalty"}]
+    words = (AlignedWord("Penalty", 0, 4, 0),)
+    settings = dict(narration_duration_seconds=4, lead_in_seconds=0, tail_seconds=0, max_segment_seconds=2)
+    plan = reconcile_visual_timing(reconcile_visual_timing(plan, words, **settings), words, **settings)
+    spec = CompositionSpec(
+        segments=tuple(
+            VisualInput(
+                source,
+                "video",
+                360,
+                640,
+                item["end_seconds"] - item["start_seconds"],
+                source_offset_seconds=item["source_offset_seconds"],
+            )
+            for item in plan
+        ),
+        narration_path=audio,
+        caption_file=captions,
+        output_path=tmp_path / "retry.mp4",
+        narration_duration_seconds=4,
+        width=360,
+        height=640,
+        lead_in_seconds=0,
+        tail_seconds=0,
+        preset="ultrafast",
+    )
+    await runner.ffmpeg(build_ffmpeg_command(spec))
+    await runner.decode(spec.output_path)
+    for timestamp, channel in ((0.5, 0), (2.5, 2)):
+        with Image.open(io.BytesIO(await runner.extract_frame(spec.output_path, timestamp, 360))) as frame:
+            pixel = frame.convert("RGB").getpixel((180, 320))
+            assert isinstance(pixel, tuple)
+            assert pixel[channel] > 230
+            assert pixel[2 if channel == 0 else 0] < 20
 
 
 @pytest.mark.integration

@@ -2,6 +2,10 @@
 
 - **Status:** Proposed
 
+The active-Run admission clause below is superseded by
+[ADR-021](ADR-021-durable-serial-run-queue.md): one executing Run, with
+additional orders durably queued. The single-user boundary is unchanged.
+
 ## Context
 
 ClipFactory is a private tool for one owner. Multi-user features would add

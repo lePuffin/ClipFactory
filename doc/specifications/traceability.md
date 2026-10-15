@@ -56,7 +56,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-158](06-story-and-script.md) | Script gate, including repeated spoken attribution, paraphrased restatements, spoken calls to action, filler padding and headline fragments | `planning` | Unit, Integration | CF-AC-004 | In progress |
 | [CF-REQ-159](06-story-and-script.md) | Indexed narration-only revision with accepted-Claim provenance, preserved attribution and explicit word bounds | `planning`, `workflow` | Unit, Integration | CF-AC-004 | In progress; fake-model convergence regressions verified, live convergence unverified |
 | [CF-REQ-160](06-story-and-script.md) | Social metadata | `planning` | Unit, Integration | CF-AC-004 | Implemented (live pending) |
-| [CF-REQ-161](06-story-and-script.md) | Attribution in metadata [Derived] | `planning` | Unit, Integration | CF-AC-004 | Implemented (live pending) |
+| [CF-REQ-161](06-story-and-script.md) | Internal Source references and public licence-required Asset credits [Derived] | `planning`, `infrastructure.providers.publishing` | Unit, Integration | CF-AC-004 | Implemented (live pending); public captions omit Sources blocks while retaining required media credits |
 | [CF-REQ-162](06-story-and-script.md) | Synthetic media disclosure flags [Derived] | `planning` | Unit, Integration | CF-AC-004 | Not started |
 | [CF-REQ-163](06-story-and-script.md) | Narrative beats and editorial intent | `planning`, `evaluation` | Unit, Integration | CF-AC-026 | Not started |
 | [CF-REQ-164](06-story-and-script.md) | Evidence-bound engagement | `planning`, `evaluation` | Unit, Review | CF-AC-026 | Not started |
@@ -75,7 +75,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-211](07-asset-management.md) | Store generated media for future reuse | `assets` | Unit, Integration | CF-AC-005 | In progress |
 | [CF-REQ-212](07-asset-management.md) | Usage tracking | `assets` | Unit, Integration | CF-AC-005 | Not started |
 | [CF-REQ-213](07-asset-management.md) | Asset status management | `assets` | Unit, Integration | CF-AC-005 | Not started |
-| [CF-REQ-214](07-asset-management.md) | Run-scoped external inputs and working-file retention | `assets.retention`, `workflow.runner`, `workflow.production_stages`, `infrastructure.storage` | Unit, Integration | CF-AC-006 | In progress |
+| [CF-REQ-214](07-asset-management.md) | Run-scoped external inputs and immediate automatic-rejection video cleanup; retained Run/error records | `assets.retention`, `workflow.runner`, `workflow.production_stages`, `infrastructure.storage`, `frontend` | Unit, Integration, Vitest | CF-AC-006 | In progress |
 | [CF-REQ-215](07-asset-management.md) | Real people and generated media [Derived] | `assets`, `planning`, `evaluation` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-216](07-asset-management.md) | Manual asset import | `assets` | Unit, Integration | CF-AC-006 | Not started |
 | [CF-REQ-217](07-asset-management.md) | ComfyUI workflow generation | `infrastructure.providers.generation` | Unit (mocked HTTP), Contract | CF-AC-006 | Not started |
@@ -87,8 +87,8 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-252](08-visual-production.md) | Deterministic motion | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-253](08-visual-production.md) | Motion defaults | `planning` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-254](08-visual-production.md) | Transitions | `composition` | Unit | CF-AC-005 | Not started |
-| [CF-REQ-255](08-visual-production.md) | Frame fitting | `composition`, `infrastructure`, `workflow` | Unit, Integration, Manual | CF-AC-005 | Implemented; face-safe cover refinement (2026-10-14), tagged render regressions and isolated Putellas/Yamal/Hayes comparisons verified; unchanged banner, bounded face size and source/version-bound framing; unavailable/ambiguous detection keeps standard fitting with warning |
-| [CF-REQ-256](08-visual-production.md) | Timing reconciliation | `production` | Unit | CF-AC-005 | Implemented (`test_audio_captions.py`, `test_footage_continuation.py`, `test_production_block.py`) |
+| [CF-REQ-255](08-visual-production.md) | Frame fitting | `composition`, `infrastructure`, `workflow` | Unit, Integration, Manual | CF-AC-005 | Implemented; face-safe cover refinement and isolated Putellas/Yamal/Hayes comparisons verified; unchanged banner, bounded face size and source/version-bound framing; unavailable detection now fits the complete still below the banner with warning, verified by real FFmpeg regressions (2026-10-15) |
+| [CF-REQ-256](08-visual-production.md) | Retry-safe timing reconciliation and cumulative footage offsets | `production` | Unit, Integration | CF-AC-005 | Implemented (`test_audio_captions.py`, `test_footage_continuation.py`, `test_production_block.py`); repeated reconciliation preserves split weights and offsets (2026-10-15) |
 | [CF-REQ-257](08-visual-production.md) | Plan gate | `composition` | Unit | CF-AC-005 | Not started |
 | [CF-REQ-258](08-visual-production.md) | Beat-aware Shot Intent | `planning`, `production` | Unit, Integration | CF-AC-027 | Not started |
 | [CF-REQ-259](08-visual-production.md) | Grounded Editorial Overlays | `planning`, `composition` | Unit, Integration | CF-AC-027 | In progress; deterministic uppercase top-header rendering (owner revision 2026-10-14) covered by case-equivalent PNG regressions; secondary/context casing preserved |
@@ -111,7 +111,7 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-310](09-audio-and-tts.md) | Narration transcription with explicit-device selection and bounded automatic CPU fallback | `production`, `infrastructure.providers.transcription` | Unit, Contract | CF-AC-007 | In progress; device/error tests and cached-model CPU transcription verified, full decoder acceptance pending |
 | [CF-REQ-311](09-audio-and-tts.md) | Alignment to script | `production` | Unit, Integration | CF-AC-007 | Not started |
 | [CF-REQ-312](09-audio-and-tts.md) | Caption cue layout | `production` | Unit, Integration | CF-AC-007 | Not started |
-| [CF-REQ-313](09-audio-and-tts.md) | Caption safe area | `production` | Unit, Integration | CF-AC-007 | Not started |
+| [CF-REQ-313](09-audio-and-tts.md) | Caption safe area, long-token wrapping and explicit layout failures | `production`, `workflow` | Unit, Integration | CF-AC-007 | In progress; long-token preservation, two-line bounds and typed failure regressions pass; failed Run 1ffcd70a transcription replayed read-only with its real font (175 words, 35 safe cues); no live continuation or full render executed |
 | [CF-REQ-314](09-audio-and-tts.md) | Caption rendering | `production` | Unit, Integration | CF-AC-007 | Not started |
 | [CF-REQ-320](09-audio-and-tts.md) | Royalty-free music selection | `assets` (music selection) | Unit, Integration | CF-AC-007 | Not started |
 | [CF-REQ-321](09-audio-and-tts.md) | Music mixing and ducking | `composition` | Unit, Integration | CF-AC-007 | Not started |
@@ -187,22 +187,22 @@ complete ([24-acceptance-criteria.md](24-acceptance-criteria.md)).
 | [CF-REQ-604](15-ui-and-dashboard.md) | Run detail (elapsed time, Visual counts, LLM models, generation milestones, newest-first events without watchdog noise) | `frontend`, `api` | Vitest, Playwright | CF-AC-017 | In progress |
 | [CF-REQ-605](15-ui-and-dashboard.md) | Asset library with inline media previews, storage locations and 20-per-page pagination | `frontend`, `api` | Vitest, Playwright | CF-AC-005 | In progress |
 | [CF-REQ-606](15-ui-and-dashboard.md) | Initially collapsed Settings groups with retained drafts; no provider readiness or credential-status summaries | `frontend` | Vitest, Playwright | CF-AC-014 | In progress |
-| [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with independent Research sources/policies, platform checkboxes and named-profile management | `frontend` | Vitest, Playwright | CF-AC-014 | In progress; supported-platform selection/save covered by regression tests |
-| [CF-REQ-608](15-ui-and-dashboard.md) | Run Now with explicit profile selection | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
-| [CF-REQ-609](15-ui-and-dashboard.md) | Manual URL input | `frontend` | Vitest, Playwright | CF-AC-015 | Not started |
-| [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (previews with errors, publication-aware approval actions, corner delete icon, All/Published/Failed tabs) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
+| [CF-REQ-607](15-ui-and-dashboard.md) | Content Profile editor with independent Research sources/policies, platform and generation-provider checkboxes, and named-profile management | `frontend` | Vitest, Playwright | CF-AC-014 | In progress; supported-platform and generation-provider selection/save covered by regression tests |
+| [CF-REQ-608](15-ui-and-dashboard.md) | Shared Run Now with explicit profile selection and optional URL routing | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-013 | In progress; shared automatic/manual dispatch and selected-profile payload verified with Vitest and desktop/mobile mocked-API Playwright |
+| [CF-REQ-609](15-ui-and-dashboard.md) | Optional validated Manual URL using the shared Run Now button and selected profile | `frontend` | Vitest, Playwright | CF-AC-015 | Implemented; Vitest and desktop/mobile mocked-API Playwright verify URL routing, Enter submission, invalid-input blocking, profile selection and successful input clearing; Vitest also verifies retained failures and pending controls |
+| [CF-REQ-610](15-ui-and-dashboard.md) | Clips page (saved caption below Publications, previews with errors, publication-aware approval actions, corner delete icon, All/Published/Failed tabs) and filtered paginated API | `frontend`, `api`, `infrastructure.db` | Unit, Vitest, Playwright | CF-AC-013 | In progress |
 | [CF-REQ-611](15-ui-and-dashboard.md) | Safe rendering of external text | `frontend` | Vitest, Playwright | CF-AC-018 | Not started |
 | [CF-REQ-612](15-ui-and-dashboard.md) | Cost display (Overview budget uses two decimal places) | `frontend` | Vitest, Playwright | CF-AC-023 | In progress |
 | [CF-REQ-613](15-ui-and-dashboard.md) | Approval of pending Clips, one-per-row Review Board and paginated queue API | `frontend`, `api` | Unit, Vitest, Playwright | CF-AC-010 | In progress |
 | [CF-REQ-614](15-ui-and-dashboard.md) | Storyboard and version-bound quality review UI | `frontend`, `api` | Vitest, Playwright, Integration | CF-AC-030–031 | In progress |
 | [CF-REQ-650](16-scheduling-and-runs.md) | Run triggers | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-651](16-scheduling-and-runs.md) | Independent local daily schedule rules | `workflow.scheduler`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | Implemented |
-| [CF-REQ-652](16-scheduling-and-runs.md) | Single active Run | `workflow`, `infrastructure.db` | Unit, Integration, E2E | CF-AC-016 | Not started |
+| [CF-REQ-652](16-scheduling-and-runs.md) | Durable FIFO queue with one executing Run | `workflow`, `infrastructure.db`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | Implemented; unit/API, SQLite concurrency/migration, Vitest and desktop/mobile mocked-API E2E pass; PostgreSQL migration and concurrent FIFO claims verified in an isolated schema (2026-10-15), live application migration deferred to owner restart |
 | [CF-REQ-653](16-scheduling-and-runs.md) | Run snapshot | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-654](16-scheduling-and-runs.md) | Stage execution | `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-655](16-scheduling-and-runs.md) | Run failure | `workflow` | Unit, Integration, E2E | CF-AC-009, CF-AC-033 | Not started |
 | [CF-REQ-656](16-scheduling-and-runs.md) | Stage timeout with internal generation watchdog renewal | `workflow`, `infrastructure.graphics` | Unit, Integration, E2E | CF-AC-016, CF-AC-033 | In progress |
-| [CF-REQ-657](16-scheduling-and-runs.md) | Resumption, owner continuation resetting revision allowance with retained history, and explicit Stop | `workflow`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | In progress |
+| [CF-REQ-657](16-scheduling-and-runs.md) | Resumption, FIFO owner continuation resetting revision allowance with retained history, and explicit Stop | `workflow`, `infrastructure.db`, `api`, `frontend` | Unit, Integration, E2E | CF-AC-016 | In progress; FIFO continuation, duplicate admission, retry reset and checkpoint preservation verified with SQLite workflow/API tests, existing Vitest controls, and isolated PostgreSQL concurrent admission/claims (2026-10-15); no live production Run triggered |
 | [CF-REQ-658](16-scheduling-and-runs.md) | Lean workflow state | `workflow` | Unit | CF-AC-016 | Not started |
 | [CF-REQ-659](16-scheduling-and-runs.md) | Run APIs | `api`, `workflow` | Unit, Integration, E2E | CF-AC-016 | Not started |
 | [CF-REQ-660](16-scheduling-and-runs.md) | Scheduler can be disabled | `workflow.scheduler` | Unit, Integration | CF-AC-016 | Not started |

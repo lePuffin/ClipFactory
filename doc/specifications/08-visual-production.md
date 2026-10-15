@@ -109,8 +109,11 @@ Native Wan calls are bounded per Run by CF-REQ-266.
   rather than forcibly zooming/panning a face toward the exact frame centre.
   Local detection is positioning evidence only, never identity verification.
   Detection evidence is bound to the source hash and retained for Retry and
-  saved rendering. Missing or ambiguous detection preserves standard fitting
-  and emits a visible framing-unavailable warning.
+  saved rendering. Owner correction (2026-10-15): missing or ambiguous
+  detection fits the complete sharp portrait below the unchanged active banner
+  over blurred padding, without motion, rather than allowing a centre crop to
+  hide the subject. Emit a visible framing-unavailable warning; do not invent
+  face bounds or identity evidence.
 - **Acceptance:**
   - A 1920×1080 photo produces a 720×1280 frame whose central 720×405 band contains the whole photo.
   - Portrait fixtures of landscape, square/9:16 and tall shapes retain the
@@ -118,6 +121,8 @@ Native Wan calls are bounded per Run by CF-REQ-266.
     face height at most 32% of output height. Sources that permit a safe
     cover crop show no blurred margins. A replaced source cannot reuse old
     face bounds; the framing revision participates in the composition hash.
+  - With unavailable detection, the entire portrait remains below the active
+    banner at both the start and end of the shot.
 - **Related:** OD-012, ADR-020
 
 ### CF-REQ-256 — Timing reconciliation
@@ -132,7 +137,10 @@ Native Wan calls are bounded per Run by CF-REQ-266.
   Asset, each piece records a `source_offset_seconds` equal to the time already
   shown by earlier pieces, so the pieces play consecutive, non-overlapping
   spans of the footage. A video Asset is never restarted from its beginning
-  to fill time. Media selection prefers video candidates whose duration covers
+  to fill time, including when a Retry reconciles an already-split plan.
+  Reconciliation preserves the total planned weight and cumulative source
+  offsets of split pieces, and resets offsets only for a different selected
+  Asset. Media selection prefers video candidates whose duration covers
   the segment's planned duration plus 2 s (plus `tail_seconds` for the last
   segment) over shorter ones, keeping review order otherwise.
 - **Failure:** A video Asset shorter than its segment (measured from its
@@ -147,6 +155,9 @@ Native Wan calls are bounded per Run by CF-REQ-266.
     (Runs 770c59d5 and d519e520 replayed the first ~4 s of a stock video).
   - A video Asset too short to cover its piece from its offset (beyond the
     1.0 s hold) never reaches FFmpeg; `asset_too_short` is raised instead.
+  - Reconciling a retained split plan twice preserves timings and consecutive
+    source offsets; the penalty footage in Clip `274efcf3` must not replay
+    from offset zero on its second piece.
 - **Related:** CF-REQ-311, CF-REQ-404
 
 ### CF-REQ-257 — Plan gate

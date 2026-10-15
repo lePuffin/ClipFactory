@@ -250,6 +250,37 @@ def test_split_pieces_continue_the_same_footage_instead_of_replaying_it() -> Non
 
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-256")
+def test_retry_reconciles_split_plan_without_restarting_footage_or_changing_weights() -> None:
+    segments = [
+        {
+            "index": index,
+            "script_segment_index": script_index,
+            "planned_duration_seconds": duration,
+            "selected_asset_id": asset,
+        }
+        for index, (script_index, duration, asset) in enumerate(
+            [(0, 10.0, "penalty"), (0, 4.0, "crowd"), (1, 3.0, "portrait")]
+        )
+    ]
+    words = (AlignedWord("Penalty", 0.0, 14.0, 0), AlignedWord("Player", 14.0, 17.0, 1))
+    settings = dict(narration_duration_seconds=17.0, lead_in_seconds=0.3, tail_seconds=1.0)
+    first = reconcile_visual_timing(segments, words, **settings)
+    second = reconcile_visual_timing(first, words, **settings)
+    assert len(first) == len(second)
+    for left, right in zip(first, second, strict=True):
+        for key in ("start_seconds", "end_seconds", "planned_duration_seconds", "source_offset_seconds"):
+            assert right[key] == pytest.approx(left[key])
+    penalty = [item for item in second if item["selected_asset_id"] == "penalty"]
+    assert len(penalty) == 2
+    assert penalty[1]["source_offset_seconds"] == pytest.approx(penalty[0]["end_seconds"] - penalty[0]["start_seconds"])
+    assert sum(item["planned_duration_seconds"] for item in second) == 17.0
+    replaced = [{**item, "selected_asset_id": "replacement"} if item is first[1] else item for item in first]
+    third = reconcile_visual_timing(replaced, words, **settings)
+    assert third[1]["source_offset_seconds"] == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-256")
 def test_long_enough_footage_is_preferred_and_short_footage_is_detected() -> None:
     @dataclass(frozen=True)
     class Candidate:

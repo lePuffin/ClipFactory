@@ -28,11 +28,17 @@ def reconcile_visual_timing(
         by_script[word.script_segment_index].append(word)
     output: list[dict[str, Any]] = []
     cursor = 0.0
-    for script_index in sorted({int(item["script_segment_index"]) for item in segments}):
+    clip_duration = lead_in_seconds + narration_duration_seconds + tail_seconds
+    script_indices = sorted({int(item["script_segment_index"]) for item in segments})
+    for script_index in script_indices:
         group = [item for item in segments if int(item["script_segment_index"]) == script_index]
         script_words = by_script.get(script_index, [])
         group_start = script_words[0].start_seconds + lead_in_seconds if script_words else cursor
         group_end = script_words[-1].end_seconds + lead_in_seconds if script_words else group_start
+        if script_index == script_indices[0]:
+            group_start = 0.0
+        if script_index == script_indices[-1]:
+            group_end = clip_duration
         weights = [float(item["planned_duration_seconds"]) for item in group]
         total = sum(weights) or 1.0
         boundary = group_start
@@ -41,7 +47,6 @@ def reconcile_visual_timing(
             output.append({**item, "start_seconds": boundary, "end_seconds": end})
             boundary = end
         cursor = group_end
-    clip_duration = lead_in_seconds + narration_duration_seconds + tail_seconds
     if output:
         output[0]["start_seconds"] = 0.0
         output[-1]["end_seconds"] = clip_duration
@@ -49,23 +54,28 @@ def reconcile_visual_timing(
             current["start_seconds"] = previous["end_seconds"]
         _lengthen_short_pieces(output, min_segment_seconds)
     bounded: list[dict[str, Any]] = []
+    source_cursors: dict[str, float] = {}
     for item in output:
         start = float(item["start_seconds"])
         end = float(item["end_seconds"])
         pieces = max(1, ceil((end - start) / max_segment_seconds))
+        source_key = str(item.get("selected_asset_id") or f"plan:{item.get('plan_segment_index', item.get('index'))}")
+        offset = source_cursors.get(source_key, 0.0)
         for piece in range(pieces):
             bounded.append(
                 {
                     **item,
                     "index": len(bounded),
                     "plan_segment_index": item.get("plan_segment_index", item.get("index")),
+                    "planned_duration_seconds": float(item["planned_duration_seconds"]) / pieces,
                     "start_seconds": start + (end - start) * piece / pieces,
                     "end_seconds": end if piece == pieces - 1 else start + (end - start) * (piece + 1) / pieces,
-                    # CF-REQ-256: later pieces continue the footage instead of replaying it from the start.
-                    "source_offset_seconds": (end - start) * piece / pieces,
+                    # Retry may supply an already-split plan; count all preceding uses of this source.
+                    "source_offset_seconds": offset + (end - start) * piece / pieces,
                     "transition_in": item.get("transition_in", "cut") if piece == 0 else "cut",
                 }
             )
+        source_cursors[source_key] = offset + end - start
     return bounded
 
 

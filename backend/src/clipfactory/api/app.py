@@ -988,18 +988,6 @@ def create_app(
                 settings_snapshot=await effective_settings(),
                 profile_id=profile_id,
             )
-        except ActiveRunConflict as exc:
-            active_run_id = str(exc.active_run_id) if exc.active_run_id else None
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": {
-                        "code": "active_run_conflict",
-                        "message": "A Run is already queued or running",
-                        "details": {"active_run_id": active_run_id},
-                    }
-                },
-            )
         except LLMBudgetExhausted as exc:
             return JSONResponse(
                 status_code=409,

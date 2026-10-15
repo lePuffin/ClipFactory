@@ -142,7 +142,7 @@ is the frontend type source.
 | --- | --- | --- | --- |
 | GET | `/health` | Health checks (unauthenticated) | CF-REQ-856 |
 | POST | `/session` | Exchange API token for session cookie | CF-NFR-101 |
-| POST | `/runs` | Run Now → 202 `{run_id}`; 409 if active | CF-REQ-659, CF-REQ-652 |
+| POST | `/runs` | Run Now → 202 `{run_id}`; durable FIFO admission even during execution | CF-REQ-659, CF-REQ-652 |
 | POST | `/runs/manual-url` | `{url}` → 202 `{run_id}`; 409; 422 | CF-REQ-700 |
 | GET | `/runs` | List Runs (filters: status, outcome, trigger) | CF-REQ-659 |
 | GET | `/runs/active` | Active Run or 204 | CF-REQ-601 |

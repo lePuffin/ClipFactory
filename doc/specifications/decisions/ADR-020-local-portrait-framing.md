@@ -27,8 +27,10 @@ preferring sharp full-width imagery instead of side margins, with feathered
 top/bottom edges outside the face bounds to avoid a hard inset seam. Keep portrait
 shots still so motion cannot undo the crop. Keep editorial overlays unchanged.
 Version this policy in the render hash. Normal Runs and saved rendering share the same
-framing helper. Missing or ambiguous detection preserves standard fit and
-records an explicit warning rather than inventing bounds.
+framing helper. Owner correction (2026-10-15): missing or ambiguous detection
+fits the complete sharp portrait below the active banner over blurred padding,
+without motion, and records an explicit warning rather than inventing bounds.
+This prevents a detector miss from reverting to the face-obscuring centre crop.
 
 ## Consequences
 

@@ -1,5 +1,6 @@
 from collections.abc import Generator
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -100,17 +101,36 @@ def test_run_detail_links_latest_produced_clip_even_after_failure(run_client) ->
 @pytest.mark.unit
 @pytest.mark.req("CF-REQ-650")
 @pytest.mark.req("CF-REQ-659")
-def test_run_now_api_creates_run_and_rejects_second_active_run(run_client) -> None:
-    client, _ = run_client
+@pytest.mark.req("CF-REQ-652")
+def test_run_now_api_accepts_multiple_orders_and_exposes_fifo_queue(run_client) -> None:
+    client, repository = run_client
 
     created = client.post("/api/runs")
-    conflict = client.post("/api/runs")
+    repository.claim_next_queued(datetime.now(UTC))
+    second = client.post("/api/runs")
+    manual = client.post("/api/runs/manual-url", json={"url": "https://news.example/story"})
 
     assert created.status_code == 202
     assert UUID(created.json()["run_id"])
-    assert conflict.status_code == 409
-    assert conflict.json()["error"]["code"] == "active_run_conflict"
-    assert conflict.json()["error"]["details"]["active_run_id"] == created.json()["run_id"]
+    assert second.status_code == manual.status_code == 202
+    assert client.get("/api/runs/active").json()["run_id"] == created.json()["run_id"]
+    queued = client.get("/api/runs?status=queued").json()["items"]
+    assert [run["run_id"] for run in queued] == [second.json()["run_id"], manual.json()["run_id"]]
+    assert all(run["status"] == "queued" and run["started_at"] is None for run in queued)
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-659")
+def test_concurrent_run_now_requests_both_persist_without_active_conflict(run_client) -> None:
+    client, repository = run_client
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: client.post("/api/runs"), range(2)))
+    assert [response.status_code for response in responses] == [202, 202]
+    ids = {response.json()["run_id"] for response in responses}
+    assert len(ids) == 2
+    assert {run["run_id"] for run in repository.list(status="queued")} == ids
+    assert repository.running() == []
 
 
 @pytest.mark.unit
@@ -240,6 +260,36 @@ def test_continue_api_passes_current_settings_and_returns_same_run_id() -> None:
     assert response.json()["run_id"] == str(rid)
     assert captured[0][0] == rid
     assert "environment" in captured[0][1]
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-652")
+@pytest.mark.req("CF-REQ-657")
+def test_continue_api_queues_behind_running_and_pending_runs(run_client) -> None:
+    _, repository = run_client
+    rid = UUID(repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})["run_id"])
+    now = datetime.now(UTC)
+    repository.claim_next_queued(now)
+    repository.fail(rid, "select_assets", "stage_timeout", "Failure", now)
+    active = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    repository.claim_next_queued(now)
+    pending = repository.create(RunTrigger.RUN_NOW, manual_url=None, settings_snapshot={})
+    now = datetime.fromisoformat(pending["created_at"]) + timedelta(seconds=1)
+
+    async def resume(run_id, snapshot):
+        return repository.continue_failed(run_id, settings_snapshot=snapshot, expected_stage="select_assets", now=now)
+
+    client = TestClient(create_app(_settings(), continue_run=resume, run_reader=repository))
+    response = client.post(f"/api/runs/{rid}/continue")
+    assert response.status_code == 202
+    assert response.json() == {"run_id": str(rid)}
+    assert client.get(f"/api/runs/{rid}").json()["status"] == "queued"
+    assert client.get("/api/runs/active").json()["run_id"] == active["run_id"]
+    assert [run["run_id"] for run in client.get("/api/runs?status=queued").json()["items"]] == [
+        pending["run_id"],
+        str(rid),
+    ]
+    assert client.post(f"/api/runs/{rid}/continue").status_code == 409
 
 
 @pytest.mark.unit

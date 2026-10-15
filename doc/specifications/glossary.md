@@ -81,7 +81,7 @@ defined in [04-domain-model.md](04-domain-model.md); this file defines meaning.
 | **Publishing mode** | `disabled`, `dry_run` (build and log requests, never call platforms), or `live`. |
 | **Estimated revenue** | Revenue computed by ClipFactory from metrics and configured rates, or reported by a platform as an estimate. Never presented as guaranteed income. |
 | **Run Event** | A persisted, ordered, structured record of something meaningful that happened in a Run. |
-| **Run Now** | UI/API action that starts a Run immediately. |
+| **Run Now** | UI/API action that immediately submits a Run to the durable serial queue (CF-REQ-652). |
 | **Manual URL** | A news URL supplied by the user that seeds a Run instead of automated research. |
 | **Open Decision (OD)** | A deliberately undecided item listed in [26-open-decisions-and-conflicts.md](26-open-decisions-and-conflicts.md). |
 | **Derived requirement** | A requirement not literally stated in the project brief but necessary to make it implementable or safe; marked `[Derived]` for owner review. |
