@@ -447,7 +447,7 @@ describe("ClipFactory operational frontend", () => {
     render(<MemoryRouter><App /></MemoryRouter>);
     expect(await screen.findAllByText("ClipFactory API is unavailable. Start the backend and retry.")).toHaveLength(4);
     expect(screen.getByRole("button", { name: "Run Now" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Start Manual URL Run" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Start Manual URL Run" })).not.toBeInTheDocument();
   });
 
   it("CF-REQ-605 retires an Asset and filters it by status", async () => {
@@ -525,16 +525,78 @@ describe("ClipFactory operational frontend", () => {
     expect(await screen.findByRole("button", { name: "Add to queue" })).toBeDisabled();
     await user.selectOptions(await screen.findByLabelText("Content Profile"), "football");
     expect(screen.getByRole("button", { name: "Add to queue" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Start Manual URL Run" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Start Manual URL Run" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add to queue" }));
     expect(await screen.findByText("Run 12345678 queued")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Content Profile"), "world");
     await user.type(screen.getByLabelText("Manual Source URL"), "https://news.example/article");
-    await user.click(screen.getByRole("button", { name: "Start Manual URL Run" }));
+    await user.click(screen.getByRole("button", { name: "Add to queue" }));
 
     await waitFor(() => expect(posts).toHaveLength(2));
     expect(posts[0]).toEqual({ url: "/api/runs", body: JSON.stringify({ profile_id: "football" }) });
     expect(posts[1]).toEqual({ url: "/api/runs/manual-url", body: JSON.stringify({ url: "https://news.example/article", profile_id: "world" }) });
+    expect(screen.getByLabelText("Manual Source URL")).toHaveValue("");
+  });
+
+  it("CF-REQ-608 CF-REQ-609 routes the shared Run Now button by URL and retains failed manual input", async () => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    let fail = true;
+    let finish: ((response: Response) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/content-profiles") return new Response(JSON.stringify({ items: [
+        { id: "football", name: "Football", is_active: false },
+      ] }));
+      if (url === "/api/runs/active") return new Response(null, { status: 204 });
+      if (url === "/api/dashboard/summary") return new Response(JSON.stringify({ period: "7d", clips_approved: 0, publications: 0, views: 0, estimated_revenue: "0.00" }));
+      if (url === "/api/budget") return new Response(JSON.stringify({ currency: "EUR", month_to_date_spend: "0.00", monthly_limit: "30.00", monthly_remaining: "30.00", per_clip_limit: "1.00" }));
+      if (init?.method === "POST") {
+        posts.push({ url, body: JSON.parse(String(init.body)) });
+        if (fail) return new Response(JSON.stringify({ error: { message: "Source address is blocked" } }), { status: 422 });
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      return new Response(JSON.stringify({ items: [] }));
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter><App /></MemoryRouter>);
+    const button = screen.getByRole("button", { name: "Run Now" });
+    const input = screen.getByLabelText("Manual Source URL");
+    await user.type(input, "https://news.example/story");
+    expect(button).toBeDisabled();
+    await screen.findByRole("option", { name: "Football (inactive)" });
+    await user.selectOptions(screen.getByLabelText("Content Profile"), "football");
+    await user.clear(input);
+    for (const invalid of ["ftp://news.example/story", "not-a-link"]) {
+      await user.type(input, invalid);
+      await user.click(button);
+      expect(input).toBeInvalid();
+      expect(posts).toHaveLength(0);
+      await user.clear(input);
+    }
+    await user.type(input, "https://news.example/story");
+    await user.click(button);
+    expect(await screen.findByText("Source address is blocked")).toBeInTheDocument();
+    expect(input).toHaveValue("https://news.example/story");
+    expect(screen.getByLabelText("Content Profile")).toHaveValue("football");
+    fail = false;
+    await user.click(input);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Starting" })).toBeDisabled();
+    expect(input).toBeDisabled();
+    expect(screen.getByLabelText("Content Profile")).toBeDisabled();
+    act(() => finish?.(new Response(JSON.stringify({ run_id: "manual-1" }), { status: 202 })));
+    expect(await screen.findByText("Run MANUAL-1 queued")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    expect(posts).toEqual(Array.from({ length: 2 }, () => ({
+      url: "/api/runs/manual-url", body: { url: "https://news.example/story", profile_id: "football" },
+    })));
+    await user.type(input, "   ");
+    await user.click(screen.getByRole("button", { name: "Run Now" }));
+    await waitFor(() => expect(posts).toHaveLength(3));
+    expect(posts[2]).toEqual({ url: "/api/runs", body: { profile_id: "football" } });
+    act(() => finish?.(new Response(JSON.stringify({ run_id: "auto-1" }), { status: 202 })));
+    expect(await screen.findByText("Run AUTO-1 queued")).toBeInTheDocument();
   });
 
   it("CF-REQ-602 CF-REQ-604 refreshes the Run record until it fails and shows the failure", async () => {

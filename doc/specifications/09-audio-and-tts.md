@@ -154,11 +154,16 @@ Script ──► TTSProvider ──► narration audio (Asset, non-reusable)
   `captions.bottom_margin_pct` (10 %) above the frame bottom. If a line cannot
   fit, the layout first re-breaks lines, then reduces font size down to 80 % of
   `font_size_px`.
+  Overwide individual tokens may break within the token, preferring nearby
+  punctuation (such as publisher-domain dots or hyphens), without removing
+  characters or changing the aligned word's start/end timing.
 - **Failure:** If still out of bounds, issue `caption_out_of_bounds` (blocking)
   with the cue index.
 - **Acceptance:**
   - At 720×1280 with defaults, every cue box has x ≥ 43 px, x + width ≤ 677 px, text width ≤ 634 px and bottom edge at 1152 px.
-  - A single 40-character unbreakable token at 56 px triggers font reduction or `caption_out_of_bounds`; never an out-of-bounds render.
+  - A single 40-character token at 56 px wraps within two safe lines, reduces
+    font size if needed, or reports `caption_out_of_bounds`; never an
+    out-of-bounds render or generic `internal_error`.
 - **Related:** CF-REQ-402, OD-011
 
 ### CF-REQ-314 — Caption rendering

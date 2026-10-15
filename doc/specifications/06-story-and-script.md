@@ -313,9 +313,16 @@ references). They never call a `NewsSource` again.
 - **Description:** `SocialMetadata.source_attributions` shall list the
   publisher and URL of every evidence Source cited by the script, and
   `asset_attributions` shall list the `attribution_text` of every used Asset
-  whose licence requires attribution. Both are appended to the description.
+  whose licence requires attribution. Owner caption revision (2026-10-15):
+  evidence Source references remain in stored metadata but are not appended
+  as a public `Sources:` block. Licence-required Asset credits remain appended
+  to the publication description; internal provenance alone is not a
+  substitute for public attribution required by the media licence.
 - **Acceptance:**
   - A Clip using one CC BY image includes that image's attribution text in the description.
+  - Source references are retained in metadata but omitted from publication
+    captions on every platform. A Clip with no attribution-required Assets
+    has neither a Sources nor a Credits block.
 - **Related:** CF-REQ-203, CF-REQ-451
 
 ### CF-REQ-162 — Synthetic media disclosure flags [Derived]

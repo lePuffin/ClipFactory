@@ -40,8 +40,51 @@ from clipfactory.planning.visuals import build_visual_plan
 from clipfactory.ports.errors import ProviderError
 from clipfactory.ports.llm import ImageInput, LLMMessage, LLMResult
 from clipfactory.ports.media_sources import MediaCandidate
+from clipfactory.production.captions import CaptionLayoutError
 from clipfactory.workflow.executor import StageFailure
 from clipfactory.workflow.production_stages import ProductionStageService, production_stage_handlers
+
+
+@pytest.mark.unit
+@pytest.mark.req("CF-REQ-313")
+@pytest.mark.asyncio
+async def test_caption_layout_failure_has_actionable_failure_code(tmp_path, monkeypatch) -> None:
+    font = tmp_path / "font.ttf"
+    font.write_bytes(b"test")
+    run_id = uuid4()
+    service = ProductionStageService(
+        production=MagicMock(),
+        runs=MagicMock(),
+        assets=MagicMock(),
+        evaluations=MagicMock(),
+        storage=MagicMock(),
+        llm=MagicMock(),
+        tts=MagicMock(),
+        transcription=MagicMock(),
+        media=MagicMock(),
+        clock=lambda: datetime(2026, 10, 15, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        service,
+        "_run_context",
+        AsyncMock(
+            return_value=(
+                run_id,
+                1,
+                {"settings_snapshot": {"captions": {"font_file": str(font)}}},
+                ContentProfile(),
+            )
+        ),
+    )
+    monkeypatch.setattr(service, "_artifact", AsyncMock(return_value={"words": [], "wer": 0}))
+    monkeypatch.setattr(
+        "clipfactory.workflow.production_stages.build_captions",
+        AsyncMock(side_effect=CaptionLayoutError("caption cue 2 exceeds safe text width")),
+    )
+    with pytest.raises(StageFailure, match="caption cue 2") as error:
+        await service.build_captions({"run_id": str(run_id), "trigger": "run_now", "attempt": 1})
+    assert error.value.code == "caption_out_of_bounds"
+    service.production.save_artifact.assert_not_called()
 
 
 def _music(title: str, *, allowed: list[Platform] | None, moods: list[str]) -> Asset:

@@ -98,6 +98,7 @@ from clipfactory.production.audio_captions import (
     generate_narration,
     transcribe_narration,
 )
+from clipfactory.production.captions import CaptionLayoutError
 from clipfactory.production.editorial import (
     EditorialCue,
     render_ai_disclosure_tag,
@@ -1249,14 +1250,17 @@ class ProductionStageService:
         alignment = AlignmentResult(
             tuple(AlignedWord(**word) for word in transcription["words"]), float(transcription["wer"])
         )
-        caption_key, track = await build_captions(
-            run_id=run_id,
-            attempt=attempt,
-            alignment=alignment,
-            storage=self.storage,
-            font_file=font_file,
-            lead_in_seconds=float(detail["settings_snapshot"].get("composition", {}).get("lead_in_seconds", 0.3)),
-        )
+        try:
+            caption_key, track = await build_captions(
+                run_id=run_id,
+                attempt=attempt,
+                alignment=alignment,
+                storage=self.storage,
+                font_file=font_file,
+                lead_in_seconds=float(detail["settings_snapshot"].get("composition", {}).get("lead_in_seconds", 0.3)),
+            )
+        except CaptionLayoutError as exc:
+            raise StageFailure("caption_out_of_bounds", str(exc)) from exc
         artifact = {"caption_key": caption_key, "cues": [asdict(cue) for cue in track.cues]}
         await asyncio.to_thread(self.production.save_artifact, run_id, attempt, Stage.BUILD_CAPTIONS.value, artifact)
         return {}

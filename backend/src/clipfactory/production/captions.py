@@ -186,6 +186,27 @@ def _wrap(words: list[AlignedWord], font: FontMetrics, max_text_width: int) -> l
     lines: list[str] = []
     current = ""
     for word in words:
+        if font.getlength(word.text) > max_text_width:
+            if current:
+                lines.append(current)
+                current = ""
+            remaining = word.text
+            while font.getlength(remaining) > max_text_width:
+                fitting = 0
+                for end in range(1, len(remaining) + 1):
+                    if font.getlength(remaining[:end]) > max_text_width:
+                        break
+                    fitting = end
+                if fitting == 0:
+                    lines.append(remaining)
+                    remaining = ""
+                    break
+                punctuation = max(remaining.rfind(mark, 0, fitting) for mark in (".", "-", "\u2011", "/"))
+                split = punctuation + 1 if punctuation >= fitting // 2 else fitting
+                lines.append(remaining[:split])
+                remaining = remaining[split:]
+            current = remaining
+            continue
         candidate = f"{current} {word.text}".strip()
         if current and font.getlength(candidate) > max_text_width:
             lines.append(current)
